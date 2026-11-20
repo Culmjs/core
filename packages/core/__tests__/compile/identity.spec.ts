@@ -105,3 +105,36 @@ test('rows nested past the stack limit of JSON reject with the same clear error'
     (e: Error) => e instanceof Error && /cannot be hashed/.test(e.message),
   )
 })
+
+test('two files with one path give the same identity in either order', async () => {
+  const dup = [
+    { path: 'fonts/a.woff2', sha256: 'aa' },
+    { path: 'fonts/a.woff2', sha256: 'bb' },
+  ]
+  assert.equal(
+    await buildIdentity(doc(), data, reg(), dup),
+    await buildIdentity(doc(), data, reg(), [...dup].reverse()),
+  )
+})
+
+test('what is hashed is the JSON form of the rows and values: a function value, a Date and its ISO text, null and no values do not tell builds apart', async () => {
+  const at = new Date('2026-01-02T03:04:05.000Z')
+  const same = async (a: object, b: object) =>
+    assert.equal(
+      await buildIdentity(doc(), a as never, reg()),
+      await buildIdentity(doc(), b as never, reg()),
+    )
+  await same(
+    { rows: { a: [{ n: 1, f: () => 1 }] } },
+    { rows: { a: [{ n: 1 }] } },
+  )
+  await same(
+    { rows: { a: [{ at }] } },
+    { rows: { a: [{ at: at.toISOString() }] } },
+  )
+  await same(
+    { rows: { a: [{ m: new Map([[1, 2]]) }] } },
+    { rows: { a: [{ m: {} }] } },
+  )
+  await same({ ...data, values: null }, data)
+})

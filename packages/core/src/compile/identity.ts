@@ -8,8 +8,13 @@ export const FRAMEWORK_VERSION = '0.0.0'
 
 /**
  * One SHA-256 (lower-case hex) over the document, the rows and values, the framework version, every plug-in's name and version in name order, and the
- * font and asset files passed (sorted by path here). Pass the same rows the compiler gets: they are hashed as given, so the same rows in another order
- * are another build. Rows and values must be JSON values; ones that cannot be written as JSON (a cycle, a BigInt, nesting thousands deep) reject with an Error.
+ * font and asset files passed (sorted by path, then by hash, so the same set of pairs in any order is the same build). Pass the same rows the compiler
+ * gets: they are hashed as given, so the same rows in another order are another build.
+ *
+ * What is hashed is the JSON form of the rows and values (`canonicalJson`), not the values themselves, so a value JSON cannot represent does not tell
+ * two builds apart: a function or `undefined` in an object is left out, a `Date` is its ISO text, a `Map` or a `Set` is `{}`, and `values: null` is the
+ * same as no `values`. Rows are the caller's and are not checked. A value that cannot be written as JSON at all (a cycle, a BigInt, nesting thousands
+ * deep) rejects with an Error.
  */
 export async function buildIdentity(
   doc: SiteDocument,
@@ -20,7 +25,9 @@ export async function buildIdentity(
   const plugins = registry.plugins().map(p => [p.name, p.version])
   const sorted = files
     ?.map(f => [f.path, f.sha256])
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .sort(([a, x], [b, y]) =>
+      a < b ? -1 : a > b ? 1 : x < y ? -1 : x > y ? 1 : 0,
+    )
   let text: string
   try {
     text = canonicalJson([
