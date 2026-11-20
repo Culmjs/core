@@ -11,6 +11,8 @@ export const LAYERS = [
   'validate',
   'data',
   'compile',
+  'ops',
+  'measure',
 ]
 
 type File = { path: string; source: string }

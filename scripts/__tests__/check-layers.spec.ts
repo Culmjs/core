@@ -57,6 +57,8 @@ test('the order is fixed', () => {
     'validate',
     'data',
     'compile',
+    'ops',
+    'measure',
   ])
 })
 test('importing the root index or a path that leaves src is a violation', () => {
@@ -124,4 +126,13 @@ test('readFiles returns every file under the root whatever its extension', () =>
   } finally {
     rmSync(dir, { recursive: true })
   }
+})
+
+test('compile may not import ops', () => {
+  assert.deepEqual(
+    layerViolations([
+      { path: 'compile/x.ts', source: `import { plan } from '../ops/plan.ts'` },
+    ]),
+    ['compile/x.ts imports ops (../ops/plan.ts)'],
+  )
 })

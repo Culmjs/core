@@ -22,10 +22,9 @@ test('packed core installs offline and every sub-path imports', () => {
     const app = join(tmp, 'app')
     mkdirSync(app)
     run('npm', ['pack', '--pack-destination', tmp], core)
-    const tarball = join(
-      tmp,
-      readdirSync(tmp).find(f => f.endsWith('.tgz'))!,
-    )
+    const name = readdirSync(tmp).find(f => f.endsWith('.tgz'))
+    assert.ok(name, 'npm pack produced no tarball')
+    const tarball = join(tmp, name)
     writeFileSync(join(app, 'package.json'), '{"type":"module"}')
     run(
       'npm',
@@ -50,5 +49,7 @@ test('packed core installs offline and every sub-path imports', () => {
     )
   } finally {
     rmSync(tmp, { recursive: true, force: true })
+    // a stale dist would satisfy a run that forgot --conditions=source
+    rmSync(join(core, 'dist'), { recursive: true, force: true })
   }
 })

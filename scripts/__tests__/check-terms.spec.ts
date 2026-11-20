@@ -43,3 +43,23 @@ test('terms inside identifiers are hits; cv in lower case is not', () => {
   }
   assert.deepEqual(termHits([{ path: 'a.ts', source: 'const cv = 1' }]), [])
 })
+
+for (const word of [
+  'scholars',
+  'labs',
+  'bookings',
+  'paper2',
+  'PDFPaper',
+  'CVList',
+  'scholarosWidget',
+  'evoscholar',
+  'publications',
+  'talks',
+])
+  test(`${word} is a hit`, () =>
+    assert.equal(termHits([{ path: 'a.ts', source: word }]).length > 0, true))
+
+test('GitLab is a known false hit', () =>
+  assert.deepEqual(termHits([{ path: 'a.ts', source: 'GitLab' }]), [
+    'a.ts:1 lab',
+  ]))
