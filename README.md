@@ -1,6 +1,18 @@
-# Culm
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/culm-logo-reverse.svg">
+    <img src="docs/brand/culm-logo.svg" alt="Culm" width="340">
+  </picture>
+</h1>
 
-**The JavaScript framework for the AI era.**
+<p align="center"><strong>The JavaScript framework for the AI era.</strong></p>
+
+<p align="center">
+  <a href="docs/overview.md">Overview</a> ·
+  <a href="#why">Why</a> ·
+  <a href="#example">Example</a> ·
+  <a href="#what-exists-today">Status</a>
+</p>
 
 Culm builds websites from data. A whole site is one JSON document. Culm checks that document, then compiles it to static HTML and CSS.
 
@@ -152,6 +164,10 @@ npm test
 | `npm run gen:scripts`                     | Regenerates the minified page scripts                     |
 
 The core is layered: `scripts`, `document`, `style`, `layout`, `registry`, `validate`, `data`, `compile`. A layer never imports from a later one.
+
+## Brand
+
+Write the name as **Culm** and the project handle as `culmjs`. The logo files are in [docs/brand](docs/brand): the standard logo for light backgrounds, the reverse logo for dark ones, and the icon. The colours are charcoal `#262626`, amber `#FF9400`, cream `#FFF9DF` and white. Use the supplied artwork as it is; [BRAND-RULES.txt](docs/brand/BRAND-RULES.txt) has the rules for size, spacing and placement.
 
 ## Licence
 

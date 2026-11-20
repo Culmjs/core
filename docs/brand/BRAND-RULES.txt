@@ -1,0 +1,78 @@
+CULM BRAND RULES
+
+NAME AND ARTWORK
+
+Write the brand as Culm and the project handle as culmjs. Use the supplied
+outlines instead of retyping the logo in another font. The artwork is a custom
+vector reconstruction of concept 08, with straightened edges that preserve
+its pixel character.
+
+COLOR PALETTE
+
+Charcoal   #262626
+Amber      #FF9400
+Cream      #FFF9DF
+White      #FFFFFF
+
+Use the supplied charcoal-and-amber versions on light backgrounds. Use the
+cream-and-amber reverse versions on dark backgrounds. All-black and all-white
+versions are provided for monochrome applications. Keep the supplied color
+assignments; do not recolor individual parts.
+
+CLEAR SPACE
+
+Leave at least one square accent width of empty space on every side of the
+artwork. Use the amber square accent in the chosen logo as the measuring unit.
+For a monochrome version, use that same square's width. For icon-only artwork,
+use the accent width from its corresponding full lockup at the same mark size.
+
+Measure from the outermost visible artwork. Keep text, borders, and other
+graphics outside this area. The export canvas may already include padding;
+check the placement rather than assuming the canvas edge supplies enough.
+
+SUGGESTED MINIMUM DISPLAY SIZES
+
+Widths refer to visible artwork, excluding any export canvas padding.
+
+Icon                  16 px wide
+Wordmark             120 px wide
+Horizontal logo      160 px wide
+Signature with handle 240 px wide
+
+These are design starting points, not tested guarantees. Inspect the actual
+placement at its final size. Increase the size if gaps close or the lettering
+loses clarity. Judge stacked versions by their wordmark size. Omit the handle
+when it cannot be read comfortably. Use the icon alone for small favicons and
+profile pictures.
+
+SHAPE AND PLACEMENT
+
+Keep square corners, straight edges, and the original proportions. Do not
+stretch, rotate, skew, round, or redraw the artwork. Do not rearrange the mark,
+wordmark, or handle. Use another supplied layout when the space requires it.
+
+Do not add outlines, shadows, gradients, textures, or effects. Place the logo
+on a background where its full silhouette and internal gaps remain clear.
+Avoid busy imagery directly behind it. Preserve any transparent background.
+
+FORMAT AND PRODUCTION
+
+Prefer SVG for websites and layouts that need scaling. Use PNG for uploads;
+the manifest index records each export's exact pixel dimensions. Do not enlarge
+a small PNG to create a print file.
+
+Use PDF or EPS for print when requested by the supplier. Colors are defined in
+RGB. Ask the printer to manage conversion for the intended paper, ink, and
+process, then approve a physical or suitable production proof. No universal
+CMYK or spot-color match is specified in this kit.
+
+For embroidery, engraving, stamps, or other limited-detail processes, begin
+with a supplied monochrome version. Ask the supplier to check minimum gaps
+and strokes, and inspect a sample before producing the full run.
+
+FUTURE REVISIONS
+
+Keep the source artwork as the reference. Export new sizes from the vector
+source, retain the same geometry, and record additions in the manifest index.
+Treat a change to proportions, spacing, colors, or lettering as a new design
+revision rather than a routine export.
