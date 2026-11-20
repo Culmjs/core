@@ -797,3 +797,130 @@ test('an override an outer instance gives a nested part is judged: sizes, conten
     'required',
   )
 })
+
+// ---- second fix round, H1: nested overrides are judged for every use ----
+
+/**
+ * `count` uses `o0 ... o<count-1>` of an outer component that holds a nested component with a required title.
+ * `over` maps a use's index to its overrides. With `levels` 3 an outermost component holds the outer one as `o`.
+ */
+const many = (
+  count: number,
+  over: Record<number, object> = {},
+  levels = 2,
+  innerText = 'Hello',
+) => {
+  const d = nested({}, innerText)
+  const outer = levels === 3 ? 'c3' : 'c2'
+  if (levels === 3)
+    d.components.push({
+      id: 'c3',
+      name: 'c3',
+      root: n({
+        id: 'root3',
+        kind: 'box',
+        name: 'root3',
+        slot: {},
+        children: [
+          n({
+            id: 'o',
+            kind: 'instance',
+            name: 'o',
+            slot: {},
+            component: 'c2',
+          }),
+        ],
+      }),
+      props: [],
+      variants: [],
+    })
+  d.pages[0].root.children = Array.from({ length: count }, (_, i) =>
+    n({
+      id: `u${i}`,
+      kind: 'instance',
+      name: `u${i}`,
+      slot: fs(),
+      component: outer,
+      ...(over[i] ? { overrides: over[i] } : {}),
+    }),
+  )
+  return d
+}
+const empties = { 'k.title': { props: { runs: [{ text: '' }] } } }
+const small = { 'k.title': { style: { base: { size: 8 } } } }
+const codes = (d: object) =>
+  validateSite(d, reg).map(x => [x.code, x.nodeId, x.path])
+
+test('H1: an outer override past the ninth use is judged: emptied runs and size 8', () => {
+  for (const total of [9, 20])
+    for (const at of [total - 1, 3]) {
+      assert.deepEqual(
+        probs(many(total, { [at]: empties })),
+        [['required', `u${at}`, 'overrides.k.title.props.runs']],
+        `empty, ${total} uses, at ${at}`,
+      )
+      assert.deepEqual(
+        probs(ranged(many(total, { [at]: small }) as never)),
+        [['textRange', `u${at}`, 'overrides.k.title.style.base.size']],
+        `size, ${total} uses, at ${at}`,
+      )
+    }
+})
+
+test('H1: three levels, the override given by the outermost instance, past the ninth use', () => {
+  const key = (o: object) =>
+    Object.fromEntries(Object.entries(o).map(([k, v]) => [`o.${k}`, v]))
+  assert.deepEqual(probs(many(12, { 11: key(empties) }, 3)), [
+    ['required', 'u11', 'overrides.o.k.title.props.runs'],
+  ])
+  assert.deepEqual(probs(ranged(many(12, { 11: key(small) }, 3) as never)), [
+    ['textRange', 'u11', 'overrides.o.k.title.style.base.size'],
+  ])
+})
+
+test('H1: hiding past the ninth use is refused through each shape', () => {
+  for (const o of [
+    { 'k.title': { hide: { phone: true } } },
+    { 'k.title': { style: { base: { hidden: true } } } },
+    { 'k.title': { style: { phone: { hidden: true } } } },
+    { k: { hide: { desktop: true } } },
+  ])
+    assert.equal(
+      probs(many(15, { 14: o }))[0]?.[0],
+      'required',
+      JSON.stringify(o),
+    )
+})
+
+test('H1: 200 uses with no overrides are valid, quickly, and do not hit the bound', () => {
+  const d = ranged(many(200) as never)
+  const t0 = performance.now()
+  assert.deepEqual(codes(d), [])
+  assert.ok(performance.now() - t0 < 2000)
+})
+
+test('H1: harmless overrides on many uses are valid', () => {
+  const colour = { 'k.title': { style: { base: { color: 'brand' } } } }
+  const over = Object.fromEntries(
+    Array.from({ length: 30 }, (_, i) => [i, colour]),
+  )
+  assert.deepEqual(codes(ranged(many(30, over) as never)), [])
+})
+
+test('H1: when too many ways reach a part to judge them all, the refusal is RESOURCE_LIMIT_EXCEEDED, never silence', () => {
+  const colour = { 'k.title': { style: { base: { color: 'brand' } } } }
+  const over = Object.fromEntries(
+    Array.from({ length: 300 }, (_, i) => [i, colour]),
+  )
+  const d = many(300, over)
+  d.pages[0].root.kind = 'column'
+  for (const c of d.pages[0].root.children!) c.slot = {}
+  const p = validateSite(d, reg)
+  assert.ok(
+    p.some(x => x.code === 'RESOURCE_LIMIT_EXCEEDED'),
+    JSON.stringify(p.slice(0, 3)),
+  )
+  const hit = p.find(x => x.code === 'RESOURCE_LIMIT_EXCEEDED')!
+  assert.match(hit.message, /c1/)
+  assert.match(hit.message, /title/)
+})

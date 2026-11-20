@@ -204,8 +204,9 @@ export { indexOf as hiddenIndex }
 
 /** An instance further out that can override a part of a nested component: `via` is the ids of the instances between it and the part (`<inner>.<part>` is the key of its override). */
 export type Outer = { inst: Node; via: string }
-// ponytail: past this many ways a component can be reached the rest are not judged (a diamond of nested components grows as k^depth); judge them all if a real document ever needs it.
-const MAX_CHAINS = 8
+/** How many different sets of outer overrides one use may have, and how many steps the walk may take, before the rest cannot be judged. */
+const MAX_CHAINS = 256
+const MAX_VISITS = 20000
 
 const hasOverrides = (n: Node) =>
   isObj(n.overrides) && Object.keys(n.overrides).length > 0
@@ -238,38 +239,62 @@ function carriers(ix: Index): Set<string> {
 }
 
 /**
- * Every way the instance at the end of `use.path` is reached from a page, the header or the footer, as the outer instances
- * that can override its parts, innermost first. A use directly in a page, the header or the footer has one chain, empty.
- * Ways that pass no instance with overrides give nothing a part could show and are one chain, cut short where the last
- * overrides were.
+ * The instances further out that can change a part of the instance at the end of `use.path`, innermost first, one chain for each
+ * different set of them. Only an instance whose `overrides` has a key under the path to the part (`<via>.`) is recorded, so
+ * uses that carry no such override are the same chain as the shorter one, however many there are. A use directly in a page,
+ * the header or the footer has one chain, empty. `over` is true when the bounds were hit and some chains are missing: the
+ * caller must treat that as "not all uses could be checked".
  */
-export function outerChains(ix: Index, use: Use): Outer[][] {
-  const out: Outer[][] = []
+export function outerChains(
+  ix: Index,
+  use: Use,
+): { chains: Outer[][]; over: boolean } {
+  const found = new Map<string, Outer[]>()
+  const seen = new Map<Node, number>()
+  let visits = 0
+  let over = false
+  const add = (acc: Outer[]) => {
+    const key = acc
+      .map(o => {
+        if (!seen.has(o.inst)) seen.set(o.inst, seen.size)
+        return `${seen.get(o.inst)}:${o.via}`
+      })
+      .join(',')
+    if (found.has(key)) return
+    if (found.size >= MAX_CHAINS) over = true
+    else found.set(key, acc)
+  }
+  const gives = (inst: Node, via: string) =>
+    isObj(inst.overrides) &&
+    Object.keys(inst.overrides).some(k => k.startsWith(`${via}.`))
   const up = (
     tree: TreeAt,
     via: string,
     acc: Outer[],
     stack: ReadonlySet<string>,
   ) => {
-    if (out.length >= MAX_CHAINS) return
-    if (typeof tree !== 'object' || !('component' in tree)) {
-      out.push(acc)
+    if (over) return
+    if (++visits > MAX_VISITS) {
+      over = true
       return
     }
+    if (typeof tree !== 'object' || !('component' in tree)) return add(acc)
     const cid = tree.component
     if (stack.has(cid)) return
-    if (!carriers(ix).has(cid)) {
-      out.push(acc)
-      return
-    }
+    if (!carriers(ix).has(cid)) return add(acc)
     const next = new Set(stack).add(cid)
     for (const v of ix.uses.get(cid) ?? []) {
       const inst = v.path[v.path.length - 1]
-      up(v.tree, `${inst.id}.${via}`, [...acc, { inst, via }], next)
+      up(
+        v.tree,
+        `${inst.id}.${via}`,
+        gives(inst, via) ? [...acc, { inst, via }] : acc,
+        next,
+      )
     }
   }
   up(use.tree, use.path[use.path.length - 1].id, [], new Set())
-  return out
+  return { chains: [...found.values()], over }
 }
 
 /**

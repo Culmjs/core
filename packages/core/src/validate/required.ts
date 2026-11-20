@@ -315,6 +315,14 @@ function placeOf(
   }
 }
 
+/** The refusal when too many ways reach a part of a component for its uses to be checked: never a silent pass. */
+const tooMany = (cid: string, part: string, rule: string): Problem => ({
+  code: 'RESOURCE_LIMIT_EXCEEDED',
+  message: `The part "${part}" of the component "${cid}" is reached in too many ways through other components for all its uses to be checked.`,
+  rule,
+  nodeId: part,
+})
+
 /** A required node that is hidden, and a required text with no content. Assumes a well-formed tree. */
 export function checkRequired(doc: SiteDocument): Problem[] {
   const out: Problem[] = []
@@ -343,17 +351,21 @@ export function checkRequired(doc: SiteDocument): Problem[] {
     if (cid !== undefined && !uses) continue
     const owner = cid === undefined ? undefined : ix.components.get(cid)
     // The ways each use of a component is shown, worked out once per tree.
-    const views = (uses ?? []).flatMap(u =>
-      outerChains(ix, u).map(outer => ({
+    let over = false
+    const views = (uses ?? []).flatMap(u => {
+      const c = outerChains(ix, u)
+      over ||= c.over
+      return c.chains.map(outer => ({
         use: useOf(owner!, u.path[u.path.length - 1], mines(owner!)),
         outer,
-      })),
-    )
+      }))
+    })
     walkWithAncestors(root, (n, up) => {
       let form: Node | undefined
       for (let i = up.length - 1; i >= 0 && !form; i--)
         if (up[i].kind === 'form') form = up[i]
       if (!isRequired(n, form)) return
+      if (over) add(tooMany(cid!, n.id, 'required'))
       const why = hiddenAt(ix, tree, [...up, n])
       if (why) {
         const path = pathOf(why)
@@ -469,13 +481,24 @@ export function checkTextRange(doc: SiteDocument): Problem[] {
     const uses = cid === undefined ? undefined : ix.uses.get(cid)
     if (!comp || !uses) continue
     const mines = minesOf(comp)
-    const views = uses.flatMap(u =>
-      outerChains(ix, u).map(outer => ({
+    let over = false
+    const views = uses.flatMap(u => {
+      const c = outerChains(ix, u)
+      over ||= c.over
+      return c.chains.map(outer => ({
         use: useOf(comp, u.path[u.path.length - 1], mines),
         outer,
-      })),
-    )
+      }))
+    })
     walkWithAncestors(root, part => {
+      if (over) {
+        const p = tooMany(comp.id, part.id, 'textRange')
+        const k = JSON.stringify([p.rule, p.message])
+        if (!seen.has(k)) {
+          seen.add(k)
+          out.push(p)
+        }
+      }
       for (const v of views) {
         const st = stagesOf(part, v.use, v.outer)
         for (const s of nodeSizes(st[st.length - 1].node)) {
