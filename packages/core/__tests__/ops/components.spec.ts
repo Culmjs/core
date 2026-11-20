@@ -14,6 +14,8 @@ import type { OpResult, TreeRef } from '../../src/ops/types.ts'
 import { validateSite } from '../../src/validate/index.ts'
 import { compilePage } from '../../src/compile/index.ts'
 import {
+  DEMO,
+  demoTree,
   node,
   projectsList,
   sampleRegistry,
@@ -23,6 +25,21 @@ import {
 } from '../kit.ts'
 
 const reg = sampleRegistry()
+// a block named "pattern", so that a node with that origin is a known block
+reg.use({
+  name: 'pat',
+  version: 1,
+  api: [1],
+  runs: ['build'],
+  trust: 'declarative',
+  blocks: [
+    {
+      ...DEMO,
+      id: 'pattern',
+      looks: [{ id: 'dots', name: 'Dots', tree: demoTree() }],
+    },
+  ],
+})
 const T = { page: 'home' }
 
 const run = (
@@ -695,4 +712,89 @@ test('detach of a component whose root has an origin gives a copy with no origin
   assert.deepEqual(idsOf(d), ['u', 'n1'])
   assert.deepEqual(r.created, [{ tree: T, id: 'n1' }])
   assert.deepEqual(problems(r.doc), [])
+})
+
+// ---- fix round 2
+const PATTERN = { block: 'pattern', version: 1, look: 'dots' }
+test('detach drops the origin on the root only, and a pattern stays behind: the page is as it was', () => {
+  for (const nested of [true, false]) {
+    const inner = {
+      ...node('pat', 'box', [text('pt', 'dots')]),
+      origin: PATTERN,
+    }
+    const root = nested
+      ? node('o', 'box', [inner, text('ot', 'x')])
+      : { ...node('o', 'box', [text('ot', 'x')]), origin: PATTERN }
+    const doc = siteWith([text('t', 'x'), inst('u', 'pc')])
+    doc.components = [{ id: 'pc', name: 'Pc', root, props: [], variants: [] }]
+    assert.deepEqual(problems(doc), [], String(nested))
+    const r = ok(run('detach', doc, { id: 'u' }))
+    assert.deepEqual(problems(r.doc), [], String(nested))
+    const d = at(r.doc, 'u')
+    assert.equal(d.origin, undefined)
+    if (nested) {
+      assert.equal(d.placement, undefined)
+      assert.deepEqual(d.children![0].origin, PATTERN)
+      assert.deepEqual(idsOf(d), ['u', 'n1', 'n2', 'n3'])
+    } else assert.deepEqual(d.placement, { mode: 'behind' })
+    // the page keeps the pattern behind its parent
+    same(doc, r.doc)
+    assert.match(html(r.doc), /z-index:-/)
+  }
+})
+
+test('a pattern root keeps the placement mode its use has', () => {
+  const root = { ...node('o', 'box'), origin: PATTERN }
+  const doc = siteWith([
+    text('t', 'x'),
+    inst('u', 'pc', { placement: { mode: 'front' } }),
+  ])
+  doc.components = [{ id: 'pc', name: 'Pc', root, props: [], variants: [] }]
+  assert.deepEqual(problems(doc), [])
+  const r = ok(run('detach', doc, { id: 'u' }))
+  assert.deepEqual(at(r.doc, 'u').placement, { mode: 'front' })
+})
+
+test('makeComponent refuses, through the validity guard, a result that would not validate, and says why', () => {
+  // a site rule no explicit check knows: this site may hold no components
+  const strict = sampleRegistry()
+  strict.use({
+    name: 'strict',
+    version: 1,
+    api: [1],
+    runs: ['build'],
+    trust: 'declarative',
+    rules: [
+      {
+        name: 'no-components',
+        check: (d: SiteDocument) =>
+          d.components.length
+            ? [
+                {
+                  code: 'POLICY_VIOLATION' as const,
+                  message: 'No components here.',
+                  path: 'components',
+                },
+              ]
+            : [],
+      },
+    ],
+  })
+  const doc = siteWith([node('b', 'box', [text('k', 'x')])])
+  assert.deepEqual(validateSite(doc, strict), [])
+  const before = structuredClone(doc)
+  const r = ops.makeComponent(deepFreeze(doc), strict, {
+    op: 'makeComponent',
+    tree: T,
+    id: 'b',
+    component: 'c',
+    name: 'C',
+  })
+  invalid(r, { nodeId: 'b', path: 'components' })
+  assert.ok(!r.ok)
+  assert.equal(
+    r.problems[0].message,
+    '"b" cannot become a component because the result would not be valid: No components here.',
+  )
+  assert.deepEqual(doc, before)
 })

@@ -251,10 +251,12 @@ export const detach: OpFn<'detach'> = (doc, registry, op) => {
   const copy: Node = JSON.parse(JSON.stringify(unrolled))
   // A detached copy has no block identity and no dotted ids: every node but the root gets the next free `n<k>`, in document order.
   const rename: Node[] = []
-  walk(copy, (w, p) => {
-    delete w.origin
-    if (p) rename.push(w)
-  })
+  walk(copy, (w, p) => void (p && rename.push(w)))
+  // The root drops its block identity. A pattern block sits behind its parent unless its placement says otherwise, which
+  // `effectivePlacement` reads from the origin, so that is written out. A block nested in the component keeps its origin.
+  if (copy.origin?.block === 'pattern' && copy.placement?.mode === undefined)
+    copy.placement = { ...copy.placement, mode: 'behind' }
+  delete copy.origin
   const fresh = nextIds(doc, t.tree, rename.length)
   const map = new Map(rename.map((w, i) => [w.id, fresh[i]]))
   walk(copy, w => {
