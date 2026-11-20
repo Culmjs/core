@@ -1,12 +1,13 @@
 import { ID_RE } from '../document/kinds.ts'
 import { isObj } from '../document/rules.ts'
 import { replace, retarget, targetOf, walk } from '../document/tree.ts'
-import type { Component, Node } from '../document/index.ts'
+import type { Component, Node, SiteDocument } from '../document/index.ts'
 import { unrollOne } from '../data/bind.ts'
-import { MAX_COMPONENTS } from '../validate/validate.ts'
+import { MAX_COMPONENTS, validateSite } from '../validate/validate.ts'
 import { nextIds } from './ids.ts'
 import { at, bad, checkSafe, isRefusal, merge, ref } from './nodes.ts'
 import { trees, withRoot } from './trees.ts'
+import type { Registry } from '../registry/index.ts'
 import { refuse } from './types.ts'
 import type { OpFn } from './types.ts'
 
@@ -19,9 +20,33 @@ const targetsOf = (w: Node): string[] =>
     ...(Array.isArray(w.on) ? w.on.map(t => targetOf(t?.do)) : []),
   ].filter((x): x is string => typeof x === 'string')
 
+/** True when `v` holds a reference to the row of an enclosing repeat. */
+const readsItem = (v: unknown): boolean =>
+  typeof v === 'object' && v !== null
+    ? (v as Fields).from === 'item' || Object.values(v).some(readsItem)
+    : false
+
+/** The refusal when the input validated and `after` does not; undefined otherwise. */
+function stillValid(
+  input: SiteDocument,
+  after: SiteDocument,
+  registry: Registry,
+  nodeId: string,
+  what: string,
+) {
+  if (validateSite(input, registry).length) return undefined
+  const first = validateSite(after, registry)[0]
+  return first
+    ? bad(`${what} because the result would not be valid: ${first.message}`, {
+        nodeId,
+        path: first.path,
+      })
+    : undefined
+}
+
 // ---- makeComponent
 
-export const makeComponent: OpFn<'makeComponent'> = (doc, _registry, op) => {
+export const makeComponent: OpFn<'makeComponent'> = (doc, registry, op) => {
   const o = op as unknown as Fields
   const t = at(doc, o)
   if (isRefusal(t)) return t
@@ -89,6 +114,34 @@ export const makeComponent: OpFn<'makeComponent'> = (doc, _registry, op) => {
       )
   }
 
+  // A component's tree has no enclosing states and no enclosing repeat.
+  const declared = new Set<string>()
+  walk(t.node, w => {
+    for (const d of w.state ?? []) declared.add(d.name)
+  })
+  let outside: ReturnType<typeof bad> | undefined
+  const scan = (w: Node, repeated: boolean) => {
+    if (outside) return
+    for (const tr of w.on ?? []) {
+      const d = (tr?.do ?? {}) as Fields
+      const name = d.set ?? d.toggle ?? d.step
+      if (typeof name === 'string' && !declared.has(name))
+        outside = bad(
+          `"${w.id}" uses the state "${name}", which is declared outside the node; the node cannot become a component.`,
+          { nodeId: w.id },
+        )
+    }
+    const { children, ...own } = w
+    if (!repeated && readsItem(own))
+      outside = bad(
+        `"${w.id}" reads an item of a repeat that encloses it; the node cannot become a component.`,
+        { nodeId: w.id },
+      )
+    for (const k of children ?? []) scan(k, repeated || w.repeat !== undefined)
+  }
+  scan(t.node, false)
+  if (outside) return outside
+
   const n = t.node
   const instance: Fields = {
     id,
@@ -120,10 +173,19 @@ export const makeComponent: OpFn<'makeComponent'> = (doc, _registry, op) => {
     t.tree,
     replace(t.root, id, instance as unknown as Node),
   )
+  const result = { ...placed, components: [...placed.components, made] }
+  const broken = stillValid(
+    doc,
+    result,
+    registry,
+    id,
+    `"${id}" cannot become a component`,
+  )
+  if (broken) return broken
   // `created` is empty: the instance has the id of the node it replaces, so no new node id appears in the tree.
   return {
     ok: true,
-    doc: { ...placed, components: [...placed.components, made] },
+    doc: result,
     created: [],
     changed: [ref(t.tree, id)],
   }
@@ -175,7 +237,9 @@ export const detach: OpFn<'detach'> = (doc, registry, op) => {
   const n = t.node
   if (n.kind !== 'instance')
     return bad(`"${n.id}" is not a component use.`, { nodeId: n.id })
-  const unrolled = unrollOne(doc, registry, n)
+  // Only the component's own tree is unrolled: what a person put in the slot is theirs and goes back as it was.
+  const { children: slotted, ...bare } = n
+  const unrolled = unrollOne(doc, registry, bare as Node)
   if (unrolled.kind === 'instance')
     return refuse(
       'UNKNOWN_COMPONENT',
@@ -183,19 +247,14 @@ export const detach: OpFn<'detach'> = (doc, registry, op) => {
       { nodeId: n.id, allowed: doc.components.map(c => c.id) },
     )
 
-  // A copy, so what is rewritten below is never shared with the document (unrolling shares the nodes of the use's slot).
+  // A copy, so what is rewritten below is never shared with the document.
   const copy: Node = JSON.parse(JSON.stringify(unrolled))
-  // A part's id has a dot, which only a block's parts may have. Keep the root, ids without a dot (slot content) and parts of a
-  // block inside the tree; every other node gets the next free `n<k>` of the tree, in document order.
+  // A detached copy has no block identity and no dotted ids: every node but the root gets the next free `n<k>`, in document order.
   const rename: Node[] = []
-  const scan = (w: Node, ns: string | undefined, top: boolean) => {
-    const own = w.origin !== undefined ? w.id : ns
-    const [a, b, ...more] = w.id.split('.')
-    const keeps = top || b === undefined || (!more.length && a === ns)
-    if (!keeps) rename.push(w)
-    for (const k of w.children ?? []) scan(k, keeps ? own : undefined, false)
-  }
-  scan(copy, undefined, true)
+  walk(copy, (w, p) => {
+    delete w.origin
+    if (p) rename.push(w)
+  })
   const fresh = nextIds(doc, t.tree, rename.length)
   const map = new Map(rename.map((w, i) => [w.id, fresh[i]]))
   walk(copy, w => {
@@ -205,9 +264,35 @@ export const detach: OpFn<'detach'> = (doc, registry, op) => {
     retarget(w, map)
   })
   for (const w of rename) w.id = map.get(w.id)!
+  // The slot content goes into the slot parts, as unrolling does; its nodes keep their ids and kinds.
+  if (slotted?.length) {
+    const comp = doc.components.find(c => c.id === n.component)!
+    const parts = new Set(
+      (Array.isArray(comp.props) ? comp.props : [])
+        .filter(x => x.type === 'slot' && x.part)
+        .map(x => (x.part === comp.root.id ? n.id : `${n.id}.${x.part}`)),
+    )
+    const into = [...parts].map(id => map.get(id) ?? id)
+    walk(copy, w => {
+      if (into.includes(w.id))
+        w.children = [
+          ...(w.children ?? []),
+          ...JSON.parse(JSON.stringify(slotted)),
+        ]
+    })
+  }
+  const result = withRoot(doc, t.tree, replace(t.root, n.id, copy))
+  const broken = stillValid(
+    doc,
+    result,
+    registry,
+    n.id,
+    `"${n.id}" cannot be detached`,
+  )
+  if (broken) return broken
   return {
     ok: true,
-    doc: withRoot(doc, t.tree, replace(t.root, n.id, copy)),
+    doc: result,
     created: fresh.map(id => ref(t.tree, id)),
     changed: [ref(t.tree, n.id)],
   }

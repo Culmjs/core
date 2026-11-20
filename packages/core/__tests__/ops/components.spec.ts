@@ -12,7 +12,15 @@ import * as ops from '../../src/ops/components.ts'
 import { rootOf } from '../../src/ops/trees.ts'
 import type { OpResult, TreeRef } from '../../src/ops/types.ts'
 import { validateSite } from '../../src/validate/index.ts'
-import { node, sampleRegistry, siteWith, text } from '../kit.ts'
+import { compilePage } from '../../src/compile/index.ts'
+import {
+  node,
+  projectsList,
+  sampleRegistry,
+  siteWith,
+  stateful,
+  text,
+} from '../kit.ts'
 
 const reg = sampleRegistry()
 const T = { page: 'home' }
@@ -505,4 +513,186 @@ test('no component operation changes its input', () => {
     ok(run(name, doc, op))
     assert.deepEqual(doc, before, name)
   }
+})
+
+// ---- fix round 1
+const html = (doc: SiteDocument) => {
+  const page = compilePage(doc, 'home', { registry: reg, mode: 'live' })
+  assert.ok(page.ok)
+  return page.html
+}
+// The DOM id of a layer follows the node id, which detach must change (a dotted id is not valid in a page): `renamed` maps new to old.
+const same = (
+  before: SiteDocument,
+  after: SiteDocument,
+  renamed: Record<string, string> = {},
+) => {
+  let b = html(after)
+  for (const [to, from] of Object.entries(renamed))
+    b = b.replaceAll(`w-${to}`, `w-${from}`)
+  assert.equal(b, html(before))
+}
+
+test('makeComponent is refused for a node that uses a state declared outside it, and accepted when the subtree declares its own', () => {
+  const doc = siteWith([stateful('tabs')])
+  assert.deepEqual(problems(doc), [])
+  const before = structuredClone(doc)
+  invalid(
+    run('makeComponent', deepFreeze(doc), {
+      id: 'tabsgo',
+      component: 'c',
+      name: 'C',
+    }),
+    { nodeId: 'tabsgo' },
+  )
+  assert.deepEqual(doc, before)
+  const r = ok(
+    run('makeComponent', siteWith([stateful('tabs')]), {
+      id: 'tabs',
+      component: 'c',
+      name: 'C',
+    }),
+  )
+  assert.deepEqual(problems(r.doc), [])
+})
+
+test('makeComponent is refused for a node that reads an item of an enclosing repeat, and accepted with the repeat inside the subtree', () => {
+  const doc = siteWith([projectsList()])
+  assert.deepEqual(problems(doc), [])
+  const before = structuredClone(doc)
+  for (const id of ['plistitem', 'plisttitle'])
+    invalid(
+      run('makeComponent', deepFreeze(doc), { id, component: 'c', name: 'C' }),
+      { nodeId: 'plisttitle' },
+    )
+  assert.deepEqual(doc, before)
+  const whole = ok(
+    run('makeComponent', siteWith([projectsList()]), {
+      id: 'plist',
+      component: 'c',
+      name: 'C',
+    }),
+  )
+  assert.deepEqual(problems(whole.doc), [])
+})
+
+test('makeComponent skips the validity guard when the input was already invalid', () => {
+  const doc = siteWith([node('b', 'box')])
+  doc.components = [
+    { id: 'bad', name: '', root: node('r', 'box'), props: [], variants: [] },
+  ]
+  assert.ok(problems(doc).length)
+  ok(run('makeComponent', doc, { id: 'b', component: 'c', name: 'C' }))
+})
+
+test('makeComponent leaves the page HTML as it was', () => {
+  const doc = siteWith([
+    node('b', 'box', [
+      text('k', 'Styled', {
+        style: { base: { color: 'brand' } },
+        hide: { phone: true },
+      }),
+      button('go', {
+        props: { label: 'Go', link: { url: 'https://x.org/p' } },
+      }),
+    ]),
+  ])
+  assert.deepEqual(problems(doc), [])
+  const r = ok(
+    run('makeComponent', doc, { id: 'b', component: 'c', name: 'C' }),
+  )
+  same(doc, r.doc)
+})
+
+test('detach leaves the page HTML as it was, with a text property on the use and a matching variant', () => {
+  const c = card()
+  c.props = [
+    {
+      key: 'heading',
+      label: 'Heading',
+      type: 'text',
+      part: 'title',
+      field: 'text',
+    },
+    {
+      key: 'look',
+      label: 'Look',
+      type: 'choice',
+      options: ['plain', 'loud'],
+      default: 'plain',
+    },
+  ] as Component['props']
+  c.variants = [
+    {
+      when: { look: 'loud' },
+      patch: { title: { style: { base: { color: 'brand' } } } },
+    },
+  ]
+  const doc = withCard(
+    inst('i', 'card', { set: { heading: 'Yo', look: 'loud' } }),
+  )
+  doc.components = [c]
+  assert.deepEqual(problems(doc), [])
+  const r = ok(run('detach', doc, { id: 'i' }))
+  same(doc, r.doc, { n3: 'i.panel' })
+})
+
+test("detach keeps the use's slot content as it was: same nodes, same ids, an instance still an instance", () => {
+  const c = card()
+  c.props = [
+    { key: 'more', label: 'More', type: 'slot', part: 'panel' },
+  ] as Component['props']
+  const other: Component = {
+    id: 'other',
+    name: 'Other',
+    root: node('oroot', 'box', [text('ot', 'inner')]),
+    props: [],
+    variants: [],
+  }
+  const slotted = [
+    inst('k1', 'other', {
+      set: {},
+      overrides: { ot: { hide: { phone: true } } },
+    }),
+    text('k2', 'plain'),
+  ]
+  const doc = withCard(inst('i', 'card', { children: slotted }))
+  doc.components = [c, other]
+  assert.deepEqual(problems(doc), [])
+  const r = ok(run('detach', doc, { id: 'i' }))
+  const panel = at(r.doc, 'n3')
+  assert.deepEqual(
+    panel.children!.map(k => k.id),
+    ['n4', 'k1', 'k2'],
+  )
+  assert.deepEqual(at(r.doc, 'k1'), slotted[0])
+  assert.deepEqual(at(r.doc, 'k2'), slotted[1])
+  assert.deepEqual(
+    r.created.map(x => x.id),
+    ['n1', 'n2', 'n3', 'n4'],
+  )
+  assert.deepEqual(problems(r.doc), [])
+  same(doc, r.doc, { n3: 'i.panel' })
+})
+
+test('detach of a component whose root has an origin gives a copy with no origin, no dotted id, and every new id in created', () => {
+  const doc = siteWith([text('t', 'x'), inst('u', 'blk')])
+  doc.components = [
+    {
+      id: 'blk',
+      name: 'Blk',
+      root: {
+        ...node('r', 'box', [text('a', 'A')]),
+        origin: { block: 'demo', version: 1, look: 'default' },
+      },
+      props: [],
+      variants: [],
+    },
+  ]
+  const r = ok(run('detach', doc, { id: 'u' }))
+  const d = at(r.doc, 'u')
+  assert.equal(d.origin, undefined)
+  assert.deepEqual(idsOf(d), ['u', 'n1'])
+  assert.deepEqual(r.created, [{ tree: T, id: 'n1' }])
+  assert.deepEqual(problems(r.doc), [])
 })
