@@ -109,7 +109,7 @@ const SKELETON = 2000
 const CUT_LISTED = 50
 const CUT_PATH = 80
 
-const len = (v: unknown) => JSON.stringify(v)?.length ?? 0
+export const len = (v: unknown) => JSON.stringify(v)?.length ?? 0
 
 const LAYOUTS: readonly Layout[] = ['desktop', 'tablet', 'phone']
 const isObj = (v: unknown): v is Record<string, unknown> =>
@@ -122,7 +122,7 @@ const str = (v: unknown) => (typeof v === 'string' ? v : '')
  * The longest prefix of `s` whose JSON form (quotes included) is at most `budget` characters, so a string of quotes or control
  * characters comes out shorter than a plain one. Never ends inside a surrogate pair. Reads no further than the budget.
  */
-function cut(s: string, budget: number): string {
+export function cut(s: string, budget: number): string {
   let cost = 2
   let i = 0
   while (i < s.length) {
@@ -147,10 +147,10 @@ function cut(s: string, budget: number): string {
 }
 
 /** The marker for a value that is too big to show. Its size is bounded and it never needs shrinking. */
-const marker = (v: unknown) => ({ cut: len(v) })
+export const marker = (v: unknown) => ({ cut: len(v) })
 
 /** A reply that is over the cap is never returned; it would be a mistake in the reads. */
-function capped<R>(r: R | Refusal): R | Refusal {
+export function capped<R>(r: R | Refusal): R | Refusal {
   return (r as { ok?: unknown }).ok === true && len(r) > READ_CAP
     ? refuse('RESOURCE_LIMIT_EXCEEDED', 'The reply could not be made to fit.')
     : r
