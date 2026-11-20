@@ -6,7 +6,8 @@ import { plan } from '../../src/ops/plan.ts'
 import type { ChangeRequest } from '../../src/ops/types.ts'
 import { defaultSiteStyles } from '../../src/style/index.ts'
 import { validateSite } from '../../src/validate/index.ts'
-import { kitRegistry, node, siteWith, text, twoPages } from '../kit.ts'
+import type { SettingFn } from '../../src/registry/index.ts'
+import { STAMP, kitRegistry, node, siteWith, text, twoPages } from '../kit.ts'
 
 // Goal 5 through `plan`: what a person cannot do to required content, however it is tried.
 
@@ -568,4 +569,151 @@ test('N2 refused through plan: the outer toggle on the box around the nested use
   assert.ok(!r.ok)
   assert.deepEqual(at(r.problems), [['u0', 'parts.obox.style.base.hidden']])
   assert.ok(plan(boxed(), reg, req([{ ...off, set: { oshow: true } }])).ok)
+})
+
+// ---- fourth round, S1: no operation writes the sample marks ----
+
+const firstProblem = (r: ReturnType<typeof plan>) => {
+  assert.ok(!r.ok, 'expected a refusal')
+  return r.problems[0]
+}
+
+test('S1 refused through plan: setProps writing sample or chrome, with any value', () => {
+  for (const [key, value] of [
+    ['sample', true],
+    ['sample', false],
+    ['chrome', true],
+  ] as const) {
+    const p = firstProblem(
+      plan(
+        start(),
+        reg,
+        req([{ op: 'setProps', tree: T, id: 'rt', props: { [key]: value } }]),
+      ),
+    )
+    assert.deepEqual(
+      [p.code, p.nodeId, p.path],
+      ['INVALID_OPERATION', 'rt', `props.${key}`],
+    )
+    assert.match(p.message, /cannot be set/)
+  }
+})
+
+test('S1 refused through plan: setInstance whose override writes sample or chrome on a part', () => {
+  for (const key of ['sample', 'chrome']) {
+    const p = firstProblem(
+      plan(start(), reg, req([over({ title: { props: { [key]: true } } })])),
+    )
+    assert.deepEqual(
+      [p.code, p.nodeId, p.path],
+      ['INVALID_OPERATION', 'i1', `overrides.title.props.${key}`],
+    )
+  }
+})
+
+test('S1: inserting the stamp block (a required sample title) is accepted and valid; setText on it clears the mark', () => {
+  const ins = {
+    op: 'insertBlock',
+    tree: T,
+    parent: 'homeroot',
+    index: 0,
+    block: 'stamp',
+    look: 'default',
+    id: 'st',
+  }
+  const r = plan(start(), reg, req([ins]))
+  assert.ok(r.ok, JSON.stringify(!r.ok && r.problems))
+  const title = (d: SiteDocument) =>
+    d.pages[0].root.children!.find(c => c.id === 'st')!.children![0]
+  assert.equal(title(r.doc).props!.sample, true)
+  assert.equal(title(r.doc).required, true)
+  assert.deepEqual(validateSite(r.doc, reg), [])
+  const typed = plan(
+    start(),
+    reg,
+    req([ins, { op: 'setText', tree: T, id: 'st.title', text: 'Mine' }]),
+  )
+  assert.ok(typed.ok, JSON.stringify(!typed.ok && typed.problems))
+  assert.equal(title(typed.doc).props!.sample, false)
+})
+
+/** A registry with the kit and a block `mk` whose title is a required sample; `fn` is its setting function, `version` the block's version. */
+const markRegistry = (version = 1, fn?: SettingFn) => {
+  const r = kitRegistry()
+  r.use({
+    name: 'mark',
+    version,
+    api: [1],
+    runs: ['build'],
+    trust: 'declarative',
+    blocks: [
+      {
+        ...STAMP,
+        id: 'mk',
+        version,
+        onInsert: undefined,
+        settings: fn
+          ? [{ key: 'm', label: 'M', type: 'switch', fn: 'mark' }]
+          : [],
+      },
+    ],
+    ...(fn ? { settingFns: { mark: fn } } : {}),
+  })
+  return r
+}
+const mkDoc = (r: ReturnType<typeof kitRegistry>) => {
+  const p = plan(
+    start(),
+    r,
+    req([
+      {
+        op: 'insertBlock',
+        tree: T,
+        parent: 'homeroot',
+        index: 0,
+        block: 'mk',
+        look: 'default',
+        id: 'mk',
+      },
+      { op: 'setText', tree: T, id: 'mk.title', text: 'Mine' },
+    ]),
+  )
+  assert.ok(p.ok, JSON.stringify(!p.ok && p.problems))
+  return p.doc
+}
+
+test('S1 refused: a setting function that marks a required text the owner wrote as a sample', () => {
+  const marking: SettingFn = {
+    read: () => false,
+    apply(root) {
+      const out: Node = JSON.parse(JSON.stringify(root))
+      out.children![0].props = { ...out.children![0].props, sample: true }
+      return out
+    },
+  }
+  const r = markRegistry(1, marking)
+  const p = firstProblem(
+    plan(
+      mkDoc(r),
+      r,
+      req([
+        { op: 'setBlockSetting', tree: T, id: 'mk', key: 'm', value: true },
+      ]),
+    ),
+  )
+  assert.deepEqual(
+    [p.code, p.rule, p.nodeId],
+    ['POLICY_VIOLATION', 'required', 'mk.title'],
+  )
+})
+
+test('S1 refused: updateBlock that resets a required text the owner wrote back to a sample', () => {
+  const doc = mkDoc(markRegistry(1))
+  const p = firstProblem(
+    plan(doc, markRegistry(2), req([{ op: 'updateBlock', tree: T, id: 'mk' }])),
+  )
+  assert.deepEqual(
+    [p.code, p.rule, p.nodeId],
+    ['POLICY_VIOLATION', 'required', 'mk.title'],
+  )
 })

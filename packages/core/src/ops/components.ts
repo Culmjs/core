@@ -5,7 +5,7 @@ import type { Component, Node, SiteDocument } from '../document/index.ts'
 import { unrollOne } from '../data/bind.ts'
 import { MAX_COMPONENTS, validateSite } from '../validate/validate.ts'
 import { nextIds } from './ids.ts'
-import { at, bad, checkSafe, isRefusal, merge, ref } from './nodes.ts'
+import { MARKS, at, bad, checkSafe, isRefusal, merge, ref } from './nodes.ts'
 import { trees, withRoot } from './trees.ts'
 import type { Registry } from '../registry/index.ts'
 import { refuse } from './types.ts'
@@ -214,6 +214,18 @@ export const setInstance: OpFn<'setInstance'> = (doc, _registry, op) => {
         })
   const unsafe = checkSafe(o, n.id, ['set', 'overrides'])
   if (unsafe) return unsafe
+  if (isObj(o.overrides))
+    for (const [k, v] of Object.entries(o.overrides)) {
+      const mark =
+        isObj(v) && isObj(v.props)
+          ? MARKS.find(m => Object.hasOwn(v.props as object, m))
+          : undefined
+      if (mark)
+        return bad(
+          `The ${mark} mark cannot be set by an operation; only inserting a block writes it.`,
+          { nodeId: n.id, path: `overrides.${k}.props.${mark}` },
+        )
+    }
   const out: Fields = { ...n }
   for (const k of ['set', 'overrides']) {
     if (o[k] === undefined) continue

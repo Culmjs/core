@@ -235,6 +235,33 @@ export const requiredRefusal = (lost: NodeRef) =>
     { nodeId: lost.id, rule: 'required' },
   )
 
+const sampleAt = (doc: SiteDocument, r: NodeRef) => {
+  const root = rootOf(doc, r.tree)
+  const n = root && find(root, r.id)
+  return n ? n.props?.sample === true : undefined
+}
+
+/** A node that was in the site, not a sample, and after the change is required and a sample: the live page would leave it out. */
+export function madeSample(
+  before: SiteDocument,
+  after: SiteDocument,
+): NodeRef | undefined {
+  return requiredRefs(after).find(
+    r => sampleAt(after, r) === true && sampleAt(before, r) === false,
+  )
+}
+
+/** The refusal for a change that would turn required text back into sample text. */
+export const sampleRefusal = (r: NodeRef) =>
+  refuse(
+    'POLICY_VIOLATION',
+    `"${r.id}" must stay on the page, but this change would make it sample text again, which the live page leaves out.`,
+    { nodeId: r.id, rule: 'required' },
+  )
+
+/** Provenance marks: only inserting a block writes them. */
+export const MARKS = ['sample', 'chrome'] as const
+
 export const remove: OpFn<'remove'> = (doc, _registry, op) => {
   const t = at(doc, op as unknown as Fields)
   if (isRefusal(t)) return t
@@ -310,6 +337,12 @@ export const setProps: OpFn<'setProps'> = (doc, _registry, op) =>
       return bad('name must be a string.', { nodeId: n.id, path: 'name' })
     const unsafe = checkSafe(o, n.id, ['props'])
     if (unsafe) return unsafe
+    const mark = MARKS.find(k => Object.hasOwn(o.props as object, k))
+    if (mark)
+      return bad(
+        `The ${mark} mark cannot be set by an operation; only inserting a block writes it.`,
+        { nodeId: n.id, path: `props.${mark}` },
+      )
     // Only words the owner writes make a sample or a block's own wording theirs (the rule `bind.ts` and `applySetting` follow): a rename or another setting leaves the marks, and the live page as it was.
     const words = ['runs', 'label', 'summary'].some(k =>
       Object.hasOwn(o.props as object, k),
