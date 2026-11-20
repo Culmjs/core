@@ -167,3 +167,20 @@ test('a guide of 501 characters on a block, and on a source, makes use() throw a
     assert.equal(r.plugins().length, 1)
   }
 })
+
+test('a guide that is not a string (a number, a list of 600 items, an object with a length) is refused like a long one', () => {
+  for (const guide of [5, new Array(600).fill('x'), { length: 3 }]) {
+    const r = createRegistry()
+    assert.throws(
+      () =>
+        r.use(
+          plug({ blocks: [{ ...blk('b'), guide } as unknown as BlockDef] }),
+        ),
+      /guide/,
+    )
+    assert.deepEqual(r.plugins(), [])
+  }
+  const r = createRegistry()
+  r.use(plug({ blocks: [{ ...blk('b'), guide: '' }] }))
+  assert.equal(r.plugins().length, 1)
+})

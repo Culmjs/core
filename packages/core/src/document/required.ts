@@ -84,29 +84,41 @@ function indexOf(doc: SiteDocument): Index {
   const uses = new Map<string, Use[]>()
   for (const [tree, root] of trees(doc))
     walkWithAncestors(root, (n, up) => {
-      if (n.kind === 'instance' && typeof n.component === 'string')
-        uses.set(n.component, [
-          ...(uses.get(n.component) ?? []),
-          { tree, path: [...up, n] },
-        ])
+      if (n.kind === 'instance' && typeof n.component === 'string') {
+        const list = uses.get(n.component) ?? []
+        list.push({ tree, path: [...up, n] })
+        uses.set(n.component, list)
+      }
     })
   // A use counts only when it is reachable from a page, the header or the footer: directly, or inside a used component.
   const compOf = (u: Use) =>
     typeof u.tree === 'object' && 'component' in u.tree
       ? u.tree.component
       : undefined
+  // Reachability from the pages, header and footer, in one pass: `inside` lists the components each component's tree instantiates.
   const used = new Set<string>()
-  for (let grew = true; grew;) {
-    grew = false
-    for (const [cid, list] of uses)
-      if (
-        !used.has(cid) &&
-        list.some(u => compOf(u) === undefined || used.has(compOf(u)!))
-      ) {
-        used.add(cid)
-        grew = true
+  const inside = new Map<string, string[]>()
+  const todo: string[] = []
+  for (const [cid, list] of uses)
+    for (const u of list) {
+      const host = compOf(u)
+      if (host === undefined) {
+        if (!used.has(cid)) {
+          used.add(cid)
+          todo.push(cid)
+        }
+      } else {
+        const l = inside.get(host) ?? []
+        l.push(cid)
+        inside.set(host, l)
       }
-  }
+    }
+  for (let c = todo.pop(); c !== undefined; c = todo.pop())
+    for (const t of inside.get(c) ?? [])
+      if (!used.has(t)) {
+        used.add(t)
+        todo.push(t)
+      }
   for (const [cid, list] of uses) {
     const live = list.filter(
       u => compOf(u) === undefined || used.has(compOf(u)!),

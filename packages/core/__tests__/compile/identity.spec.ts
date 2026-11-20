@@ -84,3 +84,24 @@ test('FRAMEWORK_VERSION equals the version in packages/core/package.json', () =>
   ) as { version: string }
   assert.equal(FRAMEWORK_VERSION, pkg.version)
 })
+
+test('a plug-in with another name, same version, is another build', async () => {
+  const named = (name: string) => {
+    const r = createRegistry()
+    r.use(plug(1, name))
+    return r
+  }
+  assert.notEqual(
+    await buildIdentity(doc(), data, named('p'), files),
+    await buildIdentity(doc(), data, named('q'), files),
+  )
+})
+
+test('rows nested past the stack limit of JSON reject with the same clear error', async () => {
+  let deep: Record<string, unknown> = { n: 1 }
+  for (let i = 0; i < 20000; i++) deep = { z: deep }
+  await assert.rejects(
+    buildIdentity(doc(), { rows: { a: [deep] } }, reg()),
+    (e: Error) => e instanceof Error && /cannot be hashed/.test(e.message),
+  )
+})

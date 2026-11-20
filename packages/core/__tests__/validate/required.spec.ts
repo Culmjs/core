@@ -82,8 +82,14 @@ test('size 8 on the phone layer with textRange 11..96: rule textRange, path styl
 
 test('a form hidden on phone is refused; the same form with required: false is accepted', () => {
   const hidden = validateSite(put(form({ hide: { phone: true } })), reg)
-  assert.ok(hidden.some(x => x.rule === 'required' && x.nodeId === 'f'))
-  assert.ok(hidden.some(x => x.rule === 'required' && x.nodeId === 'a'))
+  assert.deepEqual(
+    hidden.map(x => [x.code, x.rule, x.nodeId, x.path]),
+    [
+      ['POLICY_VIOLATION', 'required', 'f', 'hide.phone'],
+      ['POLICY_VIOLATION', 'required', 'a', undefined],
+    ],
+  )
+  assert.match(hidden[1].message, /hidden by "f"/)
   assert.deepEqual(
     validateSite(put(form({ hide: { phone: true }, required: false })), reg),
     [],
@@ -1706,4 +1712,65 @@ test('sixth pass: U+1D159, a musical null notehead, is not content', () => {
   assert.deepEqual(one('\u{1D159}'), ['props.runs'])
   assert.deepEqual(one('\u{1D159}ㅤ'), ['props.runs'])
   assert.deepEqual(one('\u{1D15F}'), [])
+})
+
+test('an instance that stands for a field takes its requirement from the form around it, in a page and in a master', () => {
+  // a master whose root is a field; the use is hidden on phone
+  const master = n({
+    id: 'root',
+    kind: 'field',
+    name: 'root',
+    slot: {},
+    props: { name: 'email', label: 'A' },
+  })
+  const use = (slot: object) =>
+    n({
+      id: 'i1',
+      kind: 'instance',
+      name: 'i1',
+      slot,
+      component: 'c1',
+      hide: { phone: true },
+    })
+  const form = (required: boolean | undefined, slot: object, child: Node) =>
+    n({
+      id: 'f',
+      kind: 'form',
+      name: 'f',
+      slot,
+      props: { formId: 'f' },
+      ...(required === undefined ? {} : { required }),
+      children: [child],
+    })
+  const comp = (id: string, root: Node) => ({
+    id,
+    name: id,
+    root,
+    props: [],
+    variants: [],
+  })
+  const inPage = (required?: boolean) => ({
+    ...put(form(required, fs(), use({}))),
+    components: [comp('c1', master)],
+  })
+  const inMaster = (required?: boolean) => ({
+    ...put(
+      n({
+        id: 'o1',
+        kind: 'instance',
+        name: 'o1',
+        slot: fs(),
+        component: 'c2',
+      }),
+    ),
+    components: [comp('c1', master), comp('c2', form(required, {}, use({})))],
+  })
+  const refusals = (d: unknown) =>
+    validateSite(d, reg)
+      .filter(p => p.rule === 'required')
+      .map(p => p.nodeId)
+  assert.deepEqual(refusals(inPage(undefined)), ['i1'])
+  assert.deepEqual(refusals(inPage(false)), [])
+  assert.deepEqual(refusals(inMaster(undefined)), ['o1'])
+  assert.deepEqual(refusals(inMaster(false)), [])
 })

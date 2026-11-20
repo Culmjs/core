@@ -606,11 +606,17 @@ for (const k of Object.keys(KINDS) as CoreKind[])
       tip: { type: 'text', maxLength: 120 },
     }
 
-/** Freezes everything reachable from `v`; shared objects are met more than once, functions are left alone. */
-function deepFreeze(v: unknown): void {
-  if (typeof v !== 'object' || v === null || Object.isFrozen(v)) return
+/**
+ * Freezes everything reachable from `v`. Shared objects (ANY, the option lists) are met more than once and
+ * frozen once; functions are left alone. `sel()` keeps the array it is given, so LAYERS, COMMANDS and
+ * EMBED_PROVIDERS are frozen too, as a side effect: they are read-only for every importer. An object that
+ * was already frozen is still searched, so nothing below it stays open.
+ */
+function deepFreeze(v: unknown, seen = new Set<unknown>()): void {
+  if (typeof v !== 'object' || v === null || seen.has(v)) return
+  seen.add(v)
   Object.freeze(v)
-  for (const x of Object.values(v)) deepFreeze(x)
+  for (const x of Object.values(v)) deepFreeze(x, seen)
 }
 deepFreeze(KINDS)
 

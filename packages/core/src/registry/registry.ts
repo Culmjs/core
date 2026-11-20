@@ -70,9 +70,12 @@ export function createRegistry(): Registry {
         ...(p.blocks ?? []).map(x => ['Block', x.id, x.guide] as const),
         ...(p.sources ?? []).map(x => ['Source', x.name, x.guide] as const),
       ])
-        if (guide !== undefined && guide.length > GUIDE_MAX)
+        if (
+          guide !== undefined &&
+          (typeof guide !== 'string' || guide.length > GUIDE_MAX)
+        )
           throw new Error(
-            `${what} "${name}" has a guide longer than ${GUIDE_MAX} characters.`,
+            `${what} "${name}" has a guide that is not a string of at most ${GUIDE_MAX} characters.`,
           )
       const b = stage(
         'block',

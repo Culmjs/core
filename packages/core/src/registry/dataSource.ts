@@ -8,7 +8,7 @@ export type DataSource = {
   name: string
   fields: Record<string, FieldType>
   sample: readonly Row[]
-  /** A short note on what the source holds; at most 500 characters. */
+  /** A short note on what the source holds; at most 500 characters (UTF-16 code units, as `String.length` counts them). */
   guide?: string
 }
 

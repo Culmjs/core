@@ -41,7 +41,7 @@ export type BlockDef = {
   category: string
   looks: { id: string; name: string; tree: Node }[]
   settings: Setting[]
-  /** A short note for a person or an agent on when to use the block; at most 500 characters. */
+  /** A short note for a person or an agent on when to use the block; at most 500 characters (UTF-16 code units, as `String.length` counts them). */
   guide?: string
   onInsert?: (lookId: string) => Node
 }

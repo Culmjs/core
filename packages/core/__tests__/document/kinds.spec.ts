@@ -6,7 +6,7 @@ import {
   MAX_NODES,
   kindSpec,
 } from '../../src/document/index.ts'
-import { ID_RE } from '../../src/document/kinds.ts'
+import { COMMANDS, ID_RE, LAYERS } from '../../src/document/kinds.ts'
 import type { Node } from '../../src/document/index.ts'
 
 const w = (kind: string, props = {}) =>
@@ -99,4 +99,21 @@ test('KINDS cannot be changed', () => {
     ;(KINDS as Record<string, unknown>).extra = KINDS.text
   }, TypeError)
   assert.ok(Object.isFrozen(KINDS.details.props.marker.options))
+})
+
+test('a shared object is frozen itself, and nothing reachable from KINDS is left open', () => {
+  // the lists that sel() keeps, and the child rule that many kinds share
+  for (const shared of [LAYERS, COMMANDS, KINDS.box.children])
+    assert.ok(Object.isFrozen(shared))
+  assert.throws(() => (LAYERS as string[]).push('x'), TypeError)
+  const open: string[] = []
+  const seen = new Set<unknown>()
+  const walk = (v: unknown, at: string) => {
+    if (typeof v !== 'object' || v === null || seen.has(v)) return
+    seen.add(v)
+    if (!Object.isFrozen(v)) open.push(at)
+    for (const [k, x] of Object.entries(v)) walk(x, `${at}.${k}`)
+  }
+  walk(KINDS, 'KINDS')
+  assert.deepEqual(open, [])
 })
