@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { compileSite } from '../../src/compile/index.ts'
+import { compilePage, compileSite } from '../../src/compile/index.ts'
 import { byteLength } from '../../src/compile/budgets.ts'
 import type { KindSpec } from '../../src/document/index.ts'
+import { validateSite } from '../../src/validate/index.ts'
 import { createRegistry } from '../../src/registry/index.ts'
 import { BASE_SCRIPT, STATES_SCRIPT } from '../../src/scripts/index.ts'
 import {
@@ -213,4 +214,39 @@ test('compileSite compiles for the live site whatever the options say about the 
   })
   assert.ok(out.files[0].content.includes('<script>'))
   assert.ok(!out.files[0].content.includes('data-id='))
+})
+
+test('a site with no page at "/" is reported and still compiled', () => {
+  const doc = twoPages([text('t', 'Home')], [text('a', 'About')])
+  doc.pages[0].slug = '/home'
+  const out = compileSite(doc, { registry })
+  const p = out.problems.filter(x => x.path === 'pages')
+  assert.deepEqual(p, [
+    {
+      code: 'INVALID_DOCUMENT',
+      path: 'pages',
+      message: 'No page that is on has the slug "/".',
+    },
+  ])
+  assert.ok(out.files.length > 0)
+  assert.equal(out.manifest.pages.length, 2)
+  assert.equal(out.manifest.build, undefined)
+})
+
+test('a page at "/" that is off counts as none', () => {
+  const doc = twoPages([text('t', 'Home')], [text('a', 'About')])
+  doc.pages[0].on = false
+  const out = compileSite(doc, { registry })
+  assert.equal(out.problems.filter(x => x.path === 'pages').length, 1)
+  assert.deepEqual(
+    out.files.map(f => f.path),
+    ['about/index.html'],
+  )
+})
+
+test('compilePage and validateSite do not report it', () => {
+  const doc = twoPages([text('t', 'Home')], [text('a', 'About')])
+  doc.pages[0].slug = '/home'
+  assert.deepEqual(compilePage(doc, 'about', { registry }).problems, [])
+  assert.deepEqual(validateSite(doc, registry), [])
 })

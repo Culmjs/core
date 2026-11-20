@@ -10,6 +10,8 @@ export type Manifest = {
   scripts: { name: string; bytes: number; pages: string[] }[]
   /** Each page's inline style, named by the page. */
   styles: { name: string; bytes: number; pages: string[] }[]
+  /** The build identity; the caller that writes a bundle sets it. `compileSite` leaves it unset. */
+  build?: string
 }
 
 export type CompiledSite = {
@@ -74,5 +76,11 @@ export function compileSite(
       } else manifest.scripts.push({ name: s.name, bytes, pages: [page.id] })
     }
   }
+  if (!doc.pages.some(p => p.on && p.slug === '/'))
+    problems.push({
+      code: 'INVALID_DOCUMENT',
+      path: 'pages',
+      message: 'No page that is on has the slug "/".',
+    })
   return { files, manifest, problems }
 }

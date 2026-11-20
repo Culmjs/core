@@ -23,10 +23,14 @@ export type Registry = {
   rules(): Rule[]
   kinds(): ReadonlyMap<string, KindSpec>
   settingFn(name: string): SettingFn | undefined
+  /** Each registered plug-in's name and version, in name order. */
+  plugins(): { name: string; version: number }[]
 }
 
+const GUIDE_MAX = 500
+
 export function createRegistry(): Registry {
-  const plugins = new Set<string>()
+  const plugins = new Map<string, number>()
   const blocks = new Map<string, BlockDef>()
   const sources = new Map<string, DataSource>()
   const rules = new Map<string, Rule>()
@@ -62,6 +66,14 @@ export function createRegistry(): Registry {
         )
       if (plugins.has(p.name)) throw new Error(`Duplicate plug-in "${p.name}".`)
       // Stage everything first so a refused plug-in registers nothing.
+      for (const [what, name, guide] of [
+        ...(p.blocks ?? []).map(x => ['Block', x.id, x.guide] as const),
+        ...(p.sources ?? []).map(x => ['Source', x.name, x.guide] as const),
+      ])
+        if (guide !== undefined && guide.length > GUIDE_MAX)
+          throw new Error(
+            `${what} "${name}" has a guide longer than ${GUIDE_MAX} characters.`,
+          )
       const b = stage(
         'block',
         blocks,
@@ -83,7 +95,7 @@ export function createRegistry(): Registry {
         fns,
         Object.entries(p.settingFns ?? {}),
       )
-      plugins.add(p.name)
+      plugins.set(p.name, p.version)
       for (const [m, add] of [
         [blocks, b],
         [sources, s],
@@ -100,5 +112,9 @@ export function createRegistry(): Registry {
     rules: () => [...rules.values()],
     kinds: () => new Map(kinds),
     settingFn: name => fns.get(name),
+    plugins: () =>
+      [...plugins]
+        .map(([name, version]) => ({ name, version }))
+        .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
   }
 }

@@ -141,3 +141,29 @@ test('kinds() returns a copy: changing it, or a later use(), does not change wha
   assert.equal(read.has('odd'), false)
   assert.equal(r.kinds().has('odd'), true)
 })
+
+test('plugins() lists name and version in name order', () => {
+  const r = createRegistry()
+  r.use(plug({ name: 'zeta', version: 2 }))
+  r.use(plug({ name: 'alpha', version: 3 }))
+  assert.deepEqual(r.plugins(), [
+    { name: 'alpha', version: 3 },
+    { name: 'zeta', version: 2 },
+  ])
+})
+
+test('a guide of 501 characters on a block, and on a source, makes use() throw and registers nothing', () => {
+  const long = 'x'.repeat(501)
+  for (const bad of [
+    { blocks: [blk('ok'), { ...blk('b'), guide: long }] },
+    { sources: [{ ...src, guide: long }], blocks: [blk('ok')] },
+  ]) {
+    const r = createRegistry()
+    assert.throws(() => r.use(plug(bad)), /guide/)
+    assert.deepEqual(r.plugins(), [])
+    assert.equal(r.block('ok'), undefined)
+    assert.equal(r.source('projects'), undefined)
+    r.use(plug({ blocks: [{ ...blk('b'), guide: 'x'.repeat(500) }] }))
+    assert.equal(r.plugins().length, 1)
+  }
+})

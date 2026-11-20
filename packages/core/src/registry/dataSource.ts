@@ -8,6 +8,8 @@ export type DataSource = {
   name: string
   fields: Record<string, FieldType>
   sample: readonly Row[]
+  /** A short note on what the source holds; at most 500 characters. */
+  guide?: string
 }
 
 function checkRow(
