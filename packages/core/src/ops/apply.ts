@@ -86,9 +86,11 @@ export async function apply(
   request: ChangeRequest,
   allow?: Allow,
 ): Promise<ApplyResult> {
+  let snap: ChangeRequest
   let text: string
   try {
     if (!isObj(request)) return invalid('The request must be an object.')
+    // Each field is read once; everything below uses only this snapshot.
     const { site, key, baseRevision, ops } = request
     if (typeof site !== 'string' || !site)
       return invalid('site must be a text.', 'site')
@@ -97,14 +99,16 @@ export async function apply(
     if (!whole(baseRevision))
       return invalid('baseRevision must be a whole number.', 'baseRevision')
     if (!Array.isArray(ops)) return invalid('ops must be a list.', 'ops')
-    text = canonicalJson({ baseRevision, ops })
+    const frozen = JSON.parse(canonicalJson(ops)) as ChangeRequest['ops']
+    snap = { site, key, baseRevision, ops: frozen }
+    text = canonicalJson({ baseRevision, ops: frozen })
   } catch (e) {
     return invalid(`The request cannot be read: ${why(e)}`)
   }
-  const { site, key, baseRevision } = request
+  const { site, key, baseRevision } = snap
   const b = await begin(store, site, key, baseRevision, text)
   if (!('doc' in b)) return b
-  const p = plan(b.doc, registry, request, allow)
+  const p = plan(b.doc, registry, snap, allow)
   if (!p.ok) return p
   const { doc, ...made } = p
   return finish(store, site, baseRevision, doc, key, text, made)
@@ -122,16 +126,26 @@ export async function restore(
   request: { site: string; to: number; baseRevision: number; key: string },
   allow?: Allow,
 ): Promise<ApplyResult> {
-  if (!isObj(request)) return invalid('The request must be an object.')
-  const { site, key, baseRevision, to } = request
-  if (typeof site !== 'string' || !site)
-    return invalid('site must be a text.', 'site')
-  if (typeof key !== 'string' || !key)
-    return invalid('key must be a text.', 'key')
-  if (!whole(baseRevision))
-    return invalid('baseRevision must be a whole number.', 'baseRevision')
-  if (!whole(to)) return invalid('to must be a whole number.', 'to')
-  const text = canonicalJson({ baseRevision, restore: to })
+  let site: string, key: string, baseRevision: number, to: number
+  let text: string
+  try {
+    if (!isObj(request)) return invalid('The request must be an object.')
+    const r = request
+    site = r.site
+    key = r.key
+    baseRevision = r.baseRevision
+    to = r.to
+    if (typeof site !== 'string' || !site)
+      return invalid('site must be a text.', 'site')
+    if (typeof key !== 'string' || !key)
+      return invalid('key must be a text.', 'key')
+    if (!whole(baseRevision))
+      return invalid('baseRevision must be a whole number.', 'baseRevision')
+    if (!whole(to)) return invalid('to must be a whole number.', 'to')
+    text = canonicalJson({ baseRevision, restore: to })
+  } catch (e) {
+    return invalid(`The request cannot be read: ${why(e)}`)
+  }
   const b = await begin(store, site, key, baseRevision, text)
   if (!('doc' in b)) return b
   const unsupported = () =>

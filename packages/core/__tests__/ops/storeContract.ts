@@ -51,6 +51,7 @@ export function storeContract(
       assert.equal(code(second), 'REVISION_CONFLICT')
       assert.deepEqual(await headOf(store, site), after)
       assert.equal(after.revision, r0 + 1)
+      assert.equal(await store.replay(site, 'b'), undefined)
     })
 
     test('a batch whose last operation is refused leaves the stored site unchanged', async () => {
@@ -143,6 +144,14 @@ export function storeContract(
       })
       assert.equal(code(r), 'UNSUPPORTED_CAPABILITY')
       assert.equal((await headOf(store, site)).revision, h.revision)
+      // below the first revision the store holds: the store's get must say undefined
+      const below = await restore(store, registry, {
+        site,
+        to: h.revision - 1,
+        baseRevision: h.revision,
+        key: 'r2',
+      })
+      assert.equal(code(below), 'UNSUPPORTED_CAPABILITY')
     })
 
     test('a restore retried with its key returns the first result', async () => {
@@ -250,6 +259,82 @@ export function storeContract(
         ),
       )
       assert.deepEqual(again.pages, ['home'])
+    })
+
+    describe('commit called directly', () => {
+      const direct = async (expectedOf: (r: number) => number) => {
+        const { store, site } = await make(doc())
+        const h = await headOf(store, site)
+        const next = doc()
+        next.name = 'Direct'
+        const result: ApplyResult = {
+          ok: true,
+          revision: h.revision + 1,
+          created: [],
+          changed: [],
+          pages: [],
+          notes: [],
+        }
+        const c = (key: string, request: string, expected: number) => ({
+          expected,
+          doc: next,
+          key,
+          request,
+          result,
+        })
+        return {
+          store,
+          site,
+          h,
+          next,
+          result,
+          c,
+          expected: expectedOf(h.revision),
+        }
+      }
+      for (const [label, off] of [
+        ['below', -1],
+        ['above', 1],
+      ] as const)
+        test(`commit with expected ${label} the head is REVISION_CONFLICT and records nothing`, async () => {
+          const { store, site, h, c, expected } = await direct(r => r + off)
+          const r = await store.commit(site, c('k', 'req', expected))
+          assert.ok(!r.ok && r.code === 'REVISION_CONFLICT')
+          assert.deepEqual(await headOf(store, site), h)
+          assert.equal(await store.replay(site, 'k'), undefined)
+        })
+
+      test('commit twice with the same key and request returns the first revision and result, and advances the head once', async () => {
+        const { store, site, h, c, result } = await direct(r => r)
+        const first = await store.commit(site, c('k', 'req', h.revision))
+        assert.ok(first.ok)
+        const second = await store.commit(site, c('k', 'req', h.revision))
+        assert.ok(second.ok)
+        assert.equal(second.revision, first.revision)
+        assert.deepEqual(second.result, first.result)
+        assert.deepEqual(first.result, result)
+        assert.equal((await headOf(store, site)).revision, h.revision + 1)
+      })
+
+      test('commit with a recorded key and another request is KEY_CONFLICT even when expected equals the head', async () => {
+        const { store, site, c, h } = await direct(r => r)
+        assert.ok((await store.commit(site, c('k', 'one', h.revision))).ok)
+        const after = await headOf(store, site)
+        const other = await store.commit(site, c('k', 'two', after.revision))
+        assert.ok(!other.ok && other.code === 'KEY_CONFLICT')
+        assert.deepEqual(await headOf(store, site), after)
+      })
+
+      test('after a commit, replay returns the request and result and get returns the document', async () => {
+        const { store, site, c, h, next, result } = await direct(r => r)
+        const r = await store.commit(site, c('k', 'req', h.revision))
+        assert.ok(r.ok)
+        assert.deepEqual(await store.replay(site, 'k'), {
+          request: 'req',
+          result,
+        })
+        assert.deepEqual(await store.get(site, r.revision), next)
+      })
     })
   })
 }

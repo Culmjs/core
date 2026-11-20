@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { SiteDocument } from '../../src/document/index.ts'
+import { SCHEMA_VERSION } from '../../src/document/migrate.ts'
 import { apply, restore } from '../../src/ops/apply.ts'
 import { memoryStore } from '../../src/ops/memoryStore.ts'
 import type { Allow, SiteStore } from '../../src/ops/types.ts'
@@ -101,7 +102,7 @@ test('restore migrates an older schema', async () => {
   assert.ok(r.ok, JSON.stringify(!r.ok && r.problems))
   const h = await store.head('s')
   assert.ok('doc' in h)
-  assert.equal(h.doc.schemaVersion, 2)
+  assert.equal(h.doc.schemaVersion, SCHEMA_VERSION)
 })
 
 test('a head that does not load is returned as the refusal by apply and by restore', async () => {
@@ -208,4 +209,61 @@ test('a conflict from the store carries its code first', async () => {
     r.problems.map(p => p.code),
     ['REVISION_CONFLICT', 'INVALID_DOCUMENT'],
   )
+})
+
+test('a request whose ops change on each read commits the batch whose request string was recorded', async () => {
+  const store = memoryStore({ s: base() })
+  const batches = [[set('t1', 'FIRST')], [set('t1', 'SECOND')]]
+  let n = 0
+  const sly = {
+    site: 's',
+    baseRevision: 0,
+    key: 'k',
+    get ops() {
+      return batches[Math.min(n++, 1)]
+    },
+  }
+  const r = await apply(store, reg, sly as never)
+  assert.ok(r.ok)
+  const h = await store.head('s')
+  assert.ok('doc' in h)
+  const t1 = (h.doc.pages[0].root.children ?? [])[0]
+  assert.match(JSON.stringify(t1.props), /FIRST/)
+  const again = await apply(store, reg, A(batches[0]))
+  assert.deepEqual(again, r)
+})
+
+test('a request whose key changes between reads uses one key throughout', async () => {
+  const store = memoryStore({ s: base() })
+  let n = 0
+  const sly = {
+    site: 's',
+    baseRevision: 0,
+    ops: [set('t1', 'A')],
+    get key() {
+      return `k${n++}`
+    },
+  }
+  assert.ok((await apply(store, reg, sly as never)).ok)
+  assert.equal(n, 1)
+  assert.ok(await store.replay('s', 'k0'))
+})
+
+test('a request with a throwing getter is INVALID_OPERATION and never reaches the store', async () => {
+  const s = exploding()
+  const boom = () => {
+    throw new Error('getter')
+  }
+  const ok = { site: 's', baseRevision: 0, key: 'k', to: 0, ops: [] }
+  for (const f of ['key', 'to', 'site', 'baseRevision', 'ops']) {
+    const bad = Object.defineProperty({ ...ok }, f, { get: boom })
+    const rs = []
+    if (f !== 'to') rs.push(await apply(s, reg, bad as never))
+    if (f !== 'ops') rs.push(await restore(s, reg, bad as never))
+    for (const r of rs) {
+      assert.ok(!r.ok)
+      assert.equal(r.problems[0].code, 'INVALID_OPERATION')
+    }
+  }
+  assert.equal(s.calls, 0)
 })
