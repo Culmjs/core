@@ -1,24 +1,21 @@
-const CYCLE = '[Circular]'
-
-// Copies a value with keys sorted at every depth. A reference back to an object
-// that is still being copied becomes "[Circular]", so a cyclic value never throws.
-function sorted(v: unknown, path: object[]): unknown {
-  if (v === null || typeof v !== 'object') return v
-  const j = (v as { toJSON?: () => unknown }).toJSON
-  if (typeof j === 'function') return sorted(j.call(v), path)
-  if (path.includes(v)) return CYCLE
-  const next = [...path, v]
-  if (Array.isArray(v)) return v.map(x => sorted(x, next))
-  return Object.fromEntries(
-    Object.entries(v)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([k, x]) => [k, sorted(x, next)]),
-  )
-}
-
-/** JSON with keys sorted at every depth and no whitespace. Follows JSON.stringify for undefined, functions and NaN; a top-level one gives "null". */
+/**
+ * JSON with keys sorted at every depth and no whitespace. Keys sort by code unit, except that integer-like keys come first in numeric order,
+ * because that is how JavaScript orders own keys; the text is deterministic for equal values. Follows JSON.stringify for undefined, functions and NaN;
+ * a top-level undefined or function gives "null". Throws only for a value no JSON text can produce (a cycle, a BigInt) or nested past
+ * the stack limit of JSON.stringify with a replacer (about 5,000 levels); a caller that takes outside input catches it.
+ */
 export function canonicalJson(value: unknown): string {
-  return JSON.stringify(sorted(value, [])) ?? 'null'
+  // The replacer copies each object, which hides a cycle from JSON.stringify; the plain pass throws the TypeError for it.
+  JSON.stringify(value)
+  return (
+    JSON.stringify(value, (_k, x: unknown) =>
+      x && typeof x === 'object' && !Array.isArray(x)
+        ? Object.fromEntries(
+            Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+          )
+        : x,
+    ) ?? 'null'
+  )
 }
 
 /** Lower-case hex SHA-256 of the UTF-8 text. */

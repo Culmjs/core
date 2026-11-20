@@ -22,15 +22,15 @@ test('undefined object values are omitted', () =>
 test('array order changes the text', () =>
   assert.notEqual(canonicalJson([1, 2]), canonicalJson([2, 1])))
 
-test('projects list inside an object is sorted inside, ordered outside', () =>
+test('items list inside an object is sorted inside, ordered outside', () =>
   assert.equal(
     canonicalJson({
-      projects: [
+      items: [
         { id: 'p2', a: 1 },
         { id: 'p1', a: 2 },
       ],
     }),
-    '{"projects":[{"a":1,"id":"p2"},{"a":2,"id":"p1"}]}',
+    '{"items":[{"a":1,"id":"p2"},{"a":2,"id":"p1"}]}',
   ))
 
 test('undefined, functions and NaN follow JSON.stringify', () => {
@@ -44,16 +44,19 @@ test('undefined, functions and NaN follow JSON.stringify', () => {
   assert.equal(canonicalJson(NaN), 'null')
 })
 
-test('a cyclic value does not throw and marks the back reference', () => {
+test('a cyclic value throws a TypeError, as JSON.stringify does', () => {
   const a: Record<string, unknown> = { x: 1 }
   a.self = a
-  assert.equal(canonicalJson(a), '{"self":"[Circular]","x":1}')
-  const b: Record<string, unknown> = { x: 2 }
-  b.self = b
-  assert.notEqual(canonicalJson(a), canonicalJson(b))
-  const arr: unknown[] = [1]
-  arr.push(arr)
-  assert.equal(canonicalJson(arr), '[1,"[Circular]"]')
+  assert.throws(() => canonicalJson(a), TypeError)
+})
+
+test('5,000 levels of nesting does not throw and equal deep values give equal text', () => {
+  const deep = (): unknown => {
+    let v: unknown = { b: 1, a: 2 }
+    for (let i = 0; i < 5000; i++) v = { z: v, a: [i] }
+    return v
+  }
+  assert.equal(canonicalJson(deep()), canonicalJson(deep()))
 })
 
 test('a repeated, non-cyclic reference is written in full', () => {
