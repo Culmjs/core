@@ -1,7 +1,8 @@
 import type { Problem } from './problems.ts'
+import { hiddenBy, trees, reachingUses, walkWithAncestors } from './required.ts'
 import type { SiteDocument } from './types.ts'
 
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 /** Thrown by a migration step that cannot convert the node at `path`. */
 export class MigrationError extends Error {
@@ -20,7 +21,32 @@ export type MigrationResult =
   | { ok: true; doc: SiteDocument; from: number }
   | { ok: false; problem: Problem }
 
-const STEPS: readonly MigrationStep[] = []
+/** 1 to 2: a form or field that version 1 hides gets `required: false`, so the document stays valid under the `required` rule. */
+const toVersion2: MigrationStep = {
+  from: 1,
+  migrate(input) {
+    const doc = input as SiteDocument
+    const components = new Map(doc.components?.map(c => [c.id, c]))
+    for (const [tree, root] of trees(doc)) {
+      const id =
+        typeof tree === 'object' && 'component' in tree
+          ? tree.component
+          : undefined
+      const ctx = {
+        component: id ? components.get(id) : undefined,
+        uses: id ? reachingUses(doc, id) : undefined,
+      }
+      walkWithAncestors(root, (n, up) => {
+        if ((n.kind === 'form' || n.kind === 'field') && hiddenBy(n, up, ctx))
+          n.required = false
+      })
+    }
+    doc.schemaVersion = 2
+    return doc
+  },
+}
+
+const STEPS: readonly MigrationStep[] = [toVersion2]
 
 const refuse = (message: string, path?: string): MigrationResult => ({
   ok: false,

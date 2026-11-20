@@ -5,7 +5,7 @@ import { LOOK } from '../kit.ts'
 
 test('emptySite has the current schema version and one empty page', () => {
   const d = emptySite('My site', LOOK)
-  assert.equal(d.schemaVersion, 1)
+  assert.equal(d.schemaVersion, 2)
   assert.equal(d.name, 'My site')
   assert.equal(d.pages.length, 1)
   assert.equal(d.pages[0].slug, '/')

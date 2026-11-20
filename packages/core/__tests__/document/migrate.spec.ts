@@ -8,7 +8,7 @@ import {
   SCHEMA_VERSION,
   type MigrationStep,
 } from '../../src/document/index.ts'
-import { LOOK } from '../kit.ts'
+import { LOOK, node, siteWith, text } from '../kit.ts'
 
 const v = (n: number, more = {}) => ({ schemaVersion: n, name: 'x', ...more })
 const steps: MigrationStep[] = [
@@ -22,7 +22,7 @@ test('a current document comes back equal and is a different object', () => {
   assert.ok(r.ok)
   assert.deepEqual(r.doc, d)
   assert.notEqual(r.doc, d)
-  assert.equal(r.from, 1)
+  assert.equal(r.from, SCHEMA_VERSION)
 })
 
 test("steps run in order from the document's version to the target", () => {
@@ -159,4 +159,76 @@ test('a document whose schemaVersion throws, or a step that throws a bare object
     2,
   )
   assert.equal(bare.ok, false)
+})
+
+const v1 = () => {
+  const d = siteWith([
+    { ...node('f', 'form', [node('i', 'field')]), hide: { phone: true } },
+    node('f2', 'form'),
+    text('t', 'x', { hide: { phone: true } }),
+  ])
+  d.schemaVersion = 1
+  d.header = node('header', 'column', [
+    { ...node('hf', 'form'), style: { hover: { hidden: true } } },
+  ])
+  d.components = [
+    {
+      id: 'c',
+      name: 'c',
+      props: [],
+      root: node('cr', 'column', [node('cf', 'form'), node('cg', 'field')]),
+      variants: [{ when: {}, patch: { cf: { hide: { desktop: true } } } }],
+    },
+  ]
+  d.pages[0].root.children!.push({
+    ...node('inst', 'instance'),
+    component: 'c',
+    overrides: { cg: { style: { base: { hidden: true } } } },
+  })
+  return d as unknown as Record<string, unknown>
+}
+
+test('a version 1 document migrates, and the input is unchanged', () => {
+  const d = v1()
+  const before = structuredClone(d)
+  const r = migrate(d)
+  assert.ok(r.ok)
+  assert.equal(r.from, 1)
+  assert.equal(r.doc.schemaVersion, 2)
+  assert.deepEqual(d, before)
+})
+
+test('a version 1 form hidden on phone carries required: false after migration', () => {
+  const r = migrate(v1())
+  assert.ok(r.ok)
+  const page = r.doc.pages[0].root.children!
+  // hidden form, and the field inside it (hidden through its ancestor)
+  assert.equal(page[0].required, false)
+  assert.equal(page[0].children![0].required, false)
+  // a form that is not hidden gets no field; a hidden text is not a form
+  assert.equal('required' in page[1], false)
+  assert.equal('required' in page[2], false)
+  // header, and a component's parts (variant patch, instance override)
+  assert.equal(r.doc.header.children![0].required, false)
+  const parts = r.doc.components[0].root.children!
+  assert.equal(parts[0].required, false)
+  assert.equal(parts[1].required, false)
+})
+
+test('a version 1 form that is not hidden gets no required field', () => {
+  const d = siteWith([node('f', 'form')])
+  d.schemaVersion = 1
+  const r = migrate(d)
+  assert.ok(r.ok)
+  assert.equal('required' in r.doc.pages[0].root.children![0], false)
+})
+
+test('a version 2 document passes through, and a version 3 document is refused', () => {
+  const d = emptySite('x', LOOK)
+  const ok = migrate(d)
+  assert.ok(ok.ok)
+  assert.deepEqual(ok.doc, d)
+  const r = migrate({ ...d, schemaVersion: 3 })
+  assert.ok(!r.ok)
+  assert.match(r.problem.message, /newer/)
 })

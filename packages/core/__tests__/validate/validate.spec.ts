@@ -46,12 +46,12 @@ test('INVALID_DOCUMENT: not an object, wrong version, unknown top-level field', 
     'x',
     [],
     undefined,
-    { ...base(), schemaVersion: 2 },
+    { ...base(), schemaVersion: 3 },
     { ...base(), schemaVersion: '1' },
     { ...base(), extra: 1 },
   ])
     assert.ok(codes(d).includes('INVALID_DOCUMENT'), JSON.stringify(d))
-  const newer = validateSite({ ...base(), schemaVersion: 2 }, reg)
+  const newer = validateSite({ ...base(), schemaVersion: 3 }, reg)
   assert.equal(newer.length, 1)
   assert.match(newer[0].message, /newer/)
   const extra = validateSite({ ...base(), extra: 1 }, reg)

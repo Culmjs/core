@@ -12,6 +12,9 @@ import {
   type When,
 } from '../document/index.ts'
 import { isObj } from '../document/rules.ts'
+import { STATES, declsOf } from '../document/layers.ts'
+
+export { STATES, declsOf }
 
 export type StyleCtx = {
   fileUrl(id: AssetId): string | undefined
@@ -1111,20 +1114,6 @@ export function escapeCss(s: string): string {
   return s.replace(/</g, '\\3c ')
 }
 
-/** Every style layer. `UNIVERSAL` layers apply to every kind; the rest need the kind to list them in `states`. */
-export const STATES: readonly Exclude<keyof Style, 'when'>[] = [
-  'base',
-  'tablet',
-  'phone',
-  'hover',
-  'pressed',
-  'focus',
-  'current',
-  'open',
-  'checked',
-  'invalid',
-  'dark',
-]
 const UNIVERSAL: readonly Exclude<keyof Style, 'when'>[] = [
   'base',
   'tablet',
@@ -1153,15 +1142,6 @@ export function missingRefs(
   for (const [k, v] of Object.entries(d)) walk(v, k)
   return out
 }
-
-/** Every declaration a style holds: its layers, then the layers that react to a state. */
-export const declsOf = (s: Style | undefined): Decl[] =>
-  s
-    ? [
-        ...STATES.flatMap(k => s[k] ?? []),
-        ...(Array.isArray(s.when) ? s.when : []).map(x => x.decl),
-      ]
-    : []
 
 /** A state's name or value: lower case, digits and dashes, so nothing typed can reach an attribute or selector. */
 export const STATE_NAME = /^[a-z0-9-]{1,32}$/

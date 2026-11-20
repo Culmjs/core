@@ -144,6 +144,8 @@ export type SiteStyles = {
   }[]
   /** Site styles › Motion: absent is Smooth; "off" leaves the default motion out. A block's own motion stays either way. */
   motion?: 'off'
+  /** The allowed text size in px: every text size in the document lies inside it. Absent: no size rule. */
+  textRange?: { min: number; max: number }
 }
 /** a FileRef id */
 export type AssetId = string
@@ -537,6 +539,11 @@ export type Node = {
   overrides?: Record<string, Override>
   state?: StateDecl[]
   on?: Trigger[]
+  /**
+   * This node must stay in the site: it is not hidden, and operations refuse to remove it. A `form` and a `field` count as required unless marked `false`.
+   * Unrelated to the `required` setting of a `field` node (in `props`), which makes the input mandatory for a visitor. Both can be present.
+   */
+  required?: boolean
 }
 
 /** A change to one part of a component: used by looks, and by an instance for its own overrides. */

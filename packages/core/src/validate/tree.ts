@@ -77,6 +77,8 @@ export const NODE_KEYS = fieldsOf<Node>({
   overrides: true,
   state: true,
   on: true,
+  // only lets the key through; Task 6 checks its value and the rules
+  required: true,
 })
 
 export const EMAIL_RE = /^[^\s?&#<>"']+@[^\s?&#<>"']+$/
