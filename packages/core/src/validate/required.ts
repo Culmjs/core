@@ -29,8 +29,8 @@ const policy = (
   ...p,
 })
 
-/** A character a reader sees: not whitespace, not a separator, not a format or control character (a zero-width space, a soft hyphen). */
-const VISIBLE = /[^\s\p{Cf}\p{Cc}\p{Z}]/u
+/** A character a reader sees: a letter, a number, punctuation or a symbol, less the Hangul fillers and the Braille blank, which are letters or symbols that draw nothing. Combining marks alone, format, control and private-use characters do not count. */
+const VISIBLE = /(?![\u115F\u1160\u3164\uFFA0\u2800])[\p{L}\p{N}\p{P}\p{S}]/u
 
 /** A run counts as content when it has a binding or a character a reader sees. */
 const runHas = (r: unknown) =>

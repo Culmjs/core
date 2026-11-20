@@ -1668,3 +1668,25 @@ test('minor 4: an invisible character alone is not content; text in any script i
   for (const s of ['Hello', 'مرحبا', '你好', 'Привет', 'नमस्ते', '​x'])
     assert.deepEqual(one(s), [], s)
 })
+
+test('fifth round, minor 2: Hangul fillers, the Braille blank, combining marks alone and private-use characters are not content', () => {
+  const one = (s: string) =>
+    validateSite(
+      put(
+        n({
+          ...text0('t'),
+          required: true,
+          props: { level: 'p', runs: [{ text: s }] },
+        }),
+      ),
+      reg,
+    ).map(x => [x.rule, x.nodeId, x.path])
+  for (const s of ['ᅟ', 'ᅠ', 'ㅤ', 'ﾠ', '⠀', '́', '͏', '️', '', 'ㅤ⠀ ́'])
+    assert.deepEqual(
+      one(s),
+      [['required', 't', 'props.runs']],
+      JSON.stringify(s),
+    )
+  for (const s of ['Hello', 'مرحبا', 'سلام', '你好', '🙂', '7', 'ㅤa'])
+    assert.deepEqual(one(s), [], s)
+})

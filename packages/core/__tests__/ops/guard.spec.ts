@@ -974,3 +974,64 @@ test('a required part of a block (a page node with a dotted id) is reported at i
     ['required', 'st.title', 'hide.phone'],
   )
 })
+
+// ---- fifth round, item 4: a person's required mark outlives updateBlock ----
+
+const formRegistry = (version: number) => {
+  const r = kitRegistry()
+  r.use({
+    name: 'formkit',
+    version,
+    api: [1],
+    runs: ['build'],
+    trust: 'declarative',
+    blocks: [
+      {
+        ...STAMP,
+        id: 'fk',
+        version,
+        onInsert: undefined,
+        settings: [],
+        looks: [
+          {
+            id: 'default',
+            name: 'Default',
+            tree: node('root', 'column', [
+              { ...form(), id: 'f', required: true },
+            ]),
+          },
+        ],
+      },
+    ],
+  })
+  return r
+}
+
+test("updateBlock keeps a person's required: false on a form although the new look marks it true", () => {
+  const v1 = formRegistry(1)
+  const made = plan(
+    start(),
+    v1,
+    req([
+      {
+        op: 'insertBlock',
+        tree: T,
+        parent: 'homeroot',
+        index: 0,
+        block: 'fk',
+        look: 'default',
+        id: 'fk',
+      },
+      { op: 'setRequired', tree: T, id: 'fk.f', required: false },
+    ]),
+  )
+  assert.ok(made.ok, JSON.stringify(!made.ok && made.problems))
+  const r = plan(
+    made.doc,
+    formRegistry(2),
+    req([{ op: 'updateBlock', tree: T, id: 'fk' }]),
+  )
+  assert.ok(r.ok, JSON.stringify(!r.ok && r.problems))
+  const f = r.doc.pages[0].root.children!.find(c => c.id === 'fk')!.children![0]
+  assert.equal(f.required, false)
+})

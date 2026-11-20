@@ -189,16 +189,14 @@ export const updateBlock: OpFn<'updateBlock'> = (doc, registry, op) => {
       })
   }
   // The place of the block stays: its slot, placement, visibility, show conditions, lock and name; `replace` keeps the position among siblings.
-  // A `required` mark is a person's, not the look's: it stays on every node that is in both subtrees, unless the new look sets its own.
+  // A `required` mark is a person's, not the look's: on every node that is in both subtrees, an explicit mark (true or false) wins over the new look's.
   const marks = new Map<string, boolean>()
   walk(old, w => {
     if (w.required !== undefined) marks.set(w.id, w.required)
   })
   const mark = (n: Node): Node => ({
     ...n,
-    ...(n.required === undefined && marks.has(n.id)
-      ? { required: marks.get(n.id) }
-      : {}),
+    ...(marks.has(n.id) ? { required: marks.get(n.id) } : {}),
     ...(n.children ? { children: n.children.map(mark) } : {}),
   })
   const placed: Node = { ...mark(fresh), slot: old.slot }
