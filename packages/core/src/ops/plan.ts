@@ -96,16 +96,15 @@ function linkRows(doc: SiteDocument) {
   return rows
 }
 function brokenLinks(before: SiteDocument, after: SiteDocument): Note[] {
-  const was = new Set(
+  const dead = new Set(
     linkRows(before)
-      .filter(r => r.live)
+      .filter(r => !r.live)
       .map(r => `${r.id}\0${r.slug}`),
   )
-  if (!was.size) return []
   const ids = [
     ...new Set(
       linkRows(after)
-        .filter(r => !r.live && was.has(`${r.id}\0${r.slug}`))
+        .filter(r => !r.live && !dead.has(`${r.id}\0${r.slug}`))
         .map(r => r.id),
     ),
   ]
@@ -118,6 +117,19 @@ function brokenLinks(before: SiteDocument, after: SiteDocument): Note[] {
         },
       ]
     : []
+}
+
+/** Text for any thrown value; cannot throw. */
+function why(e: unknown): string {
+  try {
+    const m =
+      typeof e === 'object' && e !== null
+        ? (e as { message?: unknown }).message
+        : e
+    return String(m).slice(0, 300) || 'unknown error'
+  } catch {
+    return 'unknown error'
+  }
 }
 
 const key = (r: NodeRef) => `${JSON.stringify(r.tree)}\0${r.id}`
@@ -190,7 +202,7 @@ export function plan(
       } catch (e) {
         veto = {
           code: 'POLICY_VIOLATION',
-          message: `allow failed: ${(e as Error)?.message}`,
+          message: `allow failed: ${why(e)}`,
           rule: 'allow',
         }
       }
@@ -251,12 +263,6 @@ export function plan(
       notes: [...notes, ...brokenLinks(doc, work)],
     }
   } catch (e) {
-    return fail(
-      refuse(
-        'INVALID_OPERATION',
-        e instanceof Error ? e.message : 'The request could not be planned.',
-      ).problems,
-      i,
-    )
+    return fail(refuse('INVALID_OPERATION', why(e)).problems, i)
   }
 }

@@ -436,3 +436,101 @@ test('planning 50 operations on a 2,000-node page', t => {
   t.diagnostic(`plan50: ${ms} ms`)
   assert.ok(r.ok, JSON.stringify(!r.ok && r.problems.slice(0, 2)))
 })
+
+const hostile: [string, () => unknown][] = [
+  [
+    'a Proxy whose getPrototypeOf throws',
+    () =>
+      new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error('trap')
+          },
+          get() {
+            throw new Error('trap')
+          },
+        },
+      ),
+  ],
+  [
+    'an Error whose message getter throws',
+    () =>
+      Object.defineProperty(new Error('x'), 'message', {
+        get() {
+          throw new Error('inner')
+        },
+      }),
+  ],
+  [
+    'an Error whose message is an object',
+    () => Object.assign(new Error('x'), { message: { a: 1 } }),
+  ],
+  ['null', () => null],
+  ['a Symbol', () => Symbol('s')],
+]
+for (const [name, make] of hostile)
+  test(`a thrown ${name} is refused with a string message`, () => {
+    const viaOp = refused(
+      run([
+        {
+          get op(): string {
+            throw make()
+          },
+        },
+      ]),
+    )
+    const viaAllow = refused(
+      run([setText('t1', 'a')], base(), () => {
+        throw make()
+      }),
+    )
+    for (const p of [viaOp[0], viaAllow[0]]) {
+      assert.equal(typeof p.message, 'string')
+      assert.ok(p.message.length > 0 && p.message.length <= 400)
+    }
+    assert.equal(viaAllow[0].op, 0)
+    assert.equal(viaOp[0].code, 'INVALID_OPERATION')
+    assert.equal(viaAllow[0].code, 'POLICY_VIOLATION')
+  })
+
+test('the note lists every new dead link, not one that was dead before', () => {
+  const dead = (r: PlanResult) =>
+    ok(r)
+      .notes.filter(x => x.text.startsWith('These links now lead'))
+      .flatMap(x => x.ids)
+  const retarget = (slug: string) => ({
+    op: 'setProps',
+    tree: T,
+    id: 'lt',
+    props: { runs: [{ text: 'go', link: { page: slug } }] },
+  })
+  // retargeted to a missing slug
+  assert.deepEqual(dead(run([retarget('/nowhere')], linked())), ['lt'])
+  // a new node with a link to a missing page
+  assert.deepEqual(
+    dead(
+      run([
+        {
+          op: 'add',
+          tree: T,
+          parent: 'homeroot',
+          index: 0,
+          node: {
+            kind: 'text',
+            id: 'nw',
+            props: {
+              level: 'p',
+              runs: [{ text: 'x', link: { page: '/gone' } }],
+            },
+          },
+        },
+      ]),
+    ),
+    ['nw'],
+  )
+  // already dead before the batch: not listed
+  const before = linked()
+  before.pages[1].on = false
+  assert.deepEqual(dead(run([setText('t1', 'x')], before)), [])
+})
