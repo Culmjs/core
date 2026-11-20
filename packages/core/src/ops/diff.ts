@@ -1,7 +1,7 @@
 import { canonicalJson } from '../document/hash.ts'
 import type { Node, Problem, SiteDocument } from '../document/index.ts'
 import { paged } from './cap.ts'
-import { refuse, why, type TreeRef } from './types.ts'
+import { refuse, why, type NodeRef, type TreeRef } from './types.ts'
 
 export type SiteDiff = {
   ok: true
@@ -326,6 +326,29 @@ export function diffAll(
     .map(p => p.id)
 
   return { trees: group(rows), site, pages, rows }
+}
+
+/**
+ * The ids a diff lists, as a batch reports them: `created` is every added id, `changed` every changed or moved id that is not
+ * created, each once. A removed id is in neither (the diff's `removed` has it). A page's own settings are in `pages` and `site`.
+ */
+export function affected(d: Pick<ReturnType<typeof diffAll>, 'trees'>): {
+  created: NodeRef[]
+  changed: NodeRef[]
+} {
+  const created: NodeRef[] = []
+  const changed: NodeRef[] = []
+  for (const t of d.trees) {
+    const made = new Set(t.added)
+    for (const id of t.added) created.push({ tree: t.tree, id })
+    const seen = new Set<string>()
+    for (const id of [...t.moved, ...t.changed.map(c => c.id)])
+      if (!made.has(id) && !seen.has(id)) {
+        seen.add(id)
+        changed.push({ tree: t.tree, id })
+      }
+  }
+  return { created, changed }
 }
 
 function group(rows: Row[]): SiteDiff['trees'] {

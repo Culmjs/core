@@ -125,6 +125,12 @@ export type ChangeRequest = {
   key: string
   ops: Op[]
 }
+/**
+ * What a batch did, as the diff between the document before and after reports it (`diffSites`): `created` is every id the diff
+ * lists as added; `changed` every id it lists as changed or moved, minus the created ones, each once. A removed node is in neither
+ * list (the diff's `removed` has it), a parent whose children changed is not changed, and a page's own settings are in `pages`.
+ * `pages` is the affected pages.
+ */
 export type PlanResult =
   | {
       ok: true
@@ -135,6 +141,7 @@ export type PlanResult =
       notes: Note[]
     }
   | { ok: false; problems: Problem[] }
+/** `created`, `changed` and `pages` are `PlanResult`'s; for a `restore` they are the diff between the head and the restored document. */
 export type ApplyResult =
   | {
       ok: true

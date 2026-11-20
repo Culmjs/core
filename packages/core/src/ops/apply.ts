@@ -4,14 +4,13 @@ import { migrate, SCHEMA_VERSION } from '../document/migrate.ts'
 import { isObj } from '../document/rules.ts'
 import type { Registry } from '../registry/index.ts'
 import { validateSite } from '../validate/index.ts'
-import { diffAll } from './diff.ts'
+import { affected, diffAll } from './diff.ts'
 import { plan, why } from './plan.ts'
 import {
   refuse,
   type Allow,
   type ApplyResult,
   type ChangeRequest,
-  type NodeRef,
   type SiteStore,
 } from './types.ts'
 
@@ -198,15 +197,8 @@ export async function restore(
       ],
     }
   const d = diffAll(b.doc, restored)
-  const changed: NodeRef[] = d.trees.flatMap(t =>
-    [...t.added, ...t.moved, ...t.changed.map(c => c.id)].map(id => ({
-      tree: t.tree,
-      id,
-    })),
-  )
   return finish(store, site, baseRevision, restored, key, text, {
-    created: [],
-    changed,
+    ...affected(d),
     pages: d.pages,
     notes: [],
   })

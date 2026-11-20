@@ -3,10 +3,12 @@ import { test } from 'node:test'
 import type { SiteDocument } from '../../src/document/index.ts'
 import { SCHEMA_VERSION } from '../../src/document/migrate.ts'
 import { apply, restore } from '../../src/ops/apply.ts'
+import { diffSites, type SiteDiff } from '../../src/ops/diff.ts'
 import { memoryStore } from '../../src/ops/memoryStore.ts'
 import type { Allow, SiteStore } from '../../src/ops/types.ts'
 import { createRegistry } from '../../src/registry/index.ts'
-import { kitRegistry, siteWith, text } from '../kit.ts'
+import { kitRegistry, siteWith, text, twoPages } from '../kit.ts'
+import type { Node } from '../../src/document/index.ts'
 
 const reg = kitRegistry()
 const T = { page: 'home' }
@@ -16,6 +18,13 @@ const set = (id: string, words: string) => ({
   tree: T,
   id,
   text: words,
+})
+const inst = (id: string): Node => ({
+  id,
+  kind: 'instance',
+  name: id,
+  slot: {},
+  component: 'card',
 })
 const A = (ops: unknown[], key = 'k', baseRevision = 0, site = 's') =>
   ({ site, baseRevision, key, ops }) as Parameters<typeof apply>[2]
@@ -266,4 +275,90 @@ test('a request with a throwing getter is INVALID_OPERATION and never reaches th
     }
   }
   assert.equal(s.calls, 0)
+})
+
+test('CUJ 2: one batch adds a menu page and changes a text in a component used on three pages; the result, the diff and the pages agree', async () => {
+  const doc = twoPages([{ ...inst('i1'), slot: {} }], [inst('i2')], {})
+  doc.pages.push({
+    ...doc.pages[1],
+    id: 'contact',
+    title: 'Contact',
+    slug: '/contact',
+    inMenu: false,
+    root: { ...doc.pages[1].root, id: 'contactroot', children: [inst('i3')] },
+  })
+  doc.components = [
+    {
+      id: 'card',
+      name: 'Card',
+      root: {
+        id: 'croot',
+        kind: 'column',
+        name: 'Card',
+        slot: {},
+        children: [text('ct', 'Old')],
+      },
+      props: [],
+      variants: [],
+    },
+  ]
+  const store = memoryStore({ s: doc })
+  const r = await apply(
+    store,
+    reg,
+    A([
+      {
+        op: 'addPage',
+        title: 'News',
+        slug: '/news',
+        page: 'news',
+        inMenu: true,
+      },
+      { op: 'setText', tree: { component: 'card' }, id: 'ct', text: 'New' },
+    ]),
+  )
+  assert.ok(r.ok, JSON.stringify(!r.ok && r.problems))
+  assert.deepEqual([...r.pages].sort(), ['about', 'contact', 'home', 'news'])
+  const a = await store.get('s', 0)
+  const b = await store.get('s', r.revision)
+  const d = diffSites(a!, b!) as SiteDiff
+  assert.equal(d.ok, true)
+  assert.equal(d.cut, false)
+  // the ids the diff lists are the ids the result lists, and no others
+  const listed = d.trees.flatMap(t =>
+    [...t.added, ...t.moved, ...t.changed.map(c => c.id)].map(
+      id => `${JSON.stringify(t.tree)}|${id}`,
+    ),
+  )
+  const reported = [...r.created, ...r.changed].map(
+    c => `${JSON.stringify(c.tree)}|${c.id}`,
+  )
+  assert.deepEqual([...reported].sort(), [...listed].sort())
+  assert.ok(reported.includes('{"component":"card"}|ct'))
+  // the menu entry is the page's own setting: it is in `site`, and no tree of another page changed
+  assert.ok(d.site.includes('pages.news'))
+  assert.deepEqual(d.trees.map(t => JSON.stringify(t.tree)).sort(), [
+    '{"component":"card"}',
+    '{"page":"news"}',
+  ])
+  assert.deepEqual([...d.pages].sort(), ['about', 'contact', 'home', 'news'])
+})
+
+test('restore names the nodes it brings back as created and the ones it rewrites as changed, as the diff does', async () => {
+  const store = memoryStore({ s: base() })
+  const gone = await apply(
+    store,
+    reg,
+    A([{ op: 'remove', tree: T, id: 't2' }, set('t1', 'Edited')], 'k1'),
+  )
+  assert.ok(gone.ok)
+  const back = await restore(store, reg, {
+    site: 's',
+    to: 0,
+    baseRevision: 1,
+    key: 'r',
+  })
+  assert.ok(back.ok, JSON.stringify(!back.ok && back.problems))
+  assert.deepEqual(back.created, [{ tree: T, id: 't2' }])
+  assert.deepEqual(back.changed, [{ tree: T, id: 't1' }])
 })

@@ -14,7 +14,17 @@ import type {
   PlanResult,
 } from '../../src/ops/types.ts'
 import { validateSite } from '../../src/validate/index.ts'
-import { bigPage, node, sampleRegistry, text, twoPages } from '../kit.ts'
+import { OPERATIONS } from '../../src/ops/catalogue.ts'
+import { diffAll } from '../../src/ops/diff.ts'
+import {
+  bigPage,
+  kitRegistry,
+  node,
+  sampleRegistry,
+  siteWith,
+  text,
+  twoPages,
+} from '../kit.ts'
 
 const reg = sampleRegistry()
 const T = { page: 'home' }
@@ -533,4 +543,68 @@ test('the note lists every new dead link, not one that was dead before', () => {
   const before = linked()
   before.pages[1].on = false
   assert.deepEqual(dead(run([setText('t1', 'x')], before)), [])
+})
+
+test('after plan, created and changed are the ids of the diff, for each of the 26 operations', () => {
+  const registry = kitRegistry()
+  const pair = (t: unknown, id: string) => `${JSON.stringify(t)}|${id}`
+  let doc = siteWith([text('t', 'Hello')])
+  let seen = 0
+  for (const [i, entry] of OPERATIONS.entries()) {
+    const r = plan(doc, registry, req([entry.example], { key: `k${i}` }))
+    assert.ok(r.ok, `${entry.op}: ${JSON.stringify(!r.ok && r.problems)}`)
+    const d = diffAll(doc, r.doc)
+    const added = d.trees.flatMap(t => t.added.map(id => pair(t.tree, id)))
+    const other = d.trees.flatMap(t =>
+      [...t.moved, ...t.changed.map(c => c.id)].map(id => pair(t.tree, id)),
+    )
+    const created = r.created.map(c => pair(c.tree, c.id))
+    const changed = r.changed.map(c => pair(c.tree, c.id))
+    assert.deepEqual(
+      [...created].sort(),
+      [...added].sort(),
+      `${entry.op}: created`,
+    )
+    assert.deepEqual(
+      [...changed].sort(),
+      [...new Set(other)].filter(x => !added.includes(x)).sort(),
+      `${entry.op}: changed`,
+    )
+    // a removed node is in neither list, and no node is in both
+    for (const t of d.trees)
+      for (const id of t.removed) {
+        assert.ok(!created.includes(pair(t.tree, id)), entry.op)
+        assert.ok(!changed.includes(pair(t.tree, id)), entry.op)
+      }
+    assert.ok(!changed.some(c => created.includes(c)), entry.op)
+    seen += created.length + changed.length
+    doc = r.doc
+  }
+  assert.ok(
+    seen > 20,
+    'the chain must change nodes for the test to mean something',
+  )
+})
+
+test('add does not report the parent as changed, and remove names no id (the diff has it under removed)', () => {
+  const add = ok(
+    run([
+      {
+        op: 'add',
+        tree: T,
+        parent: 'homeroot',
+        index: 0,
+        node: { kind: 'box', id: 'x1' },
+      },
+    ]),
+  )
+  assert.deepEqual(add.created, [{ tree: T, id: 'x1' }])
+  assert.deepEqual(add.changed, [])
+  const rm = ok(run([{ op: 'remove', tree: T, id: 't1' }]))
+  assert.deepEqual(rm.created, [])
+  assert.deepEqual(rm.changed, [])
+  // a text set to the same words changes nothing, and the diff is empty
+  const same = ok(run([setText('t1', 'One')]))
+  assert.deepEqual(same.changed, [])
+  assert.deepEqual(same.pages, [])
 })
