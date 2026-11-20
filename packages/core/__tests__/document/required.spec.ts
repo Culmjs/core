@@ -364,3 +364,32 @@ test('lists a required node of a page, the header, the footer, and of a componen
     ],
   )
 })
+
+// reachability of uses
+const reqIn = (id: string) => text(id, 'x', { required: true })
+test('a component used only inside another used component counts; once the outer is unused, it does not', () => {
+  const a = comp('A', [inst('ib', 'B')])
+  const b = comp('B', [reqIn('breq')])
+  const used = withComps([inst('ia', 'A')], [a, b])
+  assert.deepEqual(
+    requiredRefs(used).filter(r => r.id === 'breq'),
+    [{ tree: { component: 'B' }, id: 'breq' }],
+  )
+  const gone = withComps([], [a, b])
+  assert.deepEqual(requiredRefs(gone), [])
+})
+test('a component that contains an instance of itself and is used nowhere else is not listed', () => {
+  const a = comp('A', [inst('self', 'A'), reqIn('areq')])
+  assert.deepEqual(requiredRefs(withComps([], [a])), [])
+  assert.equal(requiredRefs(withComps([inst('i', 'A')], [a])).length, 1)
+})
+test('a hidden instance inside a component nobody uses hides nothing; used, it hides', () => {
+  const a = comp('A', [inst('ib', 'B', { hide: { phone: true } })])
+  const b = comp('B', [node('f', 'form')])
+  assert.equal(inC(withComps([], [a, b]), 'B', 'f'), undefined)
+  assert.deepEqual(inC(withComps([inst('ia', 'A')], [a, b]), 'B', 'f'), {
+    by: 'ib',
+    how: 'hide',
+    where: 'phone',
+  })
+})

@@ -285,6 +285,25 @@ test('remove accepts a required node inside a component nobody uses', () => {
   const doc = withCard(0)
   ok(run('remove', doc, { tree: { component: 'card' }, id: 'creq' }))
 })
+test('remove refuses the last page instance of a component that holds the only instance of another with a required node', () => {
+  const doc = siteWith([{ ...node('ia', 'instance'), component: 'A' }])
+  const comp = (id: string, kids: Node[]) =>
+    ({
+      id,
+      name: id,
+      root: node(`${id}root`, 'column', kids),
+      props: [],
+      variants: [],
+    }) as unknown as Component
+  doc.components.push(
+    comp('A', [{ ...node('ib', 'instance'), component: 'B' }]),
+    comp('B', [{ ...node('breq', 'box'), required: true }]),
+  )
+  refused(run('remove', doc, { id: 'ia' }), 'POLICY_VIOLATION', {
+    rule: 'required',
+    nodeId: 'breq',
+  })
+})
 test('add refuses a tree with both page and component', () =>
   invalid(
     run('add', withCard(1), {

@@ -99,6 +99,30 @@ function indexOf(doc: SiteDocument): Index {
           { tree, path: [...up, n] },
         ])
     })
+  // A use counts only when it is reachable from a page, the header or the footer: directly, or inside a used component.
+  const compOf = (u: Use) =>
+    typeof u.tree === 'object' && 'component' in u.tree
+      ? u.tree.component
+      : undefined
+  const used = new Set<string>()
+  for (let grew = true; grew;) {
+    grew = false
+    for (const [cid, list] of uses)
+      if (
+        !used.has(cid) &&
+        list.some(u => compOf(u) === undefined || used.has(compOf(u)!))
+      ) {
+        used.add(cid)
+        grew = true
+      }
+  }
+  for (const [cid, list] of uses) {
+    const live = list.filter(
+      u => compOf(u) === undefined || used.has(compOf(u)!),
+    )
+    if (live.length) uses.set(cid, live)
+    else uses.delete(cid)
+  }
   return { components, uses }
 }
 
@@ -253,7 +277,7 @@ export function* textSizes(
     yield* sizesOf(isObj(t) ? t.decl : undefined, `styles.text.${i}.decl`)
 }
 
-/** Every required node of every tree; a node inside a component counts only when an instance uses the component. */
+/** Every required node of every tree; a node inside a component counts only when the component is used (an instance of it is reachable from a page, the header or the footer). */
 export function requiredRefs(
   doc: SiteDocument,
 ): { tree: TreeAt; id: string }[] {
