@@ -11,7 +11,8 @@ export const READ_CAP = 16000
  * whose offset is past the end, with INVALID_OPERATION at `cursor`.
  *
  * It always makes progress: if even ONE row does not fit it still returns that row, and never zero rows with `cut: true`.
- * The caller keeps single rows small.
+ * The caller keeps single rows small. Precondition: a reply never gets shorter when a row is added.
+ * Apart from that one-row case a reply is never over READ_CAP, also when no rows are left.
  *
  * The count is found by doubling and then bisecting, so a long list costs about 2 log2(n) stringifications, each of about
  * one reply, instead of one per row.
@@ -56,7 +57,7 @@ export function paged<R, T>(
     )
   }
   const fits = (k: number) => JSON.stringify(reply(k)).length <= READ_CAP
-  if (left === 0 || fits(left)) return reply(left)
+  if (fits(left)) return reply(left)
   // fits(lo) holds (or lo is 1, which is always taken); fits(hi) does not.
   let lo = 1
   let hi = 2

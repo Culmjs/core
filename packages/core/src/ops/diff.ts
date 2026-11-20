@@ -10,7 +10,7 @@ export type SiteDiff = {
     added: string[]
     removed: string[]
     moved: string[]
-    changed: { id: string; paths: string[] }[]
+    changed: { id: string; paths: string[]; more?: number }[]
   }[]
   /** Top-level keys that differ, `pages.<id>.<field>` for a page's own settings, `pages` for order, `pages.<id>` for an added or removed page, and `components.<id>[.<field>]` likewise. */
   site: string[]
@@ -26,7 +26,10 @@ type Row = {
   kind: 'added' | 'removed' | 'moved' | 'changed'
   id: string
   paths?: string[]
+  more?: number
 }
+/** At most this many paths in one `changed` row; the rest are counted in `more`. */
+const MAX_PATHS = 20
 type Entry = { node: Node; parent: string | null; index: number }
 type Tree = { tree: TreeRef; key: string; root: Node | undefined }
 
@@ -98,7 +101,12 @@ function treeRows(t: Tree, a: Tree | undefined, b: Tree | undefined): Row[] {
     key: t.key,
     kind,
     id,
-    ...(p ? { paths: p } : {}),
+    ...(p
+      ? {
+          paths: p.slice(0, MAX_PATHS),
+          ...(p.length > MAX_PATHS ? { more: p.length - MAX_PATHS } : {}),
+        }
+      : {}),
   })
   const added = [...ib.keys()].filter(id => !ia.has(id))
   const removed = [...ia.keys()].filter(id => !ib.has(id))
@@ -111,7 +119,11 @@ function treeRows(t: Tree, a: Tree | undefined, b: Tree | undefined): Row[] {
     const o = ib.get(id)
     if (!o) continue
     if (o.parent !== e.parent) moved.add(id)
-    else orderA.set(e.parent, [...(orderA.get(e.parent) ?? []), id])
+    else {
+      const l = orderA.get(e.parent)
+      if (l) l.push(id)
+      else orderA.set(e.parent, [id])
+    }
   }
   const posB = new Map<string, number>()
   const count = new Map<string | null, number>()
@@ -189,14 +201,12 @@ function treesOf(d: Record<string, unknown>) {
  * of their positions). Siblings that exist in only one version are ignored, so inserting a node at the top, or removing one, moves
  * nobody; moving one node among many lists that node alone; swapping two lists one of them.
  *
- * The paged rows are (tree, id, kind of difference); `site` and `pages` come with every page. The cursor's revision is 0.
- * It takes whatever a store returns: what is not the expected shape is skipped. It does not change its inputs.
+ * `diffAll` is the whole answer without paging. It takes whatever a store returns: what is not the expected shape is skipped. It does not change its inputs.
  */
-export function diffSites(
+export function diffAll(
   a: SiteDocument,
   b: SiteDocument,
-  options: { cursor?: string } = {},
-): SiteDiff | { ok: false; problems: Problem[] } {
+): { trees: SiteDiff['trees']; site: string[]; pages: string[]; rows: Row[] } {
   const da: Record<string, unknown> = isObj(a) ? a : {}
   const db: Record<string, unknown> = isObj(b) ? b : {}
   const A = treesOf(da)
@@ -296,26 +306,53 @@ export function diffSites(
     )
     .map(p => p.id)
 
-  return paged(rows, 0, options.cursor, (page, cut, cursor): SiteDiff => {
-    const out: SiteDiff['trees'] = []
-    let last = ''
-    for (const r of page) {
-      let g = out[out.length - 1]
-      if (!g || last !== r.key) {
-        last = r.key
-        g = { tree: r.tree, added: [], removed: [], moved: [], changed: [] }
-        out.push(g)
-      }
-      if (r.kind === 'changed') g.changed.push({ id: r.id, paths: r.paths! })
-      else g[r.kind].push(r.id)
+  return { trees: group(rows), site, pages, rows }
+}
+
+function group(rows: Row[]): SiteDiff['trees'] {
+  const out: SiteDiff['trees'] = []
+  let last = ''
+  for (const r of rows) {
+    let g = out[out.length - 1]
+    if (!g || last !== r.key) {
+      last = r.key
+      g = { tree: r.tree, added: [], removed: [], moved: [], changed: [] }
+      out.push(g)
     }
-    return {
-      ok: true,
-      trees: out,
-      site,
-      pages,
-      cut,
-      ...(cursor ? { cursor } : {}),
-    }
-  })
+    if (r.kind === 'changed')
+      g.changed.push({
+        id: r.id,
+        paths: r.paths!,
+        ...(r.more ? { more: r.more } : {}),
+      })
+    else g[r.kind].push(r.id)
+  }
+  return out
+}
+
+/**
+ * The paged view over `diffAll`. Every part of a reply is paged: the rows are, in order, one per `site` entry, one per affected page id,
+ * then the tree rows (one per tree, id and kind of difference). Each reply carries only its slice: `site`, `pages` and `trees` hold the
+ * entries of THIS reply (any may be empty) and a caller concatenates them across replies. The cursor's revision is 0.
+ */
+export function diffSites(
+  a: SiteDocument,
+  b: SiteDocument,
+  options: { cursor?: string } = {},
+): SiteDiff | { ok: false; problems: Problem[] } {
+  const all = diffAll(a, b)
+  type R = { s: string } | { p: string } | Row
+  const rows: R[] = [
+    ...all.site.map(s => ({ s })),
+    ...all.pages.map(p => ({ p })),
+    ...all.rows,
+  ]
+  return paged(rows, 0, options.cursor, (page, cut, cursor): SiteDiff => ({
+    ok: true,
+    trees: group(page.filter((r): r is Row => 'key' in r)),
+    site: page.flatMap(r => ('s' in r ? [r.s] : [])),
+    pages: page.flatMap(r => ('p' in r ? [r.p] : [])),
+    cut,
+    ...(cursor ? { cursor } : {}),
+  }))
 }

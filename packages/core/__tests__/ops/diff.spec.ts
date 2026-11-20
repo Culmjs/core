@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Node, SiteDocument } from '../../src/document/index.ts'
 import { READ_CAP, paged } from '../../src/ops/cap.ts'
-import { diffSites, type SiteDiff } from '../../src/ops/diff.ts'
+import { diffAll, diffSites, type SiteDiff } from '../../src/ops/diff.ts'
 import { bigPage, node, siteWith, text, twoPages } from '../kit.ts'
 
 const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x))
@@ -91,6 +91,8 @@ test('a node with another parent or another index is a move; its unchanged sibli
   const mv = treeOf(ok(diffSites(a, e)), { page: 'home' })!.moved
   assert.equal(mv.length, 1)
   assert.ok(mv[0] === 's1' || mv[0] === 's2')
+  const te = treeOf(ok(diffSites(a, e)), { page: 'home' })!
+  assert.deepEqual([te.added, te.removed, te.changed], [[], [], []])
   // a sibling inserted at the top, or removed before, shifts indexes and moves nobody
   const f = clone(a)
   homeRoot(f).unshift(text('new', 'new'))
@@ -108,8 +110,10 @@ test('a node can be both moved and changed', () => {
   b.pages[0].root.children = [homeRoot(b)[1], homeRoot(b)[0]]
   homeRoot(b)[0].name = 'renamed'
   const t = treeOf(ok(diffSites(a, b)), { page: 'home' })!
-  assert.equal(t.changed.length, 1)
-  assert.equal(t.moved.length, 1)
+  assert.deepEqual(t.changed, [{ id: 'b', paths: ['name'] }])
+  assert.deepEqual(t.moved.length, 1)
+  assert.ok(t.moved[0] === 'a' || t.moved[0] === 'b')
+  assert.deepEqual([t.added, t.removed], [[], []])
 })
 
 test('equal documents give empty lists', () => {
@@ -280,4 +284,84 @@ test('paged takes rows while the reply fits, always makes progress, and refuses 
       [code(bad).code, code(bad).path],
       ['INVALID_OPERATION', 'cursor'],
     )
+})
+
+// ---- every part of a reply is paged
+
+const collect = (a: SiteDocument, b: SiteDocument) => {
+  const site: string[] = []
+  const pages: string[] = []
+  let cursor: string | undefined
+  let n = 0
+  for (;;) {
+    const d = ok(diffSites(a, b, { cursor }))
+    assert.ok(JSON.stringify(d).length <= READ_CAP)
+    site.push(...d.site)
+    pages.push(...d.pages)
+    n++
+    if (!d.cut) return { site, pages, n }
+    cursor = d.cursor
+  }
+}
+
+test('800 pages with a setting flipped on each page through within READ_CAP; site and pages are complete, in order, without duplicates', () => {
+  const a = twoPages([], [])
+  a.pages = Array.from({ length: 800 }, (_, i) => ({
+    ...clone(a.pages[0]),
+    id: `page-number-${i}`,
+    slug: `/p${i}`,
+    root: node(`root${i}`, 'column', []),
+  }))
+  const b = clone(a)
+  for (const p of b.pages) p.inMenu = !p.inMenu
+  const r = collect(a, b)
+  const ids = a.pages.map(p => p.id)
+  assert.ok(r.n > 1)
+  assert.deepEqual(r.pages, ids)
+  assert.deepEqual(
+    r.site,
+    ids.map(id => `pages.${id}.inMenu`),
+  )
+  const all = diffAll(a, b)
+  assert.deepEqual([all.pages, all.site, all.trees], [r.pages, r.site, []])
+})
+
+test('a diff that is only site-level is one reply with no trees', () => {
+  const a = twoPages([], [])
+  const b = clone(a)
+  b.name = 'Other'
+  assert.deepEqual(diffSites(a, b), {
+    ok: true,
+    trees: [],
+    site: ['name'],
+    pages: [],
+    cut: false,
+  })
+})
+
+test('the largest possible row stays under 2,000 characters', () => {
+  const long = 'x'.repeat(60)
+  const a = siteWith([text(long, 'a')])
+  const b = clone(a)
+  const n = homeRoot(b)[0] as unknown as Record<string, unknown>
+  for (let i = 0; i < 40; i++)
+    n[`field${'y'.repeat(30)}${i}`] = { [`k${'z'.repeat(30)}`]: { deep: i } }
+  const d = ok(diffSites(a, b))
+  const row = treeOf(d, { page: 'home' })!.changed[0]
+  assert.equal(row.paths.length, 20)
+  assert.equal(row.more, 20)
+  const withTree = { tree: { component: long }, ...row }
+  assert.ok(JSON.stringify(withTree).length < 2000)
+})
+
+test('20,000 children under one parent diff correctly for one inserted node', () => {
+  const kids = Array.from({ length: 20000 }, (_, i) => node(`k${i}`, 'box'))
+  const a = siteWith(kids)
+  const b = clone(a)
+  homeRoot(b).splice(10000, 0, node('fresh', 'box'))
+  const t = treeOf(ok(diffSites(a, b)), { page: 'home' })!
+  assert.deepEqual(
+    [t.added, t.moved, t.removed, t.changed],
+    [['fresh'], [], [], []],
+  )
 })
