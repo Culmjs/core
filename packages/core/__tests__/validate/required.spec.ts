@@ -56,13 +56,13 @@ test('a required text with no run that has text or a binding: rule required, pat
   const bound = put(
     n({
       ...text('t', { required: true }),
-      props: { level: 'p', runs: [{ text: '', bind: { field: 'title' } }] },
+      props: {
+        level: 'p',
+        runs: [{ text: '', bind: { from: 'site', field: 'title' } }],
+      },
     }),
   )
-  assert.equal(
-    validateSite(bound, reg).some(x => x.rule === 'required'),
-    false,
-  )
+  assert.deepEqual(validateSite(bound, reg), [])
 })
 
 test('size 8 on the phone layer with textRange 11..96: rule textRange, path style.phone.size, allowed ["11","96"]', () => {
@@ -95,12 +95,14 @@ test('no textRange: no size is refused', () => {
 
 test('a showIf on a required node is accepted', () => {
   const d = put(
-    text('t', { required: true, showIf: { field: 'title' } } as never),
+    text('t', { required: true, showIf: { from: 'site', field: 'title' } }),
   )
-  assert.equal(
-    validateSite(d, reg).some(x => x.rule === 'required'),
-    false,
+  assert.deepEqual(validateSite(d, reg), [])
+  // the same document without the condition and with no text is refused, so the check ran
+  const twin = put(
+    text('t', { required: true, props: { level: 'p', runs: [{ text: '' }] } }),
   )
+  assert.equal(validateSite(twin, reg)[0]?.rule, 'required')
 })
 
 test('a divider needs no content and is not required without a mark', () => {
@@ -115,4 +117,86 @@ test('a version 1 document with a form hidden on phone has no problems after mig
   const r = migrate(d)
   assert.ok(r.ok)
   assert.deepEqual(validateSite(r.doc, reg), [])
+})
+
+const empty = n({
+  id: 'root',
+  kind: 'box',
+  name: 'root',
+  slot: {},
+  children: [
+    n({
+      id: 'title',
+      kind: 'text',
+      name: 'title',
+      slot: {},
+      required: true,
+      props: { level: 'p', runs: [{ text: '' }] },
+    }),
+  ],
+})
+const withInstance = (inst: object, prop: object = {}, used = true) => ({
+  ...put(
+    ...(used
+      ? [
+          n({
+            id: 'i1',
+            kind: 'instance',
+            name: 'i1',
+            slot: fs(),
+            component: 'c1',
+            ...inst,
+          }),
+        ]
+      : []),
+  ),
+  components: [
+    {
+      id: 'c1',
+      name: 'c1',
+      root: empty,
+      props: [
+        {
+          key: 'title',
+          label: 'Title',
+          type: 'text' as const,
+          part: 'title',
+          field: 'text' as const,
+          ...prop,
+        },
+      ],
+      variants: [],
+    },
+  ],
+})
+const refused = (d: object) =>
+  validateSite(d, reg).map(x => [x.rule, x.nodeId, x.path])
+
+test('a required text filled by a property: unset with no default, or set to "", is refused at the instance', () => {
+  for (const inst of [{}, { set: { title: '' } }])
+    assert.deepEqual(refused(withInstance(inst)), [
+      ['required', 'i1', 'set.title'],
+    ])
+})
+
+test('a required text filled by a property: a set value, a binding and a default are accepted', () => {
+  assert.deepEqual(
+    validateSite(withInstance({ set: { title: 'Hi' } }), reg),
+    [],
+  )
+  assert.deepEqual(
+    validateSite(
+      withInstance({ bind: { title: { from: 'site', field: 'title' } } }),
+      reg,
+    ),
+    [],
+  )
+  assert.deepEqual(
+    validateSite(withInstance({}, { default: 'Hello' }), reg),
+    [],
+  )
+})
+
+test('a component nobody uses raises nothing', () => {
+  assert.deepEqual(validateSite(withInstance({}, {}, false), reg), [])
 })
