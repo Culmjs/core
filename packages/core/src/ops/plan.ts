@@ -120,7 +120,7 @@ function brokenLinks(before: SiteDocument, after: SiteDocument): Note[] {
 }
 
 /** Text for any thrown value; cannot throw. */
-function why(e: unknown): string {
+export function why(e: unknown): string {
   try {
     const m =
       typeof e === 'object' && e !== null
