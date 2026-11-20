@@ -160,6 +160,7 @@ export type SiteStore = {
   head(
     site: string,
   ): Promise<{ revision: number; doc: SiteDocument } | { problems: Problem[] }>
+  /** The document at a revision, or `undefined`, and never a throw, for any revision the store does not hold (negative, above the head, or dropped). */
   get(site: string, revision: number): Promise<SiteDocument | undefined>
   replay(
     site: string,

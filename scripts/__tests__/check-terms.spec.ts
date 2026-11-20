@@ -1,3 +1,7 @@
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { termHits } from '../check-terms.ts'
@@ -66,3 +70,23 @@ test('GitLab is a known false hit', () =>
   assert.deepEqual(termHits([{ path: 'a.ts', source: 'GitLab' }]), [
     'a.ts:1 lab',
   ]))
+
+test('the check needs packages/core/src: run from a directory without it, it exits 1 with a message', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'terms-'))
+  try {
+    const r = spawnSync(
+      process.execPath,
+      [
+        '--conditions=source',
+        '--import',
+        import.meta.resolve('tsx'),
+        join(process.cwd(), 'scripts', 'check-terms.ts'),
+      ],
+      { cwd: dir, encoding: 'utf8' },
+    )
+    assert.equal(r.status, 1, r.stdout + r.stderr)
+    assert.match(r.stdout + r.stderr, /packages\/core\/src/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

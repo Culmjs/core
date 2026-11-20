@@ -133,25 +133,67 @@ export function storeContract(
       assert.deepEqual(await store.get(site, first.revision + 1), changed.doc)
     })
 
-    test('restore to a revision the store does not hold is UNSUPPORTED_CAPABILITY', async () => {
+    test('restore to a revision the store does not hold is UNSUPPORTED_CAPABILITY, and asks the store', async () => {
       const { store, site, registry } = await make(doc())
+      const first = await headOf(store, site)
+      ok(
+        await apply(
+          store,
+          registry,
+          req(site, first.revision, 'a', [set('t1', 'A')]),
+        ),
+      )
       const h = await headOf(store, site)
-      const r = await restore(store, registry, {
+      // above the head: refused before the store is asked
+      const above = await restore(store, registry, {
         site,
         to: h.revision + 5,
         baseRevision: h.revision,
         key: 'r',
       })
-      assert.equal(code(r), 'UNSUPPORTED_CAPABILITY')
-      assert.equal((await headOf(store, site)).revision, h.revision)
-      // below the first revision the store holds: the store's get must say undefined
-      const below = await restore(store, registry, {
+      assert.equal(code(above), 'UNSUPPORTED_CAPABILITY')
+      // a revision that passes every check of restore (a whole number, not above the head) but that the store has dropped:
+      // restore must ask the store for it, and take `undefined` for the answer
+      const asked: number[] = []
+      const forgetful: SiteStore = {
+        head: s => store.head(s),
+        get: async (s, revision) => {
+          asked.push(revision)
+          return revision === first.revision
+            ? undefined
+            : await store.get(s, revision)
+        },
+        replay: (s, k) => store.replay(s, k),
+        commit: (s, c) => store.commit(s, c),
+      }
+      const dropped = await restore(forgetful, registry, {
         site,
-        to: h.revision - 1,
+        to: first.revision,
         baseRevision: h.revision,
         key: 'r2',
       })
-      assert.equal(code(below), 'UNSUPPORTED_CAPABILITY')
+      assert.equal(code(dropped), 'UNSUPPORTED_CAPABILITY')
+      assert.deepEqual(asked, [first.revision], 'restore called get')
+      assert.deepEqual(await headOf(store, site), h)
+    })
+
+    test('get is undefined, and does not throw, for any revision the store does not hold, negative ones included', async () => {
+      const { store, site } = await make(doc())
+      const h = await headOf(store, site)
+      for (const revision of [
+        h.revision + 1,
+        h.revision + 5,
+        1_000_000_000,
+        h.revision - 1_000_000,
+        -1,
+      ])
+        if (revision > h.revision || revision < 0)
+          assert.equal(
+            await store.get(site, revision),
+            undefined,
+            `${revision}`,
+          )
+      assert.deepEqual(await store.get(site, h.revision), h.doc)
     })
 
     test('a restore retried with its key returns the first result', async () => {

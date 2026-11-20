@@ -362,3 +362,23 @@ test('restore names the nodes it brings back as created and the ones it rewrites
   assert.deepEqual(back.created, [{ tree: T, id: 't2' }])
   assert.deepEqual(back.changed, [{ tree: T, id: 't1' }])
 })
+
+test('a request with no baseRevision is INVALID_OPERATION and the store is not called', async () => {
+  const calls: string[] = []
+  const inner = memoryStore({ s: base() })
+  const store: SiteStore = {
+    head: async s => (calls.push('head'), inner.head(s)),
+    get: async (s, r) => (calls.push('get'), inner.get(s, r)),
+    replay: async (s, k) => (calls.push('replay'), inner.replay(s, k)),
+    commit: async (s, c) => (calls.push('commit'), inner.commit(s, c)),
+  }
+  const noBase = { site: 's', key: 'k', ops: [set('t1', 'A')] }
+  const r = await apply(store, reg, noBase as never)
+  assert.ok(!r.ok)
+  assert.equal(r.problems[0].code, 'INVALID_OPERATION')
+  assert.equal(r.problems[0].path, 'baseRevision')
+  const r2 = await restore(store, reg, { site: 's', to: 0, key: 'k' } as never)
+  assert.ok(!r2.ok)
+  assert.equal(r2.problems[0].code, 'INVALID_OPERATION')
+  assert.deepEqual(calls, [])
+})

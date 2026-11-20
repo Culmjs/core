@@ -42,12 +42,21 @@ export function termHits(files: { path: string; source: string }[]): string[] {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  // Core is required: run from the wrong directory, nothing would be checked and the script would pass. The other roots may not exist yet.
+  if (!existsSync('packages/core/src')) {
+    console.error(
+      'packages/core/src not found: run check:terms from the repository root.',
+    )
+    process.exit(1)
+  }
   const roots = [
     'packages/core/src',
-    'packages/tools/src',
-    'packages/starter/src',
-    'packages/starter/template',
-  ].filter(existsSync)
+    ...[
+      'packages/tools/src',
+      'packages/starter/src',
+      'packages/starter/template',
+    ].filter(existsSync),
+  ]
   const lines = roots.flatMap(root =>
     termHits(readFiles(root).map(f => ({ ...f, path: `${root}/${f.path}` }))),
   )
