@@ -136,3 +136,25 @@ test('compile may not import ops', () => {
     ['compile/x.ts imports ops (../ops/plan.ts)'],
   )
 })
+
+test('the layers below compile may be imported by it, and ops may import compile and everything below', () => {
+  const ok = (path: string, source: string) =>
+    layerViolations([{ path, source }])
+  assert.deepEqual(ok('ops/x.ts', `import { c } from '../compile/page.ts'`), [])
+  assert.deepEqual(ok('measure/x.ts', `import { p } from '../ops/plan.ts'`), [])
+  assert.deepEqual(ok('ops/x.ts', `import { p } from './plan.ts'`), [])
+  assert.deepEqual(
+    ok('compile/x.ts', `import { d } from '../data/rows.ts'`),
+    [],
+  )
+})
+
+test('ops importing measure, and compile importing measure, are violations', () => {
+  for (const path of ['ops/x.ts', 'compile/x.ts'])
+    assert.deepEqual(
+      layerViolations([
+        { path, source: `import { m } from '../measure/m.ts'` },
+      ]),
+      [`${path} imports measure (../measure/m.ts)`],
+    )
+})

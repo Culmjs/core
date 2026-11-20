@@ -57,6 +57,8 @@ for (const word of [
   'CVList',
   'scholarosWidget',
   'CVs',
+  'CVsList',
+  'getCVsFor',
   'myCVs',
   'LABs',
   'evoscholar',

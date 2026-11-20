@@ -3,7 +3,8 @@ import { readFiles } from './check-layers.ts'
 import { pathToFileURL } from 'node:url'
 
 // Whole words, case-insensitive, except CV (capitals only). Each also matches
-// an optional plural (s, es) and a trailing digit.
+// an optional lower-case plural suffix (s or es) and at most one trailing digit
+// (`paper2`, not `paper22`).
 export const TERMS = [
   'scholar',
   'evoscholar',
@@ -31,6 +32,8 @@ export function termHits(files: { path: string; source: string }[]): string[] {
     source.split('\n').forEach((raw, i) => {
       // split camelCase and snake_case so identifiers like paperId are seen as words
       const line = raw
+        // a plural acronym joined to a word (CVsList): keep the plural with the acronym
+        .replace(/([A-Z]{2,}(?:s|es))(?=[A-Z])/g, '$1 ')
         .replace(/([A-Z]+)([A-Z](?!(?:s|es)\b)[a-z])/g, '$1 $2')
         .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
         .replace(/_/g, ' ')
