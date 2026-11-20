@@ -376,7 +376,7 @@ const probs = (d: object) =>
 
 test('hiding through a toggle property: a default of false and a set value of false are refused', () => {
   assert.deepEqual(probs(shownDoc([toggle({ default: false })], [])), [
-    ['required', undefined, 'components.c1.props.0.default'],
+    ['required', 'i1', 'set.show'],
   ])
   assert.deepEqual(
     probs(shownDoc([toggle({ default: true })], [], { set: { show: false } })),
@@ -1110,6 +1110,7 @@ test('F1: the same look selected by one of two uses is refused', () => {
   const p = probs(d)
   assert.equal(p.length, 1)
   assert.equal(p[0][0], 'required')
+  assert.equal(p[0][1], 'i1', 'names the use that selects the look')
 })
 
 test('M-c: a master part hidden for good is shown by a use that turns it on, and refused for a use that does not', () => {
@@ -1129,4 +1130,93 @@ test('M-c: a master part hidden for good is shown by a use that turns it on, and
     n({ id: 'i2', kind: 'instance', name: 'i2', slot: fs(), component: 'c1' }),
   )
   assert.equal(probs(d).length, 1)
+})
+
+// ---- second fix round, M-a and M-b ----
+
+test('M-a: where the emptiness was written is where it is reported', () => {
+  const textProp = {
+    key: 'words',
+    label: 'W',
+    type: 'text',
+    part: 'title',
+    field: 'text',
+  }
+  const emptied = { props: { runs: [{ text: '' }] } }
+  // an override did it, although the component has a text property for the part
+  assert.deepEqual(
+    probs(
+      shownDoc([textProp], [], {
+        set: { words: 'Hi' },
+        overrides: { title: emptied },
+      }),
+    ),
+    [['required', 'i1', 'overrides.title.props.runs']],
+  )
+  // the set did it
+  assert.deepEqual(probs(shownDoc([textProp], [], { set: { words: '' } })), [
+    ['required', 'i1', 'set.words'],
+  ])
+  // an override from an instance further out, as before
+  assert.deepEqual(probs(nested({ 'k.title': emptied })), [
+    ['required', 'o', 'overrides.k.title.props.runs'],
+  ])
+})
+
+test('M-b: a required part hidden for a use is reported on the use, one shape for every way', () => {
+  const at = (d: object) =>
+    validateSite(d, reg).map(x => [x.code, x.rule, x.nodeId, x.path])
+  const POLICY = 'POLICY_VIOLATION'
+  // a property default
+  assert.deepEqual(at(shownDoc([toggle({ default: false })], [])), [
+    [POLICY, 'required', 'i1', 'set.show'],
+  ])
+  // a set value
+  assert.deepEqual(
+    at(shownDoc([toggle({ default: true })], [], { set: { show: false } })),
+    [[POLICY, 'required', 'i1', 'set.show']],
+  )
+  // overrides
+  assert.deepEqual(
+    at(shownDoc([], [], { overrides: { title: { hide: { phone: true } } } })),
+    [[POLICY, 'required', 'i1', 'overrides.title.hide.phone']],
+  )
+  assert.deepEqual(
+    at(
+      shownDoc([], [], {
+        overrides: { title: { style: { base: { hidden: true } } } },
+      }),
+    ),
+    [[POLICY, 'required', 'i1', 'overrides.title.style.base.hidden']],
+  )
+  // a look in use, with a message that names the component and the look
+  const d = shownDoc([look], hidingLook, { set: { look: 'b' } })
+  assert.deepEqual(at(d), [[POLICY, 'required', 'i1', 'set.look']])
+  const msg = validateSite(d, reg)[0].message
+  assert.match(msg, /c1/)
+  assert.match(msg, /look/)
+  assert.match(msg, /b/)
+  // the use itself hidden, and an ancestor of the use: the node that carries the hiding
+  assert.deepEqual(at(shownDoc([], [], { hide: { phone: true } })), [
+    [POLICY, 'required', 'i1', 'hide.phone'],
+  ])
+  const wrapped = shownDoc([], [])
+  wrapped.pages[0].root.children = [
+    n({
+      id: 'wrap',
+      kind: 'box',
+      name: 'wrap',
+      slot: fs(),
+      style: { base: { hidden: true } },
+      children: wrapped.pages[0].root.children,
+    }),
+  ]
+  wrapped.pages[0].root.children[0].children![0].slot = {}
+  assert.deepEqual(at(wrapped), [
+    [POLICY, 'required', 'wrap', 'style.base.hidden'],
+  ])
+  // hidden in its own tree keeps the node
+  assert.deepEqual(at(shownDoc([], [], {}, { hide: { phone: true } })), [
+    [POLICY, 'required', 'title', 'hide.phone'],
+  ])
 })

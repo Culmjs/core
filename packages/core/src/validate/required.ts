@@ -300,6 +300,39 @@ function placeOf(
   }
 }
 
+/**
+ * Where a hiding written by a stage is reported, for a part hidden for one use: the use that causes it and the place on it.
+ * A property's default and a look belong to the component, so the use is named with the property it can set to undo them.
+ * Hidden in the component's own tree (the master stage) names the node, as for any node hidden in its own tree.
+ */
+function hidePlace(
+  st: Stage,
+  before: Node,
+  use: Use,
+  partId: string,
+  rel: string,
+  node: string,
+): { nodeId?: string; path?: string; look?: string } | undefined {
+  const s = st.source
+  if (s.by === 'master') return { nodeId: node, ...(rel ? { path: rel } : {}) }
+  if (s.by === 'default')
+    return {
+      nodeId: use.inst.id,
+      path: `set.${(use.comp.props[s.i] as ComponentProp).key}`,
+    }
+  if (s.by === 'variant') {
+    const when = (use.comp.variants[s.i] as { when: Record<string, unknown> })
+      .when
+    const [key, value] = Object.entries(when)[0] ?? []
+    return {
+      nodeId: use.inst.id,
+      ...(key === undefined ? {} : { path: `set.${key}` }),
+      look: key === undefined ? `look ${s.i + 1}` : `${key} = ${String(value)}`,
+    }
+  }
+  return placeOf(st, before, use.comp, partId, rel)
+}
+
 /** The refusal when too many ways reach a part of a component for its uses to be checked: never a silent pass. */
 const tooMany = (cid: string, part: string, rule: string): Problem => ({
   code: 'RESOURCE_LIMIT_EXCEEDED',
@@ -375,26 +408,28 @@ export function checkRequired(doc: SiteDocument): Problem[] {
               const i = st.findIndex(x => reasonOf(x.node))
               if (i < 0 || !reasonOf(st[st.length - 1].node)) continue
               const r = reasonOf(st[i].node)!
-              const place =
-                i === 0
-                  ? { nodeId: a.id }
-                  : placeOf(
-                      st[i],
-                      st[i - 1].node,
-                      comp,
-                      part.id,
-                      pathOf(r) ?? '',
-                    )
-              if (place)
+              const place = hidePlace(
+                st[i],
+                st[i - 1]?.node ?? st[i].node,
+                use,
+                part.id,
+                pathOf(r) ?? '',
+                a.id,
+              )
+              if (place) {
+                const { look, ...at } = place
                 add(
                   policy(
                     'required',
-                    a === n
-                      ? `The block "${n.id}" must stay on the page, but this use hides the root of the component "${comp.id}".`
-                      : `The block "${n.id}" sits in the slot of "${a.id}", but this use hides "${part.id}" of the component "${comp.id}".`,
-                    place,
+                    `${
+                      a === n
+                        ? `The block "${n.id}" must stay on the page, but ${look ? `the look "${look}"` : 'this use'} hides the root of the component "${comp.id}"`
+                        : `The block "${n.id}" sits in the slot of "${a.id}", but ${look ? `the look "${look}"` : 'this use'} hides "${part.id}" of the component "${comp.id}"`
+                    }.`,
+                    at,
                   ),
                 )
+              }
             }
       }
     }
@@ -411,11 +446,12 @@ export function checkRequired(doc: SiteDocument): Problem[] {
         : hiddenAt(ix, tree, [...up, n])
       if (why) {
         const path = pathOf(why)
+        // Through a use: the node that carries the hiding, an instance of the component or something above it.
         add(
           policy(
             'required',
             `This block must stay on the page, but it is hidden${why.by === n.id ? '' : ` by "${why.by}"`}.`,
-            { nodeId: n.id, ...(path ? { path } : {}) },
+            { nodeId: owner ? why.by : n.id, ...(path ? { path } : {}) },
           ),
         )
       } else if (owner)
@@ -427,18 +463,31 @@ export function checkRequired(doc: SiteDocument): Problem[] {
             if (i < 0 || !reasonOf(st[st.length - 1].node)) continue
             const r = reasonOf(st[i].node)!
             // hidden in the component's own tree, and not shown again by this use: the node carries it
-            const place =
-              i === 0
-                ? { nodeId: n.id, ...(pathOf(r) ? { path: pathOf(r) } : {}) }
-                : placeOf(st[i], st[i - 1].node, owner, a.id, pathOf(r) ?? '')
-            if (place)
+            const place = hidePlace(
+              st[i],
+              st[i - 1]?.node ?? st[i].node,
+              v.use,
+              a.id,
+              pathOf(r) ?? '',
+              n.id,
+            )
+            if (place) {
+              const { look, ...at } = place
+              const who = a === n ? 'it' : `"${a.id}"`
               add(
                 policy(
                   'required',
-                  `The block "${n.id}" of the component "${cid}" must stay on the page, but ${a === n ? 'this use hides it' : `this use hides "${a.id}"`}.`,
-                  place,
+                  `The block "${n.id}" of the component "${cid}" must stay on the page, but ${
+                    look
+                      ? `the look "${look}" of the component hides ${who} for this use`
+                      : st[i].source.by === 'master'
+                        ? `${who} is hidden in the component`
+                        : `this use hides ${who}`
+                  }.`,
+                  at,
                 ),
               )
+            }
           }
       inside(n, up)
       if (n.kind !== 'text') return
@@ -467,8 +516,8 @@ export function checkRequired(doc: SiteDocument): Problem[] {
           (x, j) => j > 0 && runs(x) !== runs(st[j - 1]),
         )
         const s = last > 0 ? st[last].source : undefined
-        const far =
-          s?.by === 'override' && s.inst !== v.use.inst ? s : undefined
+        // An override that emptied it is where to look, this use's or one further out; otherwise the property that is set.
+        const far = s?.by === 'override' ? s : undefined
         add(
           policy(
             'required',
