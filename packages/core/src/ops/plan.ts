@@ -24,6 +24,37 @@ import {
 
 export { why }
 
+/** The longest text a veto's message, rule, node id or path may have in the refusal that carries it. */
+const VETO_TEXT = 500
+/** Most entries copied from a veto's `allowed`. */
+const VETO_ALLOWED = 50
+/**
+ * The refusal an `allow` result becomes: POLICY_VIOLATION, with the veto's `message`, `rule`, `nodeId` and `path` when they are text
+ * (cut at 500 characters) and its `allowed` when it is a list of texts (the first 50). Any other field, any value of the wrong type
+ * and a result that cannot be read are left out; the message is then "Not allowed.". Never throws, so a hostile `allow` is still a
+ * policy refusal.
+ */
+export function vetoProblem(veto: unknown): Problem {
+  const out: Problem = { code: 'POLICY_VIOLATION', message: 'Not allowed.' }
+  try {
+    if (!isObj(veto)) return out
+    const text = (v: unknown) =>
+      typeof v === 'string' ? v.slice(0, VETO_TEXT) : undefined
+    const { message, rule, nodeId, path, allowed } = veto
+    out.message = text(message) || out.message
+    const keep = { rule: text(rule), nodeId: text(nodeId), path: text(path) }
+    for (const [k, v] of Object.entries(keep))
+      if (v !== undefined) (out as Record<string, unknown>)[k] = v
+    if (Array.isArray(allowed) && allowed.every(a => typeof a === 'string'))
+      out.allowed = allowed
+        .slice(0, VETO_ALLOWED)
+        .map(a => a.slice(0, VETO_TEXT))
+  } catch {
+    // a getter that throws: keep what was read
+  }
+  return out
+}
+
 export const MAX_OPS = 200
 export const MAX_REQUEST_CHARS = 1_000_000
 
@@ -151,10 +182,27 @@ export function plan(
           { path: 'ops' },
         ).problems,
       )
-    if (
-      canonicalJson({ key: idemKey, baseRevision, ops }).length >
-      MAX_REQUEST_CHARS
-    )
+    let size: number
+    try {
+      size = canonicalJson({ key: idemKey, baseRevision, ops }).length
+    } catch {
+      // Something in the request cannot be written as JSON (a cycle, a BigInt): name the first operation that cannot, if one does.
+      const k = ops.findIndex(o => {
+        try {
+          canonicalJson(o)
+          return false
+        } catch {
+          return true
+        }
+      })
+      return fail(
+        refuse('INVALID_OPERATION', 'The request cannot be written as JSON.', {
+          path: 'ops',
+        }).problems,
+        k < 0 ? undefined : k,
+      )
+    }
+    if (size > MAX_REQUEST_CHARS)
       return fail(
         refuse(
           'RESOURCE_LIMIT_EXCEEDED',
@@ -193,17 +241,7 @@ export function plan(
           rule: 'allow',
         }
       }
-      if (veto)
-        return fail(
-          [
-            {
-              ...(isObj(veto) ? veto : {}),
-              code: 'POLICY_VIOLATION',
-              message: String(veto?.message ?? 'Not allowed.'),
-            },
-          ],
-          i,
-        )
+      if (veto) return fail([vetoProblem(veto)], i)
       const r = (TABLE[op.op as Op['op']] as OpFn<Op['op']>)(
         work,
         registry,

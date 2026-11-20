@@ -5,7 +5,7 @@ import { isObj } from '../document/rules.ts'
 import type { Registry } from '../registry/index.ts'
 import { validateSite } from '../validate/index.ts'
 import { affected, diffAll } from './diff.ts'
-import { plan, why } from './plan.ts'
+import { plan, vetoProblem, why } from './plan.ts'
 import {
   refuse,
   type Allow,
@@ -17,6 +17,10 @@ import {
 const invalid = (message: string, path?: string): ApplyResult =>
   refuse('INVALID_OPERATION', message, path === undefined ? {} : { path })
 const whole = (x: unknown): x is number => Number.isInteger(x)
+/** A key is a text of 1 to 200 characters: the same bound `plan` holds, checked before the store is asked about it. */
+const keyOk = (k: unknown): k is string =>
+  typeof k === 'string' && k.length >= 1 && k.length <= 200
+const KEY_MESSAGE = 'key must be a text of 1 to 200 characters.'
 
 /** The steps both functions share: replay, then head. Returns the refusal, or the head to work from. */
 async function begin(
@@ -51,9 +55,7 @@ async function finish(
   doc: SiteDocument,
   key: string,
   request: string,
-  made: Extract<ApplyResult, { ok: true }> extends infer R
-    ? Omit<R & object, 'ok' | 'revision'>
-    : never,
+  made: Omit<Extract<ApplyResult, { ok: true }>, 'ok' | 'revision'>,
 ): Promise<ApplyResult> {
   const result: ApplyResult = { ok: true, revision: baseRevision + 1, ...made }
   const c = await store.commit(site, {
@@ -93,8 +95,7 @@ export async function apply(
     const { site, key, baseRevision, ops } = request
     if (typeof site !== 'string' || !site)
       return invalid('site must be a text.', 'site')
-    if (typeof key !== 'string' || !key)
-      return invalid('key must be a text.', 'key')
+    if (!keyOk(key)) return invalid(KEY_MESSAGE, 'key')
     if (!whole(baseRevision))
       return invalid('baseRevision must be a whole number.', 'baseRevision')
     if (!Array.isArray(ops)) return invalid('ops must be a list.', 'ops')
@@ -136,8 +137,7 @@ export async function restore(
     to = r.to
     if (typeof site !== 'string' || !site)
       return invalid('site must be a text.', 'site')
-    if (typeof key !== 'string' || !key)
-      return invalid('key must be a text.', 'key')
+    if (!keyOk(key)) return invalid(KEY_MESSAGE, 'key')
     if (!whole(baseRevision))
       return invalid('baseRevision must be a whole number.', 'baseRevision')
     if (!whole(to)) return invalid('to must be a whole number.', 'to')
@@ -155,6 +155,8 @@ export async function restore(
         path: 'to',
       },
     )
+  // Before `store.get`, which is not asked about a revision above the head or below 0: `begin` has checked that `baseRevision` is the
+  // head, so no store holds such a revision. The order is part of the contract (the test 'restore to a revision the store does not hold').
   if (to > baseRevision || to < 0) return unsupported()
   const old = await store.get(site, to)
   if (old === undefined) return unsupported()
@@ -185,17 +187,7 @@ export async function restore(
       rule: 'allow',
     }
   }
-  if (veto)
-    return {
-      ok: false,
-      problems: [
-        {
-          ...(isObj(veto) ? veto : {}),
-          code: 'POLICY_VIOLATION',
-          message: String(veto?.message ?? 'Not allowed.'),
-        },
-      ],
-    }
+  if (veto) return { ok: false, problems: [vetoProblem(veto)] }
   const d = diffAll(b.doc, restored)
   return finish(store, site, baseRevision, restored, key, text, {
     ...affected(d),

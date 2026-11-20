@@ -301,6 +301,13 @@ export function storeContract(
         ),
       )
       assert.deepEqual(again.pages, ['home'])
+      // nor is what `replay` returns
+      const seen = await store.replay(site, 'k')
+      assert.ok(seen)
+      const recorded = structuredClone(seen)
+      seen.request = 'changed'
+      if (seen.result.ok) seen.result.pages.push('x')
+      assert.deepEqual(await store.replay(site, 'k'), recorded)
     })
 
     describe('commit called directly', () => {

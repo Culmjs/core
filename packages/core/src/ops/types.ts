@@ -211,14 +211,17 @@ export const refuse = (
   problems: [{ code, message, ...more }],
 })
 
-/** Text for any thrown value; cannot throw. */
+/** Text for any thrown value; cannot throw. A value with no message (`{}`, `undefined`, `null`) is "unknown error". */
 export function why(e: unknown): string {
   try {
     const m =
       typeof e === 'object' && e !== null
         ? (e as { message?: unknown }).message
         : e
-    return String(m).slice(0, 300) || 'unknown error'
+    return (
+      (m === undefined || m === null ? '' : String(m)).slice(0, 300) ||
+      'unknown error'
+    )
   } catch {
     return 'unknown error'
   }

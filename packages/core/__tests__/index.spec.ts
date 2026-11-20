@@ -121,4 +121,19 @@ test('the entry compiles a site made only from what it exports', () => {
 test('the stage 1 names remove, move, insert and insertBlock are still the stage 1 functions', () => {
   assert.equal(core.insertBlock.length, 4)
   assert.equal(core.remove.length, 2)
+  assert.equal(core.insert.length, 4)
+  assert.equal(core.move.length, 5)
+  // and they still take a tree and give a tree, not an operation result
+  const leaf = (id: string) => ({ id, kind: 'box', name: id, slot: {} })
+  const root = { ...leaf('r'), children: [leaf('a'), leaf('b')] } as never
+  const ids = (n: { children?: { id: string }[] }) =>
+    (n.children ?? []).map(c => c.id)
+  const moved = core.move(root, 'b', 'r', 0)
+  assert.deepEqual(ids(moved), ['b', 'a'])
+  const inserted = core.insert(root, 'r', 1, leaf('x') as never)
+  assert.deepEqual(ids(inserted), ['a', 'x', 'b'])
+  const removed = core.remove(root, 'a')
+  assert.deepEqual(ids(removed), ['b'])
+  for (const t of [moved, inserted, removed]) assert.equal('ok' in t, false)
+  assert.deepEqual(ids(root), ['a', 'b'])
 })

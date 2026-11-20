@@ -344,6 +344,9 @@ test('a valid document stays valid after every accepted batch', () => {
     [{ op: 'addPage', title: 'N', slug: '/n' }],
     [{ op: 'movePage', page: 'about', index: 0 }],
     [{ op: 'setSite', name: 'Other' }],
+    [{ op: 'setProps', tree: T, id: 't1', props: {}, name: 'Renamed' }],
+    [{ op: 'setPage', page: 'about', title: 'Other title' }],
+    [{ op: 'removePage', page: 'about' }],
   ]
   for (const ops of batches) {
     const r = ok(run(ops))
@@ -380,6 +383,56 @@ for (const bad of [
     assert.equal(ps[0].op, 0)
     assert.ok(!/\n\s+at /.test(ps[0].message), 'no stack trace')
   })
+
+test('OP_NAMES is the 26 operations of the spec, in the order of its table, each once', () => {
+  assert.deepEqual(
+    [...OP_NAMES],
+    [
+      'add',
+      'remove',
+      'move',
+      'setProps',
+      'setText',
+      'setStyle',
+      'setHidden',
+      'setSlot',
+      'setRequired',
+      'bindData',
+      'setStates',
+      'insertBlock',
+      'setBlockSetting',
+      'updateBlock',
+      'makeComponent',
+      'setInstance',
+      'detach',
+      'removeComponent',
+      'addPage',
+      'removePage',
+      'setPage',
+      'movePage',
+      'setSite',
+      'setLook',
+      'setSiteStyles',
+      'setFonts',
+    ],
+  )
+  assert.equal(new Set(OP_NAMES).size, OP_NAMES.length)
+})
+
+test('a refusal carries problems and no document, whichever step refused', () => {
+  const veto: Allow = () => ({ code: 'POLICY_VIOLATION', message: 'no' })
+  for (const r of [
+    run([], base(), undefined, { ops: 'x' }), // the shape of the request
+    run([{ op: 'paint' }]), // an unknown operation
+    run([setText('nope', 'x')]), // an operation refuses
+    run([setText('t1', 'ok')], base(), veto), // allow refuses
+    run([{ op: 'setProps', tree: T, id: 't1', props: { level: 'h9' } }]), // validation refuses at the end
+  ]) {
+    assert.ok(!r.ok)
+    assert.equal('doc' in r, false)
+    assert.ok(r.problems.length > 0)
+  }
+})
 
 test('an unknown operation name lists the allowed names', () => {
   assert.equal(OP_NAMES.length, 26)
@@ -607,4 +660,90 @@ test('add does not report the parent as changed, and remove names no id (the dif
   const same = ok(run([setText('t1', 'One')]))
   assert.deepEqual(same.changed, [])
   assert.deepEqual(same.pages, [])
+})
+
+test('an operation that cannot be written as JSON is refused with its own index, not without one', () => {
+  const cyc: Record<string, unknown> = {}
+  cyc.self = cyc
+  for (const bad of [cyc, { n: 1n }]) {
+    const ps = refused(
+      run([
+        setText('t1', 'a'),
+        setText('t2', 'b'),
+        { op: 'setText', tree: T, id: 't1', text: bad },
+      ]),
+    )
+    assert.deepEqual([ps[0].code, ps[0].op], ['INVALID_OPERATION', 2])
+  }
+})
+
+test('a veto from allow is bound: only text fields are copied, a hostile result is still POLICY_VIOLATION', () => {
+  const boom = {
+    toString() {
+      throw new Error('hostile')
+    },
+  }
+  const one = (veto: unknown) =>
+    refused(run([setText('t1', 'a')], base(), () => veto as never))[0]
+  // fields of the wrong type are dropped, a text message is kept
+  assert.deepEqual(
+    one({
+      code: 'INVALID_NODE',
+      message: 'no way',
+      rule: 'frozen',
+      nodeId: 't1',
+      path: 'props',
+      allowed: ['a', 'b'],
+      extra: 'dropped',
+    }),
+    {
+      code: 'POLICY_VIOLATION',
+      message: 'no way',
+      rule: 'frozen',
+      nodeId: 't1',
+      path: 'props',
+      allowed: ['a', 'b'],
+      op: 0,
+    },
+  )
+  assert.deepEqual(
+    one({ message: 'm', rule: 5, nodeId: {}, path: [], allowed: 'x' }),
+    {
+      code: 'POLICY_VIOLATION',
+      message: 'm',
+      op: 0,
+    },
+  )
+  // a message that is no text, an object whose toString throws, a getter that throws, a value that is no object
+  for (const veto of [
+    { message: boom },
+    { message: 7 },
+    { message: undefined },
+    true,
+    'no',
+    {
+      get message() {
+        throw new Error('getter')
+      },
+    },
+  ])
+    assert.deepEqual(one(veto), {
+      code: 'POLICY_VIOLATION',
+      message: 'Not allowed.',
+      op: 0,
+    })
+  // a long text is cut
+  assert.ok(one({ message: 'x'.repeat(5000) }).message.length <= 500)
+})
+
+test('an allow that throws a value with no message says so in words', () => {
+  for (const thrown of [{}, undefined, null, Object.create(null)]) {
+    const p = refused(
+      run([setText('t1', 'a')], base(), () => {
+        throw thrown
+      }),
+    )[0]
+    assert.deepEqual([p.code, p.rule, p.op], ['POLICY_VIOLATION', 'allow', 0])
+    assert.equal(p.message, 'allow failed: unknown error')
+  }
 })

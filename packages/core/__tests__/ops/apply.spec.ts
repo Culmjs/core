@@ -172,6 +172,10 @@ test('a bad request is INVALID_OPERATION and never reaches the store', async () 
     [],
     { baseRevision: 0, ops: [] },
     { site: 's', baseRevision: 0, ops: [] },
+    { key: 'k', baseRevision: 0, ops: [] },
+    { site: '', key: 'k', baseRevision: 0, ops: [] },
+    { site: 's', key: '', baseRevision: 0, ops: [] },
+    { site: 's', key: 'k'.repeat(201), baseRevision: 0, ops: [] },
     { site: 's', key: 1, baseRevision: 0, ops: [] },
     { site: 1, key: 'k', baseRevision: 0, ops: [] },
     { site: 's', key: 'k', baseRevision: 0.5, ops: [] },
@@ -192,6 +196,8 @@ test('a bad request is INVALID_OPERATION and never reaches the store', async () 
     { site: 's', to: 0, baseRevision: 'a', key: 'k' },
     { site: 's', to: 0, baseRevision: 0 },
     { to: 0, baseRevision: 0, key: 'k' },
+    { site: 's', to: 0, baseRevision: 0, key: '' },
+    { site: 's', to: 0, baseRevision: 0, key: 'k'.repeat(201) },
   ]
   for (const b of rbads) {
     const r = await restore(s, reg, b as never)
@@ -381,4 +387,53 @@ test('a request with no baseRevision is INVALID_OPERATION and the store is not c
   assert.ok(!r2.ok)
   assert.equal(r2.problems[0].code, 'INVALID_OPERATION')
   assert.deepEqual(calls, [])
+})
+
+test('apply and restore hold a key to 1 to 200 characters, before the store is called; 200 is accepted', async () => {
+  const s = exploding()
+  for (const key of ['', 'k'.repeat(201), 'k'.repeat(100000)]) {
+    const a = await apply(s, reg, { site: 's', key, baseRevision: 0, ops: [] })
+    assert.ok(!a.ok)
+    assert.deepEqual(
+      [a.problems[0].code, a.problems[0].path],
+      ['INVALID_OPERATION', 'key'],
+    )
+    const r = await restore(s, reg, { site: 's', to: 0, baseRevision: 0, key })
+    assert.ok(!r.ok)
+    assert.deepEqual(
+      [r.problems[0].code, r.problems[0].path],
+      ['INVALID_OPERATION', 'key'],
+    )
+  }
+  assert.equal(s.calls, 0)
+  const store = memoryStore({ s: base() })
+  const key = 'k'.repeat(200)
+  assert.ok(
+    (await restore(store, reg, { site: 's', to: 0, baseRevision: 0, key })).ok,
+  )
+})
+
+test('restore: a hostile veto is POLICY_VIOLATION with the text fields only, as in plan', async () => {
+  const store = memoryStore({ s: base() })
+  const req = { site: 's', to: 0, baseRevision: 0, key: 'r' }
+  const boom = {
+    toString() {
+      throw new Error('hostile')
+    },
+  }
+  const r = await restore(
+    store,
+    reg,
+    req,
+    () => ({ message: boom, rule: 5, extra: 1 }) as never,
+  )
+  assert.ok(!r.ok)
+  assert.deepEqual(r.problems, [
+    { code: 'POLICY_VIOLATION', message: 'Not allowed.' },
+  ])
+  const t = await restore(store, reg, req, () => {
+    throw {}
+  })
+  assert.ok(!t.ok)
+  assert.equal(t.problems[0].message, 'allow failed: unknown error')
 })
