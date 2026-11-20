@@ -459,12 +459,12 @@ test('MG1, property: version 1 forms and fields on pages, in masters, in slots a
     'look',
     'override',
   ] as const
-  const places = ['page', 'master', 'nested', 'slot'] as const
+  const places = ['page', 'master', 'nested', 'slot', 'cut'] as const
   let built = 0
   for (const place of places)
     for (const way of ways) {
       if (
-        place === 'page' &&
+        (place === 'page' || place === 'cut') &&
         ['toggleSet', 'toggleDefault', 'look', 'override'].includes(way)
       )
         continue
@@ -498,6 +498,7 @@ test('MG1, property: version 1 forms and fields on pages, in masters, in slots a
         }
       let d: SiteDocument
       if (place === 'page') d = siteWith([boxed(true)])
+      else if (place === 'cut') d = crowd([boxed(true)])
       else if (place === 'master') {
         d = siteWith([inst('u0', 'kc', use)])
         d.components = [
@@ -529,7 +530,7 @@ test('MG1, property: version 1 forms and fields on pages, in masters, in slots a
       }
       // the state a `when` layer reacts to sits at the top of the tree that holds the box
       const top =
-        place === 'page'
+        place === 'page' || place === 'cut'
           ? d.pages[0].root
           : (d.components.find(c => c.id !== 'oc') as { root: Node }).root
       top.state = [{ name: 'tab', values: ['a', 'b'], initial: 'a' }]
@@ -538,4 +539,57 @@ test('MG1, property: version 1 forms and fields on pages, in masters, in slots a
       built++
     }
   assert.ok(built >= 20, `${built} documents`)
+})
+
+// ---- fifth round, I2: a page past the element limit ----
+
+/** A page holding `first`, then `uses` uses of a 25-node component `w`. */
+function crowd(first: Node[], uses = 90): SiteDocument {
+  const d = siteWith([
+    ...first,
+    ...Array.from({ length: uses }, (_, i) => inst(`w${i}`, 'w')),
+  ])
+  d.components = [
+    comp(
+      'w',
+      node(
+        'wroot',
+        'column',
+        Array.from({ length: 24 }, (_, k) => text(`wt${k}`, 'x')),
+      ),
+    ) as never,
+  ]
+  return d
+}
+
+test('I2: a version 1 page past the element limit with a visible form migrates to a valid document', () => {
+  const r = migrate(asV1(crowd([vform()])))
+  assert.ok(r.ok)
+  assert.equal(r.doc.pages[0].root.children![0].required, false)
+  assert.deepEqual(validateSite(r.doc, vreg), [])
+})
+
+test('I2: a page just under the limit is not exempted by that rule', () => {
+  // 1 page root + 1 form + 1 field + 70 uses of 1 + 25 nodes = 1823
+  const r = migrate(asV1(crowd([vform()], 70)))
+  assert.ok(r.ok)
+  assert.equal('required' in r.doc.pages[0].root.children![0], false)
+  assert.deepEqual(validateSite(r.doc, vreg), [])
+})
+
+test('I2: a version 1 page cut by nesting depth alone (a chain of components) with a visible form migrates to a valid document', () => {
+  for (const depth of [20, 30, 31, 32, 33, 40, 60]) {
+    const d = siteWith([vform(), inst('u', 'c0')])
+    d.components = Array.from({ length: depth }, (_, i) =>
+      comp(
+        `c${i}`,
+        node(
+          'r',
+          'box',
+          i < depth - 1 ? [inst('n', `c${i + 1}`)] : [text('t', 'x')],
+        ),
+      ),
+    ) as never
+    assert.deepEqual(migratedProblems(asV1(d)), [], String(depth))
+  }
 })

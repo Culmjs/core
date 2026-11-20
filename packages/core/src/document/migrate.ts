@@ -1,6 +1,8 @@
 import type { Problem } from './problems.ts'
 import { reasonOf, trees, walkWithAncestors } from './required.ts'
-import type { SiteDocument } from './types.ts'
+import { DEPTH_GUARD, MAX_NODES } from './kinds.ts'
+import { isObj } from './rules.ts'
+import type { Node, SiteDocument } from './types.ts'
 
 export const SCHEMA_VERSION = 2
 
@@ -21,14 +23,51 @@ export type MigrationResult =
   | { ok: true; doc: SiteDocument; from: number }
   | { ok: false; problem: Problem }
 
+/** A tree's size and depth as the unroll would expand it, counted without unrolling: an instance counts as itself plus its component, nested uses included. A missing component or a cycle counts nothing; a repeat's rows are data and do not count. */
+function expanded(
+  doc: SiteDocument,
+  root: Node,
+): { size: number; depth: number } {
+  const byId = new Map(
+    (Array.isArray(doc.components) ? doc.components : [])
+      .filter(c => isObj(c) && typeof c.id === 'string')
+      .map(c => [c.id, c]),
+  )
+  const memo = new Map<string, { size: number; depth: number }>()
+  const go = (
+    n: Node,
+    stack: readonly string[],
+  ): { size: number; depth: number } => {
+    let size = 1
+    let depth = 0
+    const add = (k: { size: number; depth: number }) => {
+      size += k.size
+      depth = Math.max(depth, k.depth)
+    }
+    if (n.kind === 'instance' && typeof n.component === 'string') {
+      const c = byId.get(n.component)
+      if (c && isObj(c.root) && !stack.includes(c.id)) {
+        if (!memo.has(c.id)) memo.set(c.id, go(c.root, [...stack, c.id]))
+        add(memo.get(c.id)!)
+      }
+    }
+    for (const k of Array.isArray(n.children) ? n.children : [])
+      if (isObj(k)) add(go(k as Node, stack))
+    return { size, depth: depth + 1 }
+  }
+  return go(root, [])
+}
+
 /**
  * 1 to 2: version 2 refuses a hidden required node, and a form or field is required by its kind, so the step gives
  * `required: false` to every form and field it cannot show to be visible: one hidden in its own tree (`hide` on a layout or
  * `hidden: true` in any style layer, on it or an ancestor), one anywhere in a component's master, and one under an instance
  * (slot content). This layer cannot call the unroll, so it does not guess what a use, a property or a look does: it exempts
- * every form inside a component, which only loosens (version 1 had no such protection). Any other form or field sits on a
- * page, the header or the footer with only its own tree above it, so it is visible after the step. A malformed part is
- * skipped, and validation reports it.
+ * every form inside a component, which only loosens (version 1 had no such protection). It also exempts every form and field
+ * of a page, the header or the footer whose expanded size reaches `MAX_NODES` or whose expanded depth reaches `DEPTH_GUARD`,
+ * because version 2 refuses a cut tree that holds required content; that, too, over-exempts by design. Any other form or
+ * field sits on a page, the header or the footer with only its own tree above it, uncut, so it is visible after the step. A
+ * malformed part is skipped, and validation reports it.
  */
 const toVersion2: MigrationStep = {
   from: 1,
@@ -36,10 +75,14 @@ const toVersion2: MigrationStep = {
     const doc = input as SiteDocument
     for (const [tree, root] of trees(doc)) {
       const master = typeof tree === 'object' && 'component' in tree
+      const size = master ? undefined : expanded(doc, root)
+      const cut =
+        !!size && (size.size >= MAX_NODES || size.depth >= DEPTH_GUARD)
       walkWithAncestors(root, (n, up) => {
         if (
           (n.kind === 'form' || n.kind === 'field') &&
           (master ||
+            cut ||
             up.some(a => a.kind === 'instance') ||
             [...up, n].some(a => reasonOf(a)))
         )

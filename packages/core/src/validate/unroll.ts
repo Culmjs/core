@@ -11,7 +11,7 @@ import {
   type Run,
   type SiteStyles,
 } from '../document/index.ts'
-import { MAX_ROWS } from '../document/kinds.ts'
+import { DEPTH_GUARD, MAX_ROWS } from '../document/kinds.ts'
 import { isObj } from '../document/rules.ts'
 import {
   BIND_KEY,
@@ -30,8 +30,7 @@ type Env = {
   /** Plug-in kinds; core kinds are always known. */
   kinds?: ReadonlyMap<string, KindSpec>
 }
-/** Deepest nesting expanded, plain and through instances together. Far above `MAX_DEPTH`; past it nothing more is added and `over` is set, so no input can overflow the stack. */
-export const DEPTH_GUARD = 64
+export { DEPTH_GUARD }
 /** How much has been added so far, against `MAX_NODES`. */
 export type Budget = { n: number; over: boolean }
 

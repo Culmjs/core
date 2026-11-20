@@ -3,6 +3,8 @@ import type { CoreKind, Decl, Kind, Node, StyleLayer } from './types.ts'
 
 export const MAX_NODES = 2000
 export const MAX_DEPTH = 12
+/** Deepest nesting expanded, plain and through instances together. Far above `MAX_DEPTH`; past it nothing more is added and `over` is set, so no input can overflow the stack. */
+export const DEPTH_GUARD = 64
 /** The most rows one list shows: `rowsOf` stops here, so validation refuses a `repeat.max` or component `limit` above it. */
 export const MAX_ROWS = 200
 /** No `~` or `.`, so an id can't collide with an expanded copy (`<id>~<n>`), a block copy (`<rootId>.<localId>`) or an unrolled component part (`<instanceId>.<partId>`). */
