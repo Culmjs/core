@@ -1,8 +1,9 @@
 import { KINDS } from '../document/index.ts'
+import { STATES } from '../document/layers.ts'
 import { STYLE_GROUPS } from '../document/kinds.ts'
-import type { KindSpec, Problem } from '../document/index.ts'
+import type { KindSpec, PropField, Problem } from '../document/index.ts'
 import type { BlockDef, DataSource, Registry } from '../registry/index.ts'
-import { READ_CAP, paged } from './cap.ts'
+import { paged } from './cap.ts'
 import { OP_NAMES } from './plan.ts'
 import { capped, cut, len, marker } from './read.ts'
 import { refuse } from './types.ts'
@@ -16,22 +17,33 @@ const WHATS: readonly What[] = ['kinds', 'blocks', 'sources', 'operations']
 // ---- limits. Every bound is a serialised length (`JSON.stringify(v).length`), never a count of characters.
 /** A name, label, id or note in a row. */
 const TEXT = 100
-/** A guide (at most 500 characters when registered, but a registry is not trusted). */
+/** A guide in a detail view (at most 500 characters when registered, but a registry is not trusted). */
 const GUIDE = 500
-/** Entries listed per list in a row; the rest is counted in `<list>More`. */
-const LISTED = 50
-/** The same when one entry is asked for by `id`. */
-const LISTED_ONE = 200
-/** A row among many. */
+/** A guide in a list row. */
+const GUIDE_LIST = 200
+/** A look id, option label or option value. */
+const SHORT = 80
+/** Entries per list in a header; `squeeze` takes more out when the header is over its limit. */
+const LISTED = 100
+/** Options listed in a setting row. */
+const OPTIONS = 50
+/** Looks listed in a list row. */
+const LOOKS_LIST = 10
+/** A list row. */
 const ROW = 4000
-/** The single entry of an `id` query. */
-const ROW_ONE = READ_CAP / 2
+/** The header of a detail view (everything but the paged rows). */
+const HEADER = 4000
+/** One setting row of a detail view. */
+const SETTING = 6000
+/** The `settings` of a ready insert. */
+const INSERT_SETTINGS = 1500
 /** A string value of a sample row, a field type or a nested value. */
 const VALUE = 200
 /** The sample row. */
 const SAMPLE = 2000
 /** Names listed in `allowed` of an unknown id. */
 const ALLOWED = 50
+const DETAIL = 'call again with id for full settings'
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -40,6 +52,8 @@ const str = (v: unknown, budget = TEXT) =>
   typeof v === 'string' ? cut(v, budget) : ''
 const num = (v: unknown) =>
   typeof v === 'number' && Number.isFinite(v) ? v : undefined
+const withNum = (k: string, v: unknown) =>
+  num(v) === undefined ? {} : { [k]: num(v) }
 
 /** Up to `n` entries mapped by `f`, and how many were left out. */
 function listed<T>(
@@ -55,9 +69,8 @@ function listed<T>(
   }
   return { items, more: all.length - Math.min(all.length, n) }
 }
-const more = (key: string, n: number) => (n > 0 ? { [key]: n } : {})
 
-/** A value cut down: strings to VALUE, lists to 20, objects to LISTED keys, depth to 4; what is left is counted or marked. */
+/** A value cut down: strings to VALUE, lists to 20, objects to 50 keys, depth to 4. */
 function trim(v: unknown, depth = 0): unknown {
   if (typeof v === 'string') return cut(v, VALUE)
   if (typeof v === 'number') return Number.isFinite(v) ? v : null
@@ -66,23 +79,52 @@ function trim(v: unknown, depth = 0): unknown {
   if (Array.isArray(v))
     return v.slice(0, 20).map(x => trim(x, depth + 1) ?? null)
   const out: Row = {}
-  for (const [k, x] of Object.entries(v).slice(0, LISTED)) {
+  for (const [k, x] of Object.entries(v).slice(0, 50)) {
     const y = trim(x, depth + 1)
     if (y !== undefined) out[cut(k, TEXT)] = y
   }
   return out
 }
 
+const moreKey = (k: string) => `more${k[0].toUpperCase()}${k.slice(1)}`
+
 /**
- * Brings a row under `limit`: while it is over, its largest field (never the first one, which names the row) is replaced by the
- * marker `{ cut: <length> }`. A marker is small, so the loop ends.
+ * Brings a row under `limit`: while it is over, one entry leaves the end of the longest of the lists (or objects) named by `keys`
+ * and `more<Key>` counts it. Then, only if the row is still over, the largest other field (never the first, which names the row)
+ * is replaced by the marker `{ cut: <length> }`; a marker is small, so the loop ends.
  */
-function fit(row: Row, limit: number): Row {
+function squeeze(row: Row, limit: number, keys: string[]): Row {
   const out = { ...row }
-  const keys = Object.keys(out).slice(1)
+  const size = (k: string) => {
+    const v = out[k]
+    return Array.isArray(v) ? v.length : isObj(v) ? Object.keys(v).length : 0
+  }
+  while (len(out) > limit) {
+    const k = keys.reduce((a, b) =>
+      len(out[b]) > len(out[a]) && size(b) ? b : a,
+    )
+    if (!size(k)) break
+    const v = out[k]
+    const before = size(k)
+    // Drop about as many entries as the excess is long (at least one); the average entry length keeps it from dropping many too many.
+    const drop = Math.max(
+      1,
+      Math.floor(((len(out) - limit) * size(k)) / Math.max(1, len(v))),
+    )
+    if (Array.isArray(v)) out[k] = v.slice(0, Math.max(0, v.length - drop))
+    else {
+      const keep = Object.entries(v as Row)
+      out[k] = Object.fromEntries(
+        keep.slice(0, Math.max(0, keep.length - drop)),
+      )
+    }
+    out[moreKey(k)] =
+      ((out[moreKey(k)] as number | undefined) ?? 0) + before - size(k)
+  }
+  const rest = Object.keys(out).slice(1)
   while (len(out) > limit) {
     let big: string | undefined
-    for (const k of keys)
+    for (const k of rest)
       if (
         !(isObj(out[k]) && Object.keys(out[k]).join() === 'cut') &&
         (big === undefined || len(out[k]) > len(out[big]))
@@ -93,6 +135,21 @@ function fit(row: Row, limit: number): Row {
   }
   return out
 }
+
+/** A setting row whose options are cut to OPTIONS and then further until the row is at most SETTING. */
+function settingRow(
+  row: Row,
+  options: { items: unknown[]; more: number } | undefined,
+): Row {
+  if (!options) return row
+  const out: Row = { ...row, options: options.items }
+  if (options.more) out.moreOptions = options.more
+  return squeeze(out, SETTING, ['options'])
+}
+
+/** What a view of one entry is: the entry's header and its settings as rows. */
+type Detail = { header: Row; rows: Row[] }
+type Entryview = { name: string; list(): Row; detail(): Detail }
 
 // ---- kinds
 
@@ -111,65 +168,89 @@ function styleNames(styles: unknown): string[] {
   ] as string[]
 }
 
-function kindRow(kind: string, spec: KindSpec, n: number): Row {
-  const props = Object.entries(isObj(spec.props) ? spec.props : {})
-  const settings = listed(props, n, e => {
-    const [key, f] = e as [string, Record<string, unknown>]
-    if (!isObj(f)) return undefined
-    const options = Array.isArray(f.options)
-      ? listed(f.options, n, o =>
-          typeof o === 'string' ? cut(o, TEXT) : undefined,
-        )
-      : undefined
-    return {
-      key: cut(key, TEXT),
-      type: str(f.type),
-      ...(num(f.min) === undefined ? {} : { min: num(f.min) }),
-      ...(num(f.max) === undefined ? {} : { max: num(f.max) }),
-      ...(num(f.maxLength) === undefined
-        ? {}
-        : { maxLength: num(f.maxLength) }),
-      ...(options
-        ? { options: options.items, ...more('optionsMore', options.more) }
-        : {}),
-    }
-  })
-  const styles = listed(styleNames(spec.styles), n, x => str(x))
-  const states = listed(spec.states, n, x => trim(x))
-  const bindable = listed(spec.bindable, n, x => str(x))
-  const parents =
-    spec.parents === 'any' ? undefined : listed(spec.parents, n, x => str(x))
-  const c = spec.children
-  return fit(
-    {
-      kind: cut(kind, TEXT),
-      label: str(spec.label),
-      role: str(spec.role),
-      parents: parents ? parents.items : 'any',
-      ...(parents ? more('parentsMore', parents.more) : {}),
-      ...(isObj(c)
-        ? {
-            children: {
-              min: num(c.min) ?? 0,
-              ...(num(c.max) === undefined ? {} : { max: num(c.max) }),
-              ...(Array.isArray(c.kinds)
-                ? { kinds: listed(c.kinds, n, x => str(x)).items }
-                : {}),
-            },
-          }
-        : {}),
-      settings: settings.items,
-      ...more('settingsMore', settings.more),
-      styles: styles.items,
-      ...more('stylesMore', styles.more),
-      states: states.items,
-      ...more('statesMore', states.more),
-      bindable: bindable.items,
-      ...more('bindableMore', bindable.more),
-      repeatable: spec.repeatable === true,
-    },
-    n === LISTED ? ROW : ROW_ONE,
+function kindView(kind: string, spec: KindSpec): Entryview {
+  const props = Object.entries(isObj(spec.props) ? spec.props : {}).filter(
+    (e): e is [string, PropField & Record<string, unknown>] => isObj(e[1]),
   )
+  const header = () => {
+    const styles = listed(styleNames(spec.styles), LISTED, x => str(x))
+    const states = listed(spec.states, LISTED, x => trim(x))
+    const bindable = listed(spec.bindable, LISTED, x => str(x))
+    const parents =
+      spec.parents === 'any'
+        ? undefined
+        : listed(spec.parents, LISTED, x => str(x))
+    const c = spec.children
+    return squeeze(
+      {
+        kind: cut(kind, TEXT),
+        label: str(spec.label),
+        role: str(spec.role),
+        parents: parents ? parents.items : 'any',
+        ...(parents?.more ? { moreParents: parents.more } : {}),
+        ...(isObj(c)
+          ? {
+              children: {
+                min: num(c.min) ?? 0,
+                ...withNum('max', c.max),
+                ...(Array.isArray(c.kinds)
+                  ? { kinds: listed(c.kinds, 20, x => str(x)).items }
+                  : {}),
+              },
+            }
+          : {}),
+        styles: styles.items,
+        ...(styles.more ? { moreStyles: styles.more } : {}),
+        states: states.items,
+        ...(states.more ? { moreStates: states.more } : {}),
+        bindable: bindable.items,
+        ...(bindable.more ? { moreBindable: bindable.more } : {}),
+        repeatable: spec.repeatable === true,
+      },
+      HEADER,
+      ['styles', 'states', 'bindable', 'parents'].filter(
+        k => k !== 'parents' || parents,
+      ),
+    )
+  }
+  return {
+    name: kind,
+    list: () =>
+      squeeze(
+        {
+          kind: cut(kind, TEXT),
+          label: str(spec.label),
+          role: str(spec.role),
+          settings: props.map(([key, f]) => ({
+            key: cut(key, TEXT),
+            type: str(f.type),
+          })),
+          styles: arr(spec.styles).length,
+          states: arr(spec.states).length,
+        },
+        ROW,
+        ['settings'],
+      ),
+    detail: () => ({
+      header: header(),
+      rows: props.map(([key, f]) =>
+        settingRow(
+          {
+            key: cut(key, TEXT),
+            type: str(f.type),
+            ...withNum('min', f.min),
+            ...withNum('max', f.max),
+            ...withNum('maxLength', f.maxLength),
+          },
+          Array.isArray(f.options)
+            ? listed(f.options, OPTIONS, o =>
+                typeof o === 'string' ? cut(o, SHORT) : undefined,
+              )
+            : undefined,
+        ),
+      ),
+    }),
+  }
 }
 
 // ---- blocks
@@ -179,109 +260,181 @@ function target(site: Head | undefined): {
   tree: { page: string }
   parent: string
 } {
-  const p = site?.doc.pages[0]
-  return p
+  const p: unknown = arr(site?.doc?.pages)[0]
+  return isObj(p) &&
+    typeof p.id === 'string' &&
+    isObj(p.root) &&
+    typeof p.root.id === 'string'
     ? { tree: { page: p.id }, parent: p.root.id }
     : { tree: { page: 'home' }, parent: 'homeroot' }
 }
 
-/** The settings a batch needs to be accepted: a select its first option, a number its minimum (else 0); the rest stays as the look has it. */
+/**
+ * The settings a batch needs to be accepted: a select its first option, a number its minimum (else 0); the rest stays as the
+ * look has it. A value or key too long to state whole is left out (the look's own content then stands, which is always accepted),
+ * and so is every setting after the object would pass INSERT_SETTINGS.
+ */
 function needed(settings: unknown): Record<string, string | number> {
   const out: Record<string, string | number> = {}
   for (const s of arr(settings)) {
-    if (!isObj(s) || typeof s.key !== 'string') continue
+    if (!isObj(s) || typeof s.key !== 'string' || len(s.key) > TEXT) continue
+    let v: string | number | undefined
     if (s.type === 'select') {
       const first = arr(s.options)[0]
-      if (isObj(first) && typeof first.value === 'string')
-        out[s.key] = first.value
-    } else if (s.type === 'number') out[s.key] = num(s.min) ?? 0
+      if (
+        isObj(first) &&
+        typeof first.value === 'string' &&
+        len(first.value) <= SHORT
+      )
+        v = first.value
+    } else if (s.type === 'number') v = num(s.min) ?? 0
+    if (v === undefined) continue
+    if (len({ ...out, [s.key]: v }) > INSERT_SETTINGS) break
+    out[s.key] = v
   }
   return out
 }
 
-function blockRow(b: BlockDef, site: Head | undefined, n: number): Row {
-  const looks = listed(b.looks, n, l =>
-    isObj(l) ? { id: str(l.id), name: str(l.name) } : undefined,
-  )
-  const settings = listed(b.settings, n, s => {
-    if (!isObj(s)) return undefined
-    const options = Array.isArray(s.options)
-      ? listed(s.options, n, o =>
-          isObj(o) ? { label: str(o.label), value: str(o.value) } : undefined,
-        )
-      : undefined
-    return {
-      key: str(s.key),
-      label: str(s.label),
-      type: str(s.type),
-      ...(num(s.min) === undefined ? {} : { min: num(s.min) }),
-      ...(num(s.max) === undefined ? {} : { max: num(s.max) }),
-      ...(options
-        ? { options: options.items, ...more('optionsMore', options.more) }
-        : {}),
-    }
-  })
+function blockView(b: BlockDef, site: Head | undefined): Entryview {
   const first = arr(b.looks)[0]
   const settingsNeeded = needed(b.settings)
-  return fit(
-    {
-      block: str(b.id),
-      version: num(b.version) ?? 0,
-      name: str(b.name),
-      category: str(b.category),
-      ...(typeof b.guide === 'string' ? { guide: str(b.guide, GUIDE) } : {}),
-      looks: looks.items,
-      ...more('looksMore', looks.more),
-      settings: settings.items,
-      ...more('settingsMore', settings.more),
-      ...(isObj(first)
-        ? {
-            insert: {
-              op: 'insertBlock',
-              ...target(site),
-              index: 0,
-              block: b.id,
-              look: first.id as string,
-              ...(Object.keys(settingsNeeded).length
-                ? { settings: settingsNeeded }
-                : {}),
-            } satisfies Op,
-          }
-        : {}),
+  const insert = isObj(first)
+    ? {
+        insert: {
+          op: 'insertBlock',
+          ...target(site),
+          index: 0,
+          block: b.id,
+          look: first.id as string,
+          ...(Object.keys(settingsNeeded).length
+            ? { settings: settingsNeeded }
+            : {}),
+        } satisfies Op,
+      }
+    : {}
+  const defs = arr(b.settings).filter(isObj)
+  const head = (guide: number) => ({
+    block: str(b.id),
+    version: num(b.version) ?? 0,
+    name: str(b.name),
+    category: str(b.category),
+    ...(typeof b.guide === 'string' ? { guide: str(b.guide, guide) } : {}),
+  })
+  return {
+    name: b.id,
+    list: () =>
+      squeeze(
+        {
+          ...head(GUIDE_LIST),
+          looks: listed(b.looks, LOOKS_LIST, l =>
+            isObj(l) ? str(l.id, SHORT) : undefined,
+          ).items,
+          ...(arr(b.looks).length > LOOKS_LIST
+            ? { moreLooks: arr(b.looks).length - LOOKS_LIST }
+            : {}),
+          settings: defs.map(s => ({ key: str(s.key), type: str(s.type) })),
+          ...insert,
+        },
+        ROW,
+        ['settings'],
+      ),
+    detail: () => {
+      const looks = listed(b.looks, LISTED, l =>
+        isObj(l)
+          ? { id: str(l.id, SHORT), name: str(l.name, SHORT) }
+          : undefined,
+      )
+      return {
+        header: squeeze(
+          {
+            ...head(GUIDE),
+            looks: looks.items,
+            ...(looks.more ? { moreLooks: looks.more } : {}),
+            ...insert,
+          },
+          HEADER,
+          ['looks'],
+        ),
+        rows: defs.map(s =>
+          settingRow(
+            {
+              key: str(s.key),
+              label: str(s.label),
+              type: str(s.type),
+              ...withNum('min', s.min),
+              ...withNum('max', s.max),
+            },
+            Array.isArray(s.options)
+              ? listed(s.options, OPTIONS, o =>
+                  isObj(o)
+                    ? { label: str(o.label, SHORT), value: str(o.value, SHORT) }
+                    : undefined,
+                )
+              : undefined,
+          ),
+        ),
+      }
     },
-    n === LISTED ? ROW : ROW_ONE,
-  )
+  }
 }
 
 // ---- sources
 
-function sourceRow(s: DataSource, n: number): Row {
+function sourceView(s: DataSource): Entryview {
   const sample = arr(s.sample)[0]
   const fields = isObj(s.fields) ? Object.entries(s.fields) : []
-  const kept = Object.fromEntries(
-    fields.slice(0, n).map(([k, t]) => [cut(k, TEXT), trim(t)]),
-  )
   const row = isObj(sample) ? trim(sample) : undefined
-  return fit(
-    {
-      source: str(s.name),
-      ...(typeof s.guide === 'string' ? { guide: str(s.guide, GUIDE) } : {}),
-      fields: kept,
-      ...more('fieldsMore', fields.length - Object.keys(kept).length),
-      ...(row === undefined
-        ? {}
-        : { sample: len(row) > SAMPLE ? marker(row) : row }),
-    },
-    n === LISTED ? ROW : ROW_ONE,
-  )
+  const head = (guide: number) => ({
+    source: str(s.name),
+    ...(typeof s.guide === 'string' ? { guide: str(s.guide, guide) } : {}),
+  })
+  return {
+    name: s.name,
+    list: () =>
+      squeeze(
+        {
+          ...head(GUIDE_LIST),
+          fields: fields.slice(0, LISTED).map(([k]) => cut(k, TEXT)),
+          ...(fields.length > LISTED
+            ? { moreFields: fields.length - LISTED }
+            : {}),
+        },
+        ROW,
+        ['fields'],
+      ),
+    detail: () => ({
+      header: squeeze(
+        {
+          ...head(GUIDE),
+          fields: Object.fromEntries(
+            fields.slice(0, LISTED).map(([k, t]) => [cut(k, TEXT), trim(t)]),
+          ),
+          ...(fields.length > LISTED
+            ? { moreFields: fields.length - LISTED }
+            : {}),
+          ...(row === undefined
+            ? {}
+            : { sample: len(row) > SAMPLE ? marker(row) : row }),
+        },
+        HEADER,
+        ['fields'],
+      ),
+      rows: [],
+    }),
+  }
 }
 
 // ---- operations
 
-type Fields<K extends Op['op']> = Record<
-  Exclude<keyof Extract<Op, { op: K }>, 'op'>,
-  [type: string, optional: boolean]
->
+/** Whether the key `P` of `E` may be left out. */
+type Optional<E, P extends keyof E> = object extends Pick<E, P> ? true : false
+/** For each field of the operation (but `op`): its type text, and whether it is optional, which must be what `Op` says. */
+type Fields<K extends Op['op']> = {
+  [P in Exclude<keyof Extract<Op, { op: K }>, 'op'>]-?: [
+    type: string,
+    optional: Optional<Extract<Op, { op: K }>, P>,
+  ]
+}
 type Entry = {
   op: Op['op']
   fields: { name: string; type: string; optional: boolean }[]
@@ -306,10 +459,15 @@ function entry<K extends Op['op']>(
   }
 }
 
+const LAYER = `${STATES.map(l => `'${l}'`).join(' | ')} | { when: { state: string, is: string } }`
+const TREE = "'header' | 'footer' | { page: id } | { component: id }"
+const NODE =
+  'a node: { kind, id?, name?, slot?, props?, style?, children? ... }'
+const UNSET = 'object: key -> value | null (null unsets)'
 const T = { page: 'home' }
 const ROOT = 'homeroot'
-const tree = ['tree', false] as [string, boolean]
-const id = ['string', false] as [string, boolean]
+const tree: [string, false] = [TREE, false]
+const id: [string, false] = ['string', false]
 
 /**
  * The 26 operations in the order of the spec's table. Each example is accepted by `plan` after the ones before it, applied in
@@ -322,7 +480,7 @@ export const OPERATIONS: readonly Entry[] = [
       tree,
       parent: ['string', false],
       index: ['number', false],
-      node: ['node', false],
+      node: [NODE, false],
     },
     {
       op: 'add',
@@ -369,7 +527,7 @@ export const OPERATIONS: readonly Entry[] = [
     {
       tree,
       id,
-      props: ['object (a value, or null to remove it)', false],
+      props: ['object: prop -> value | null (null unsets)', false],
       name: ['string', true],
     },
     { op: 'setProps', tree: T, id: 't', props: { level: 'h2' }, name: 'Title' },
@@ -384,11 +542,8 @@ export const OPERATIONS: readonly Entry[] = [
     {
       tree,
       id,
-      layer: [
-        "string ('base', 'tablet', 'phone', 'hover', 'dark') | object",
-        false,
-      ],
-      decl: ['object (a style value, or null to remove it)', false],
+      layer: [LAYER, false],
+      decl: ['object: style property -> value | null (null unsets)', false],
     },
     {
       op: 'setStyle',
@@ -410,12 +565,17 @@ export const OPERATIONS: readonly Entry[] = [
   ),
   entry(
     'setSlot',
-    { tree, id, slot: ['object', true], placement: ['object | null', true] },
+    {
+      tree,
+      id,
+      slot: ['object', true],
+      placement: ['object | null (null unsets)', true],
+    },
     { op: 'setSlot', tree: T, id: 't', slot: {} },
   ),
   entry(
     'setRequired',
-    { tree, id, required: ['boolean | null', false] },
+    { tree, id, required: ['boolean | null (null unsets)', false] },
     { op: 'setRequired', tree: T, id: 'lst', required: true },
   ),
   entry(
@@ -423,10 +583,10 @@ export const OPERATIONS: readonly Entry[] = [
     {
       tree,
       id,
-      repeat: ['object | null', true],
-      bind: ['object | null', true],
-      showIf: ['object | null', true],
-      showIfAny: ['list | null', true],
+      repeat: ['object | null (null unsets)', true],
+      bind: ['object | null (null unsets)', true],
+      showIf: ['object | null (null unsets)', true],
+      showIfAny: ['list | null (null unsets)', true],
     },
     {
       op: 'bindData',
@@ -437,7 +597,12 @@ export const OPERATIONS: readonly Entry[] = [
   ),
   entry(
     'setStates',
-    { tree, id, state: ['list | null', true], on: ['list | null', true] },
+    {
+      tree,
+      id,
+      state: ['list | null (null unsets)', true],
+      on: ['list | null (null unsets)', true],
+    },
     {
       op: 'setStates',
       tree: T,
@@ -472,7 +637,10 @@ export const OPERATIONS: readonly Entry[] = [
       tree,
       id,
       key: ['string', false],
-      value: ['string | number | boolean', false],
+      value: [
+        'string | number | boolean | list | object (as the setting takes)',
+        false,
+      ],
     },
     { op: 'setBlockSetting', tree: T, id: 'st1', key: 'title', value: 'Hello' },
   ),
@@ -490,7 +658,7 @@ export const OPERATIONS: readonly Entry[] = [
   ),
   entry(
     'setInstance',
-    { tree, id, set: ['object', true], overrides: ['object', true] },
+    { tree, id, set: [UNSET, true], overrides: [UNSET, true] },
     {
       op: 'setInstance',
       tree: T,
@@ -544,7 +712,7 @@ export const OPERATIONS: readonly Entry[] = [
   entry(
     'setSite',
     { name: ['string', true], languages: ['list', true] },
-    { op: 'setSite', name: 'Ada Lovelace' },
+    { op: 'setSite', name: 'My site' },
   ),
   entry(
     'setLook',
@@ -567,7 +735,7 @@ export const OPERATIONS: readonly Entry[] = [
   ),
   entry(
     'setSiteStyles',
-    { styles: ['object (a part, or null to remove it)', false] },
+    { styles: ['object: part -> value | null (null unsets)', false] },
     {
       op: 'setSiteStyles',
       styles: { colors: [{ id: 'sun', name: 'Sun', value: '#ffcc00' }] },
@@ -585,19 +753,15 @@ export const OPERATIONS: readonly Entry[] = [
 const bad = (message: string, more: Partial<Problem> = {}): Refusal =>
   refuse('INVALID_OPERATION', message, more)
 
-/** A head whose first page can take an insert. */
-function headOf(site: unknown): Head | undefined {
-  if (!isObj(site) || !isObj(site.doc)) return undefined
-  const p = arr(site.doc.pages)[0]
-  if (!isObj(p) || typeof p.id !== 'string') return undefined
-  if (!isObj(p.root) || typeof p.root.id !== 'string') return undefined
-  return site as unknown as Head
-}
+type Reply = { ok: true; rows: unknown[]; cut: boolean; cursor?: string }
 
 /**
- * What an agent may insert and with which settings, and the operations it may send. The rows are paged within READ_CAP; one row
- * is at most 4,000 characters of JSON by construction (a lists is cut, a name clipped, a too-big field replaced by `{ cut: n }`).
- * It never throws: whatever is wrong with the query is a refusal.
+ * What an agent may insert and with which settings, and the operations it may send.
+ *
+ * A list view (no `id`) pages compact rows of at most 4,000 characters: a block or kind with its settings as `{ key, type }`. A
+ * detail view (`id`) has the entry's header (at most 4,000) in every reply and pages its settings as rows (at most 6,000 each),
+ * so nothing is replaced by a marker for being long. Operations and the ready insert operation of a block are in both.
+ * It never throws: whatever is wrong with the query or the registry is a refusal.
  */
 export function catalogue(
   registry: Registry,
@@ -607,7 +771,7 @@ export function catalogue(
     cursor?: string
     site?: Head
   },
-): { ok: true; rows: unknown[]; cut: boolean; cursor?: string } | Refusal {
+): Reply | Refusal {
   try {
     if (!isObj(query))
       return bad('The query must be an object.', { path: 'query' })
@@ -615,66 +779,69 @@ export function catalogue(
       return bad('Unknown "what".', { path: 'what', allowed: [...WHATS] })
     if (query.id !== undefined && typeof query.id !== 'string')
       return bad('"id" must be a string.', { path: 'id' })
-    let site: Head | undefined
-    if (query.site !== undefined) {
-      site = headOf(query.site)
-      if (!site)
-        return bad('"site" must be { doc, revision } with a first page.', {
-          path: 'site',
-        })
-    }
-    const one = query.id !== undefined
-    const n = one ? LISTED_ONE : LISTED
-    // The entries as [name, build]: a row is built only when it is asked for.
-    let entries: [string, () => Row][]
+    if (
+      query.site !== undefined &&
+      !(isObj(query.site) && isObj(query.site.doc))
+    )
+      return bad('"site" must be { doc, revision }.', { path: 'site' })
+    const site = query.site
+    let views: Entryview[]
     let unknown: 'UNKNOWN_KIND' | 'UNKNOWN_BLOCK' | 'UNKNOWN_SOURCE' | undefined
     if (query.what === 'kinds') {
       unknown = 'UNKNOWN_KIND'
       const extra = [...registry.kinds()].sort((a, b) =>
         a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0,
       )
-      entries = [...Object.entries(KINDS), ...extra].map(([k, spec]) => [
-        k,
-        () => kindRow(k, spec as KindSpec, n),
-      ])
+      views = [...Object.entries(KINDS), ...extra].map(([k, spec]) =>
+        kindView(k, spec as KindSpec),
+      )
     } else if (query.what === 'blocks') {
       unknown = 'UNKNOWN_BLOCK'
-      entries = registry.blocks().map(b => [b.id, () => blockRow(b, site, n)])
+      views = registry.blocks().map(b => blockView(b, site))
     } else if (query.what === 'sources') {
       unknown = 'UNKNOWN_SOURCE'
-      entries = registry.sources().map(s => [s.name, () => sourceRow(s, n)])
-    } else entries = OPERATIONS.map(o => [o.op, () => fit({ ...o }, ROW_ONE)])
-    if (one) {
-      const hit = entries.find(([name]) => name === query.id)
+      views = registry.sources().map(sourceView)
+    } else
+      views = OPERATIONS.map(o => ({
+        name: o.op,
+        list: () => ({ ...o }),
+        detail: () => ({ header: {}, rows: [{ ...o }] }),
+      }))
+    const wrap =
+      (header: Row) => (page: unknown[], cutIt: boolean, cursor?: string) => ({
+        ok: true as const,
+        ...header,
+        rows: page,
+        cut: cutIt,
+        ...(cursor ? { cursor } : {}),
+      })
+    if (query.id !== undefined) {
+      const hit = views.find(v => v.name === query.id)
       if (!hit) {
-        const allowed = entries
-          .slice(0, ALLOWED)
-          .map(([name]) => cut(name, TEXT))
+        const allowed = views.slice(0, ALLOWED).map(v => cut(v.name, TEXT))
         return unknown
           ? refuse(
               unknown,
-              `No ${query.what.slice(0, -1)} "${cut(query.id!, TEXT)}".`,
-              {
-                path: 'id',
-                allowed,
-              },
+              `No ${query.what.slice(0, -1)} "${cut(query.id, TEXT)}".`,
+              { path: 'id', allowed },
             )
-          : bad(`No operation "${cut(query.id!, TEXT)}".`, {
+          : bad(`No operation "${cut(query.id, TEXT)}".`, {
               path: 'id',
               allowed: [...OP_NAMES],
             })
       }
-      return capped({ ok: true as const, rows: [hit[1]()], cut: false })
+      const { header, rows } = hit.detail()
+      return capped(
+        paged(rows, 0, query.cursor, wrap(header)) as Reply | Refusal,
+      )
     }
-    const rows = entries.map(([, build]) => build())
     return capped(
-      paged(rows, 0, query.cursor, (page, cutIt, cursor) => ({
-        ok: true as const,
-        rows: page,
-        cut: cutIt,
-        ...(cursor ? { cursor } : {}),
-      })) as
-        { ok: true; rows: unknown[]; cut: boolean; cursor?: string } | Refusal,
+      paged(
+        views.map(v => v.list()),
+        0,
+        query.cursor,
+        wrap(query.what === 'operations' ? {} : { detail: DETAIL }),
+      ) as Reply | Refusal,
     )
   } catch {
     return bad(

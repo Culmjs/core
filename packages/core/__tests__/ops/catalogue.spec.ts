@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { emptySite, KINDS } from '../../src/document/index.ts'
+import { STATES } from '../../src/document/layers.ts'
 import type { Node } from '../../src/document/index.ts'
 import { READ_CAP } from '../../src/ops/cap.ts'
 import { catalogue, OPERATIONS } from '../../src/ops/catalogue.ts'
@@ -30,6 +31,54 @@ const all = (registry = kitRegistry(), what = 'blocks' as const) => {
   } while (cursor)
   return rows
 }
+/** Every setting row of the detail view of one entry, over all its pages; each reply is checked against the cap. */
+const detailRows = (
+  registry: ReturnType<typeof kitRegistry>,
+  what: 'kinds' | 'blocks',
+  id: string,
+) => {
+  const rows: Record<string, unknown>[] = []
+  let cursor: string | undefined
+  do {
+    const r = ok(catalogue(registry, { what, id, cursor }))
+    assert.ok(size(r) <= READ_CAP, `${size(r)}`)
+    for (const x of r.rows) assert.ok(size(x) <= 6000, `row ${size(x)}`)
+    rows.push(...r.rows)
+    cursor = r.cursor
+  } while (cursor)
+  return rows
+}
+const plugin = (name: string, more: Partial<Plugin>): Plugin => ({
+  name,
+  version: 1,
+  api: [1],
+  runs: ['build'],
+  trust: 'declarative',
+  ...more,
+})
+/** A block of `n` select settings of `k` short options each. */
+const selects = (
+  id: string,
+  n: number,
+  k: number,
+  value = (i: number, j: number) => `o${i}x${j}`,
+): BlockDef => ({
+  id,
+  version: 1,
+  name: id,
+  category: 'utility',
+  looks: [{ id: 'default', name: 'Default', tree: sampleBlockTree() }],
+  settings: Array.from({ length: n }, (_, i) => ({
+    key: `sel${i}`,
+    label: `Select ${i}`,
+    type: 'select' as const,
+    options: Array.from({ length: k }, (_, j) => ({
+      label: `Option ${j}`,
+      value: value(i, j),
+    })),
+    actions: [{ do: 'set' as const, path: 'x.props.runs.0.text' }],
+  })),
+})
 const request = (ops: unknown[], key = 'k') => ({
   site: 's',
   baseRevision: 0,
@@ -43,26 +92,27 @@ test('every core kind and every plug-in kind appears', () => {
     rows.map(r => r.kind),
     [...Object.keys(KINDS), 'badge'],
   )
-  const text = rows.find(r => r.kind === 'text') as Record<string, unknown>
-  for (const k of [
-    'label',
-    'role',
-    'parents',
-    'settings',
-    'styles',
-    'states',
-    'bindable',
-    'repeatable',
-  ])
-    assert.ok(k in text, k)
+  const textRow = rows.find(r => r.kind === 'text') as Record<string, unknown>
+  for (const k of ['label', 'role', 'settings', 'styles', 'states'])
+    assert.ok(k in textRow, k)
+  assert.equal(typeof textRow.styles, 'number')
+  assert.equal(typeof textRow.states, 'number')
   for (const r of rows) assert.ok(size(r) <= 4000, `${r.kind}: ${size(r)}`)
-  // styles are group names then single properties, not one long list of every property
-  const styles = (
-    rows.find(r => r.kind === 'column') as never as {
-      styles: string[]
-    }
-  ).styles
-  assert.ok(styles.includes('LAYOUT'), JSON.stringify(styles))
+  // the detail view has the styles as group names then single properties
+  const d = ok(catalogue(kitRegistry(), { what: 'kinds', id: 'column' }))
+  assert.ok(d.styles.includes('LAYOUT'), JSON.stringify(d.styles))
+  assert.equal(d.kind, 'column')
+  // every setting of a kind is a row of its detail view
+  for (const k of ['button', 'text', 'badge']) {
+    const keys = detailRows(kitRegistry(), 'kinds', k).map(r => r.key)
+    const spec =
+      k === 'badge'
+        ? ['label', 'tip']
+        : Object.keys(
+            (KINDS as never as Record<string, { props: object }>)[k].props,
+          )
+    assert.deepEqual(keys, spec, k)
+  }
 })
 
 test('every registered block appears with every look and setting; every source with its fields and first sample row', () => {
@@ -76,16 +126,29 @@ test('every registered block appears with every look and setting; every source w
     version: number
     name: string
     category: string
-    looks: { id: string; name: string }[]
-    settings: { key: string; label: string; type: string; min?: number }[]
+    looks: string[]
+    settings: { key: string; type: string; min?: number }[]
   }
   assert.equal(demo.version, 1)
-  assert.deepEqual(demo.looks, [{ id: 'default', name: 'Default' }])
+  assert.deepEqual(demo.looks, ['default'])
   assert.deepEqual(
     demo.settings.map(s => s.key),
     ['heading', 'limit', 'hidenote', 'upper'],
   )
-  assert.equal(demo.settings[1].min, 1)
+  assert.equal(demo.settings[1].min, undefined)
+  const detail = detailRows(r, 'blocks', 'demo') as never as {
+    key: string
+    label: string
+    min?: number
+    max?: number
+  }[]
+  assert.deepEqual(
+    detail.map(x => x.key),
+    ['heading', 'limit', 'hidenote', 'upper'],
+  )
+  assert.equal(detail[1].min, 1)
+  assert.equal(detail[1].max, 200)
+  assert.equal(detail[0].label, 'Heading')
 
   const reg = createRegistry()
   reg.use({
@@ -112,10 +175,17 @@ test('every registered block appears with every look and setting; every source w
   assert.deepEqual(s[0], {
     source: 'talks',
     guide: 'Talks given.',
-    fields: { title: 'text', year: 'number' },
-    sample: { title: 'First', year: 2020 },
+    fields: ['title', 'year'],
   })
-  assert.deepEqual(s[1], { source: 'empty', fields: { a: 'text' } })
+  assert.deepEqual(s[1], { source: 'empty', fields: ['a'] })
+  const d = ok(catalogue(reg, { what: 'sources', id: 'talks' }))
+  assert.deepEqual(d.fields, { title: 'text', year: 'number' })
+  assert.deepEqual(d.sample, { title: 'First', year: 2020 })
+  assert.deepEqual(d.rows, [])
+  assert.equal(
+    'sample' in ok(catalogue(reg, { what: 'sources', id: 'empty' })),
+    false,
+  )
   assert.deepEqual(
     all(kitRegistry(), 'sources' as never).map(x => x.source),
     ['projects'],
@@ -317,22 +387,132 @@ test('an unknown what and an unknown id are refused with allowed', () => {
 
 test('id narrows to one entry', () => {
   const r = kitRegistry()
+  assert.equal(ok(catalogue(r, { what: 'kinds', id: 'badge' })).kind, 'badge')
+  const b = ok(catalogue(r, { what: 'blocks', id: 'stamp' }))
+  assert.equal(b.block, 'stamp')
+  assert.equal(b.insert.block, 'stamp')
   assert.deepEqual(
-    ok(catalogue(r, { what: 'kinds', id: 'badge' })).rows.map(
-      (x: { kind: string }) => x.kind,
-    ),
-    ['badge'],
-  )
-  assert.deepEqual(
-    ok(catalogue(r, { what: 'blocks', id: 'stamp' })).rows.map(
-      (x: { block: string }) => x.block,
-    ),
-    ['stamp'],
+    b.rows.map((x: { key: string }) => x.key),
+    ['title', 'shout'],
   )
   const op = ok(catalogue(r, { what: 'operations', id: 'setText' }))
   assert.equal(op.rows.length, 1)
   assert.equal(op.rows[0].op, 'setText')
   assert.equal(op.cut, false)
+})
+
+test('a list view shows every setting of an ordinary block as key and type, and says where the detail is', () => {
+  const reg = createRegistry()
+  reg.use(plugin('ten', { blocks: [selects('ten', 10, 10)] }))
+  const r = ok(catalogue(reg, { what: 'blocks' }))
+  assert.equal(r.detail, 'call again with id for full settings')
+  const row = r.rows[0]
+  assert.deepEqual(
+    row.settings,
+    Array.from({ length: 10 }, (_, i) => ({ key: `sel${i}`, type: 'select' })),
+  )
+  assert.deepEqual(row.looks, ['default'])
+  assert.equal(row.insert.op, 'insertBlock')
+  assert.ok(size(row) <= 4000)
+  assert.ok(ok(catalogue(reg, { what: 'kinds' })).detail)
+  assert.ok(ok(catalogue(reg, { what: 'sources' })).detail)
+})
+
+test('a list row over 4,000 cuts its settings list to what fits and counts the rest', () => {
+  const reg = createRegistry()
+  reg.use(plugin('many', { blocks: [selects('many', 400, 1)] }))
+  const row = ok(catalogue(reg, { what: 'blocks' })).rows[0]
+  assert.ok(size(row) <= 4000)
+  assert.ok(Array.isArray(row.settings) && row.settings.length > 10)
+  assert.equal(row.settings.length + row.moreSettings, 400)
+})
+
+test('with id, 20 selects of 10 options return every setting with every option across pages', () => {
+  const reg = createRegistry()
+  reg.use(plugin('twenty', { blocks: [selects('twenty', 20, 10)] }))
+  const rows = detailRows(reg, 'blocks', 'twenty') as never as {
+    key: string
+    options: { value: string }[]
+    moreOptions?: number
+  }[]
+  assert.equal(rows.length, 20)
+  rows.forEach((x, i) => {
+    assert.equal(x.key, `sel${i}`)
+    assert.deepEqual(
+      x.options.map(o => o.value),
+      Array.from({ length: 10 }, (_, j) => `o${i}x${j}`),
+    )
+    assert.equal(x.moreOptions, undefined)
+  })
+})
+
+test('a block with 200 settings pages to completion in the detail view, each setting a row of at most 6,000', () => {
+  const reg = createRegistry()
+  reg.use(
+    plugin('two', {
+      blocks: [selects('two', 200, 50, (i, j) => `${'v'.repeat(70)}${i}x${j}`)],
+    }),
+  )
+  const rows = detailRows(reg, 'blocks', 'two')
+  assert.equal(rows.length, 200)
+  assert.deepEqual(
+    rows.map(x => x.key),
+    Array.from({ length: 200 }, (_, i) => `sel${i}`),
+  )
+  const first = ok(catalogue(reg, { what: 'blocks', id: 'two' }))
+  assert.ok(first.cut && first.cursor)
+  assert.ok(size({ ...first, rows: [], cut: false, cursor: undefined }) <= 4200)
+})
+
+test('a detail row holds at most 50 options of at most 80 characters each, and counts the rest', () => {
+  const reg = createRegistry()
+  reg.use(
+    plugin('opt', {
+      blocks: [selects('opt', 1, 300, (_, j) => `${'q"'.repeat(60)}${j}`)],
+    }),
+  )
+  const [row] = detailRows(reg, 'blocks', 'opt') as never as {
+    options: { label: string; value: string }[]
+    moreOptions: number
+  }[]
+  assert.ok(row.options.length <= 50)
+  assert.equal(row.options.length + row.moreOptions, 300)
+  for (const o of row.options)
+    assert.ok(size(o.value) <= 80 && size(o.label) <= 80)
+})
+
+test('leaving selects out of a ready insert keeps it small and accepted by plan', () => {
+  const reg = createRegistry()
+  // 60 selects, one of them with an option value too long to state
+  const b = selects('sixty', 60, 2, (i, j) =>
+    i === 3 ? 'z'.repeat(200) : `${'k'.repeat(40)}${i}x${j}`,
+  )
+  reg.use(plugin('sixty', { blocks: [b] }))
+  const row = ok(catalogue(reg, { what: 'blocks' })).rows[0]
+  assert.ok(size(row.insert) <= 2000, `${size(row.insert)}`)
+  const n = Object.keys(row.insert.settings).length
+  assert.ok(n > 0 && n < 60, `${n}`)
+  assert.equal('sel3' in row.insert.settings, false)
+  ok(plan(emptySite('Ada', LOOK), reg, request([row.insert])))
+  const one = ok(catalogue(reg, { what: 'blocks', id: 'sixty' }))
+  ok(plan(emptySite('Ada', LOOK), reg, request([one.insert])))
+})
+
+test('the setStyle layer text lists every layer name and the when form', () => {
+  const op = OPERATIONS.find(o => o.op === 'setStyle')!
+  const t = op.fields.find(f => f.name === 'layer')!.type
+  for (const name of STATES) assert.ok(t.includes(`'${name}'`), name)
+  assert.ok(t.includes('{ when: { state: string, is: string } }'))
+})
+
+test('a site without pages refuses nothing: blocks fall back to home and homeroot', () => {
+  const r = kitRegistry()
+  const site = { doc: { pages: [] }, revision: 1 } as never
+  for (const what of ['kinds', 'sources', 'operations'] as const)
+    ok(catalogue(r, { what, site }))
+  const row = ok(catalogue(r, { what: 'blocks', site })).rows[0]
+  assert.deepEqual(row.insert.tree, { page: 'home' })
+  assert.equal(row.insert.parent, 'homeroot')
 })
 
 test('a block, kind or source with huge declarations stays within a bounded row', () => {
@@ -410,9 +590,14 @@ test('a block, kind or source with huge declarations stays within a bounded row'
     ['sources', 'bigsource'],
     ['kinds', 'wide'],
   ] as const) {
-    const r = ok(catalogue(reg, { what, id }))
-    assert.equal(r.rows.length, 1)
-    assert.ok(size(r) <= READ_CAP / 2, `${what}: ${size(r)}`)
+    let cursor: string | undefined
+    do {
+      const r = ok(catalogue(reg, { what, id, cursor }))
+      assert.ok(size(r) <= READ_CAP, `${what}: ${size(r)}`)
+      assert.ok(size({ ...r, rows: [] }) <= 4200, `${what} header`)
+      for (const x of r.rows) assert.ok(size(x) <= 6000, `${what} row`)
+      cursor = r.cursor
+    } while (cursor)
   }
 })
 
