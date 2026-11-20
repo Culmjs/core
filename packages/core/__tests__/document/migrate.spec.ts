@@ -7,8 +7,11 @@ import {
   previewMigration,
   SCHEMA_VERSION,
   type MigrationStep,
+  type Node,
+  type SiteDocument,
 } from '../../src/document/index.ts'
-import { LOOK, node, siteWith, text } from '../kit.ts'
+import { validateSite } from '../../src/validate/index.ts'
+import { LOOK, node, sampleRegistry, siteWith, text } from '../kit.ts'
 
 const v = (n: number, more = {}) => ({ schemaVersion: n, name: 'x', ...more })
 const steps: MigrationStep[] = [
@@ -215,7 +218,7 @@ test('a version 1 form hidden on phone carries required: false after migration',
   assert.equal(parts[1].required, false)
 })
 
-test('a version 1 form hidden by a look: required: false only when a use selects the look', () => {
+test('a version 1 form inside a component gets required: false, whatever its looks do', () => {
   const make = (set?: object) => {
     const d = siteWith([
       {
@@ -246,8 +249,8 @@ test('a version 1 form hidden by a look: required: false only when a use selects
     return r.doc.components[0].root.children![0]
   }
   assert.equal(formOf(make({ look: 'b' })).required, false)
-  assert.equal('required' in formOf(make()), false)
-  assert.equal('required' in formOf(make({ look: 'a' })), false)
+  assert.equal(formOf(make()).required, false)
+  assert.equal(formOf(make({ look: 'a' })).required, false)
 })
 
 test('a version 1 form that is not hidden gets no required field', () => {
@@ -293,7 +296,7 @@ test('a malformed version 1 document migrates without a throw, and validation re
   }
 })
 
-test('a form is not made optional by a same-named part of another component', () => {
+test('a form inside a component is exempted, and a same-named text of another component is left alone', () => {
   const d = siteWith([
     {
       ...node('i', 'instance'),
@@ -321,5 +324,218 @@ test('a form is not made optional by a same-named part of another component', ()
   ]
   const r = migrate(d)
   assert.ok(r.ok)
-  assert.equal('required' in r.doc.components[0].root.children![0], false)
+  assert.equal(r.doc.components[0].root.children![0].required, false)
+  assert.equal('required' in r.doc.components[1].root.children![0], false)
+})
+
+// ---- fourth round, MG1: a valid version 1 document is valid after migration ----
+
+const vreg = sampleRegistry()
+/** A form with one field, as validation wants it. */
+const vform = (more: object = {}): Node => ({
+  id: 'f',
+  kind: 'form',
+  name: 'f',
+  slot: {},
+  props: { formId: 'f' },
+  children: [
+    {
+      id: 'a',
+      kind: 'field',
+      name: 'a',
+      slot: {},
+      props: { name: 'email', label: 'Email' },
+    },
+  ],
+  ...more,
+})
+const inst = (id: string, component: string, more: object = {}): Node =>
+  ({ id, kind: 'instance', name: id, slot: {}, component, ...more }) as Node
+const toggleOn = (part: string, def = true) => ({
+  key: 'show',
+  label: 'Show',
+  type: 'toggle',
+  part,
+  field: 'hidden',
+  default: def,
+})
+const lookOn = (part: string) => ({
+  props: [{ key: 'look', label: 'Look', type: 'choice', options: ['a', 'b'] }],
+  variants: [
+    { when: { look: 'b' }, patch: { [part]: { hide: { phone: true } } } },
+  ],
+})
+const comp = (id: string, root: Node, more: object = {}) => ({
+  id,
+  name: id,
+  root,
+  props: [],
+  variants: [],
+  ...more,
+})
+const asV1 = (d: SiteDocument) => {
+  d.schemaVersion = 1
+  return d as unknown as Record<string, unknown>
+}
+const migratedProblems = (d: Record<string, unknown>) => {
+  const r = migrate(d)
+  assert.ok(r.ok)
+  return validateSite(r.doc, vreg)
+}
+
+test('MG1: a form in a component hidden by a toggle set off, a toggle default off, or an outer toggle is valid after migration', () => {
+  const kc = (def = true, more: object = {}) =>
+    comp('kc', node('kroot', 'column', [node('cbox', 'box', [vform()])]), {
+      props: [toggleOn('cbox', def)],
+      ...more,
+    })
+  const setOff = siteWith([inst('u0', 'kc', { set: { show: false } })])
+  setOff.components = [kc() as never]
+  const defOff = siteWith([inst('u0', 'kc')])
+  defOff.components = [kc(false) as never]
+  const outer = siteWith([inst('u0', 'oc', { set: { show: false } })])
+  outer.components = [
+    comp('kc', node('kroot', 'column', [vform()])) as never,
+    comp(
+      'oc',
+      node('oroot', 'column', [node('obox', 'box', [inst('k', 'kc')])]),
+      {
+        props: [toggleOn('obox')],
+      },
+    ) as never,
+  ]
+  for (const d of [setOff, defOff, outer]) {
+    // each is a valid document before migration, apart from its version
+    assert.deepEqual(
+      validateSite(
+        {
+          ...d,
+          schemaVersion: 2,
+          components: d.components.map(c => ({
+            ...c,
+            root: JSON.parse(
+              JSON.stringify(c.root).replaceAll(
+                '"kind":"form"',
+                '"kind":"form","required":false',
+              ),
+            ),
+          })),
+        },
+        vreg,
+      ),
+      [],
+    )
+    assert.deepEqual(migratedProblems(asV1(d)), [])
+  }
+})
+
+test('MG1: a form on a page that is not hidden gets no required field; a form in a master gets required: false', () => {
+  const d = siteWith([vform(), inst('u0', 'kc')])
+  d.components = [
+    comp('kc', node('kroot', 'column', [{ ...vform(), id: 'g' }])) as never,
+  ]
+  const r = migrate(asV1(d))
+  assert.ok(r.ok)
+  assert.equal('required' in r.doc.pages[0].root.children![0], false)
+  assert.equal(
+    'required' in r.doc.pages[0].root.children![0].children![0],
+    false,
+  )
+  const g = r.doc.components[0].root.children![0]
+  assert.equal(g.required, false)
+  assert.equal(g.children![0].required, false)
+  assert.deepEqual(validateSite(r.doc, vreg), [])
+})
+
+test('MG1, property: version 1 forms and fields on pages, in masters, in slots and two deep, hidden each way or not, migrate to documents with no required problem', () => {
+  const ways = [
+    'none',
+    'hide',
+    'base',
+    'state',
+    'when',
+    'toggleSet',
+    'toggleDefault',
+    'look',
+    'override',
+  ] as const
+  const places = ['page', 'master', 'nested', 'slot'] as const
+  let built = 0
+  for (const place of places)
+    for (const way of ways) {
+      if (
+        place === 'page' &&
+        ['toggleSet', 'toggleDefault', 'look', 'override'].includes(way)
+      )
+        continue
+      // the box around the form, in its own tree
+      const own: Record<string, object> = {
+        none: {},
+        hide: { hide: { phone: true } },
+        base: { style: { base: { hidden: true } } },
+        state: { style: { dark: { hidden: true } } },
+        when: {
+          style: { when: [{ state: 'tab', is: 'b', decl: { hidden: true } }] },
+        },
+      }
+      const boxed = (formFirst: boolean) =>
+        ({
+          ...node('fb', 'box', formFirst ? [vform()] : []),
+          ...(own[way] ?? {}),
+        }) as Node
+      const extra: Record<string, unknown> = {}
+      const use: Record<string, unknown> = {}
+      if (way === 'toggleSet') {
+        extra.props = [toggleOn('fb')]
+        use.set = { show: false }
+      } else if (way === 'toggleDefault') extra.props = [toggleOn('fb', false)]
+      else if (way === 'look') {
+        Object.assign(extra, lookOn('fb'))
+        use.set = { look: 'b' }
+      } else if (way === 'override')
+        use.overrides = {
+          [place === 'nested' ? 'k.fb' : 'fb']: { hide: { phone: true } },
+        }
+      let d: SiteDocument
+      if (place === 'page') d = siteWith([boxed(true)])
+      else if (place === 'master') {
+        d = siteWith([inst('u0', 'kc', use)])
+        d.components = [
+          comp('kc', node('kroot', 'column', [boxed(true)]), extra) as never,
+        ]
+      } else if (place === 'nested') {
+        // the hiding is the inner component's; the outer one passes the use's overrides down
+        d = siteWith([inst('u0', 'oc', way === 'override' ? use : {})])
+        d.components = [
+          comp('kc', node('kroot', 'column', [boxed(true)]), extra) as never,
+          comp(
+            'oc',
+            node('oroot', 'column', [
+              inst('k', 'kc', way === 'override' ? {} : use),
+            ]),
+          ) as never,
+        ]
+      } else {
+        d = siteWith([inst('u0', 'ac', { ...use, children: [vform()] })])
+        d.components = [
+          comp('ac', node('aroot', 'column', [boxed(false)]), {
+            ...extra,
+            props: [
+              ...((extra.props as object[]) ?? []),
+              { key: 'body', label: 'Body', type: 'slot', part: 'fb' },
+            ],
+          }) as never,
+        ]
+      }
+      // the state a `when` layer reacts to sits at the top of the tree that holds the box
+      const top =
+        place === 'page'
+          ? d.pages[0].root
+          : (d.components.find(c => c.id !== 'oc') as { root: Node }).root
+      top.state = [{ name: 'tab', values: ['a', 'b'], initial: 'a' }]
+      const p = migratedProblems(asV1(d))
+      assert.deepEqual(p, [], JSON.stringify({ place, way }))
+      built++
+    }
+  assert.ok(built >= 20, `${built} documents`)
 })

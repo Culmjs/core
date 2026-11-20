@@ -1,5 +1,4 @@
 import { STATES } from './layers.ts'
-import { resolvePart } from './tree.ts'
 import type {
   Component,
   Layout,
@@ -15,14 +14,6 @@ export function isRequired(node: Node, enclosingForm?: Node): boolean {
   if (node.required !== undefined) return node.required
   if (node.kind === 'form') return true
   return node.kind === 'field' && enclosingForm?.required !== false
-}
-
-export type HiddenWhy = {
-  /** id of the node that carries the hiding */
-  by: string
-  how: 'hide' | 'hidden' | 'override' | 'variant'
-  /** the layout of a `hide`, or the style layer of a `hidden: true` */
-  where: Layout | StyleLayer | 'when'
 }
 
 const LAYOUTS: readonly Layout[] = ['desktop', 'tablet', 'phone']
@@ -124,144 +115,6 @@ function indexOf(doc: SiteDocument): Index {
     else uses.delete(cid)
   }
   return { components, uses }
-}
-
-const partOf = (ix: Index, c: Component, key: string) => {
-  try {
-    return resolvePart(ix.components, c, key)
-  } catch {
-    return undefined
-  }
-}
-
-/** The first reason among `nodes`, nearest first (`nodes` is root first). */
-const own = (nodes: readonly Node[]): HiddenWhy | undefined => {
-  for (const n of [...nodes].reverse()) {
-    const r = isObj(n) ? reasonOf(n) : undefined
-    if (r) return { by: n.id, ...r }
-  }
-  return undefined
-}
-
-/** The variants of `comp` that apply to the use `inst`: every entry of a variant's `when` equals the value the use gives that property (its `set`, else its default; a choice takes only one of its options). Same rule as `unrollInstances`. */
-function looksOf(comp: Component, inst: Node): number[] {
-  const obj = (v: unknown) =>
-    isObj(v) || Array.isArray(v) ? (v as Record<string, unknown>) : {}
-  const set = obj(inst.set)
-  const values: Record<string, unknown> = {}
-  for (const p of arr(comp.props)) {
-    if (!isObj(p)) continue
-    const given = Object.hasOwn(set, p.key as string)
-      ? set[p.key as string]
-      : undefined
-    const options = p.options as unknown
-    values[p.key as string] =
-      p.type === 'choice'
-        ? typeof given === 'string' &&
-          Array.isArray(options) &&
-          options.includes(given)
-          ? given
-          : (p.default ?? (Array.isArray(options) ? options[0] : undefined))
-        : (given ?? p.default)
-  }
-  const looks: number[] = []
-  arr(comp.variants).forEach((v, i) => {
-    if (
-      isObj(v) &&
-      isObj(v.when) &&
-      Object.entries(v.when).every(([k, val]) => values[k] === val)
-    )
-      looks.push(i)
-  })
-  return looks
-}
-
-/**
- * Whether a part of component `cid`, or the nodes in `chain` (the part, its ancestors, and the instances above it), is hidden
- * by a variant patch of the component or by an instance of it: the instance itself, its ancestors, or one of its overrides.
- */
-function through(
-  ix: Index,
-  cid: string,
-  chain: ReadonlySet<Node>,
-  stack: ReadonlySet<string>,
-): HiddenWhy | undefined {
-  const comp = ix.components.get(cid)
-  if (!comp || stack.has(cid)) return undefined
-  const next = new Set(stack).add(cid)
-  const patch = (o: unknown, key: string) => {
-    const node = partOf(ix, comp, key)
-    return node && chain.has(node) && isObj(o) ? reasonOf(o) : undefined
-  }
-  for (const use of ix.uses.get(cid) ?? []) {
-    const inst = use.path[use.path.length - 1]
-    // a look hides only for a use that selects it
-    const all = arr(comp.variants)
-    for (const i of looksOf(comp, inst))
-      for (const [k, o] of Object.entries(
-        isObj(all[i]) && isObj((all[i] as { patch?: unknown }).patch)
-          ? (all[i] as { patch: object }).patch
-          : {},
-      )) {
-        const r = patch(o, k)
-        if (r) return { by: cid, ...r, how: 'variant' }
-      }
-    for (const [k, o] of Object.entries(
-      isObj(inst.overrides) ? inst.overrides : {},
-    )) {
-      const r = patch(o, k)
-      if (r) return { by: inst.id, ...r, how: 'override' }
-    }
-    const r = own(use.path)
-    if (r) return r
-    if (typeof use.tree === 'object' && 'component' in use.tree) {
-      const r2 = through(
-        ix,
-        use.tree.component,
-        new Set([...chain, ...use.path]),
-        next,
-      )
-      if (r2) return r2
-    }
-  }
-  return undefined
-}
-
-/** `hiddenBy` for a node already found: `path` runs from the root of `tree` to the node. */
-export function hiddenAt(
-  ix: Index,
-  tree: TreeAt,
-  path: readonly Node[],
-): HiddenWhy | undefined {
-  const r = own(path)
-  if (r || typeof tree !== 'object' || !('component' in tree)) return r
-  return through(ix, tree.component, new Set(path), new Set())
-}
-export { indexOf as hiddenIndex }
-
-/**
- * Why a node is hidden, or nothing. It is hidden by `hide` or `hidden: true` on it or an ancestor; and, inside a component,
- * by the same on an instance that uses the component (or its ancestors), by an instance override or a variant patch that
- * resolves to it or to an ancestor, through any depth of nesting. Never throws; a malformed document gives nothing.
- */
-export function hiddenBy(
-  doc: SiteDocument,
-  tree: TreeAt,
-  id: string,
-): HiddenWhy | undefined {
-  try {
-    for (const [t, root] of trees(doc)) {
-      if (JSON.stringify(t) !== JSON.stringify(tree)) continue
-      let hit: readonly Node[] | undefined
-      walkWithAncestors(root, (n, up) => {
-        if (!hit && n.id === id) hit = [...up, n]
-      })
-      return hit && hiddenAt(indexOf(doc), tree, hit)
-    }
-  } catch {
-    // a getter or proxy that throws counts as not hidden
-  }
-  return undefined
 }
 
 const num = (v: unknown): v is number => typeof v === 'number'

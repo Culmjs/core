@@ -1,5 +1,5 @@
 import type { Problem } from './problems.ts'
-import { hiddenAt, hiddenIndex, trees, walkWithAncestors } from './required.ts'
+import { reasonOf, trees, walkWithAncestors } from './required.ts'
 import type { SiteDocument } from './types.ts'
 
 export const SCHEMA_VERSION = 2
@@ -22,25 +22,30 @@ export type MigrationResult =
   | { ok: false; problem: Problem }
 
 /**
- * 1 to 2: a form or field that version 1 hides gets `required: false`, so the document stays valid under the `required` rule.
- * A malformed part is skipped, and validation reports it. This layer cannot call the unroll validation judges on, so it keeps
- * its own, simpler notion of hidden (`hiddenAt`: in its own tree, through a use, an override or a look in use). Where that
- * notion is wider than the unrolled tree it only exempts a form or field that was visible, which loosens. It does not follow a
- * toggle property: a form hidden only through one stays required, and validation of the migrated document names it.
+ * 1 to 2: version 2 refuses a hidden required node, and a form or field is required by its kind, so the step gives
+ * `required: false` to every form and field it cannot show to be visible: one hidden in its own tree (`hide` on a layout or
+ * `hidden: true` in any style layer, on it or an ancestor), one anywhere in a component's master, and one under an instance
+ * (slot content). This layer cannot call the unroll, so it does not guess what a use, a property or a look does: it exempts
+ * every form inside a component, which only loosens (version 1 had no such protection). Any other form or field sits on a
+ * page, the header or the footer with only its own tree above it, so it is visible after the step. A malformed part is
+ * skipped, and validation reports it.
  */
 const toVersion2: MigrationStep = {
   from: 1,
   migrate(input) {
     const doc = input as SiteDocument
-    const ix = hiddenIndex(doc)
-    for (const [tree, root] of trees(doc))
+    for (const [tree, root] of trees(doc)) {
+      const master = typeof tree === 'object' && 'component' in tree
       walkWithAncestors(root, (n, up) => {
         if (
           (n.kind === 'form' || n.kind === 'field') &&
-          hiddenAt(ix, tree, [...up, n])
+          (master ||
+            up.some(a => a.kind === 'instance') ||
+            [...up, n].some(a => reasonOf(a)))
         )
           n.required = false
       })
+    }
     doc.schemaVersion = 2
     return doc
   },
