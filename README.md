@@ -18,7 +18,7 @@ Culm builds websites from data. A whole site is one JSON document. Culm checks t
 
 It is made for sites that AI agents build and maintain. An agent does not write page code. It writes a small piece of data, Culm tells it exactly what is wrong if anything is, and only a valid document becomes a page.
 
-> **Status: early.** Stage 1 of 6 is done: the document model, validation, the plug-in registry and the compiler. The API will change, and nothing is on npm yet. See [What exists today](#what-exists-today).
+> **Status: early.** Stage 1 of 6 is done: the document model, validation, the plug-in registry and the compiler. Stage 2 is under way: its first checkpoint, checked operations with reads, a catalogue, diff and restore, is done, and measurement, the command-line tool, the MCP server and the starter are still to come. The API will change, and nothing is on npm yet. See [What exists today](#what-exists-today).
 
 ## Why
 
@@ -30,7 +30,7 @@ In the example below, the agent's part is 127 characters of JSON. The compiled p
 
 The same holds for changes. Editing a heading is one small edit to one node. The agent does not re-read or re-emit a file of code to make it.
 
-A measured comparison of token use against agents that write page code is planned for stage 2. Until it is done, treat this as a design aim backed by the sizes above, not a benchmark.
+A measured comparison of token use against agents that write page code is the last checkpoint of stage 2 and has not been run. Until it is, treat this as a design aim backed by the sizes above, not a benchmark.
 
 ### The agent cannot break the page
 
@@ -39,6 +39,8 @@ A measured comparison of token use against agents that write page code is planne
 - **Unknown content is refused, never silently dropped.** A field or setting Culm does not act on is an error, so a document cannot look fine and quietly lose something.
 - **Text is always escaped.** Culm writes all HTML itself. Text, attributes and addresses from the document cannot become markup, script or an unsafe link.
 - **Bad input returns problems.** The public functions do not throw on a malformed document.
+- **A change is a named operation, applied whole or not at all.** An agent sends a batch of operations from a known revision with a request key. If any operation is refused, or the result is invalid, nothing is written. The same key twice applies once.
+- **Marked content stays.** A node marked `required` cannot be hidden or removed, and a site can declare a range for text sizes, so a repair cannot fix a clipped title by deleting or shrinking it.
 
 ### The same website, faster
 
@@ -111,38 +113,80 @@ validateSite(site, registry)[0]
 compilePage(site, page.id, { registry }).ok // false
 ```
 
+### Changing the site with operations
+
+An agent changes the site with a request, not by editing the document. This continues the example above, before the document is broken:
+
+```ts
+import {
+  apply,
+  memoryStore,
+  siteOutline,
+  diffSites,
+  restore,
+} from '@culmjs/core'
+
+const store = memoryStore({ main: site }) // `site` and `registry` from above
+
+const done = await apply(store, registry, {
+  site: 'main',
+  baseRevision: 0,
+  key: 'add-heading',
+  ops: [
+    {
+      op: 'add',
+      tree: { page: 'home' },
+      parent: 'homeroot',
+      index: 0,
+      node: { kind: 'text', props: { level: 'h1', runs: [{ text: 'Hello' }] } },
+    },
+    { op: 'addPage', title: 'About', slug: '/about' },
+  ],
+})
+// { ok: true, revision: 1, created: [...], changed: [...], pages: ['home', 'p1'], notes: [] }
+
+const head = await store.head('main') // { revision: 1, doc }
+siteOutline(head).rows // one row per page and component
+```
+
+A batch against an old revision is refused with `REVISION_CONFLICT`. A batch with a bad operation is refused whole, and the problem carries the index of the operation: `{ code: 'INVALID_OPERATION', message: 'No page "nope".', path: 'page', nodeId: 'nope', op: 1 }`. `restore(store, registry, { site: 'main', to: 0, baseRevision: 1, key: 'undo' })` makes revision 2 equal to revision 0, and `diffSites(a, b)` lists the ids that differ between two documents.
+
 ## How it works
 
 1. **One document.** A site is pages, a header and footer, reusable components, fonts and named styles. A page is a tree of nodes. A node has a kind (`text`, `image`, `row`, `list`, `form` and so on), settings, style layers for desktop, tablet, phone and dark mode, and optional states and data bindings.
 2. **Plug-ins add the product's own parts.** A product registers blocks, data sources, node kinds and validation rules with a registry it creates. A block is data: a set of looks, each a tree of nodes, with settings declared as actions (`set`, `choose`, `show`, `filter`). Inserting a block copies its nodes into the site, so every part can be edited afterwards.
 3. **Validation.** One call checks the whole document against the core rules and every registered rule.
 4. **Compilation.** Culm binds the rows you supply, resolves the tree to elements and CSS rules, and writes the page. Identical rule sets share one class. A script is included only when a node on the page needs it.
+5. **Operations.** A change is a request of up to 200 operations, such as `add`, `setProps`, `insertBlock` or `setPage`, made from a known revision. `plan` runs it on a copy and validates once at the end. `apply` commits it to a store. An agent reads the site in pages (`siteOutline`, `pageOutline`, `readNode`, `search`), asks `catalogue` what it may insert, compares two revisions with `diffSites` and goes back to an earlier one with `restore`.
 
-Read [docs/overview.md](docs/overview.md) for the document model, the plug-in API, the compile functions and the guarantees in more detail.
+Read [docs/overview.md](docs/overview.md) for the document model, the plug-in API, the operations, the compile functions and the guarantees in more detail.
 
 ## What exists today
 
-Stage 1, in `packages/core` (`@culmjs/core`), with no runtime dependencies. It runs in Node 22+, edge workers and the browser.
+Stage 1 and the first checkpoint of stage 2, in `packages/core` (`@culmjs/core`), with no runtime dependencies. It runs in Node 22+, edge workers and the browser.
 
-| Area       | What you get                                                                                                               |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Document   | Types for the site document, 21 core node kinds, tree helpers, `emptySite`, a schema version with a migration runner       |
-| Plug-ins   | `createRegistry`, blocks with declared settings, data sources with row checks, validation rules, extra node kinds          |
-| Validation | `validateSite`, with stable problem codes                                                                                  |
-| Data       | `expand` and `rowsOf`: filter, sort, group, limit and nested repeats over rows the caller supplies                         |
-| Compiler   | `compilePage`, `compileSubtree` (for editors that replace part of a canvas) and `compileSite` (every page plus a manifest) |
-| Budgets    | `BUDGETS` and `checkBudgets`                                                                                               |
+| Area       | What you get                                                                                                                                                                     |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Document   | Types for the site document, 21 core node kinds (frozen), tree helpers, `emptySite`, schema version 2 with a migration runner, `required` marks and a `textRange` for text sizes |
+| Plug-ins   | `createRegistry`, blocks with declared settings, data sources with row checks, validation rules, extra node kinds                                                                |
+| Validation | `validateSite`, with stable problem codes                                                                                                                                        |
+| Operations | 26 operations, `plan` and `apply` with request keys and revisions, `restore`, `memoryStore`, `allow` for a product's own refusals                                                |
+| Reads      | `siteOutline`, `pageOutline`, `readNode` and `search`, paged under a 16,000-character cap, and `catalogue` of kinds, blocks, sources and operations                              |
+| Diff       | `diffSites`, which lists the added, removed, moved and changed nodes and the affected pages of two revisions                                                                     |
+| Data       | `expand` and `rowsOf`: filter, sort, group, limit and nested repeats over rows the caller supplies                                                                               |
+| Compiler   | `compilePage`, `compileSubtree` (for editors that replace part of a canvas) and `compileSite` (every page plus a manifest), and `buildIdentity`, one hash of what a build used   |
+| Budgets    | `BUDGETS` and `checkBudgets`                                                                                                                                                     |
 
 Not built yet, by stage:
 
-| Stage | Adds                                                                                                                                                                                          |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2     | Checked operations for agents, a catalogue, page measurement with findings an agent can act on, an MCP server, a command-line tool with a dev server, and a starter package of general blocks |
-| 3     | Motion in CSS and a small timeline script                                                                                                                                                     |
-| 4     | GPU effects, including shaders written by agents under checked limits                                                                                                                         |
-| 5     | Live data, sign-in state, in-page navigation, islands and shared component packages                                                                                                           |
+| Stage | Adds                                                                                                                                                                                                                                                                                                               |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2     | Still to come after the operations above: page measurement with findings an agent can act on, a folder of JSON files as a site, a command-line tool with a dev server and an MCP server (checkpoint 2b), a starter package of general blocks (2c), and a measured comparison with agents that write page code (2d) |
+| 3     | Motion in CSS and a small timeline script                                                                                                                                                                                                                                                                          |
+| 4     | GPU effects, including shaders written by agents under checked limits                                                                                                                                                                                                                                              |
+| 5     | Live data, sign-in state, in-page navigation, islands and shared component packages                                                                                                                                                                                                                                |
 
-Until stage 2, an agent uses Culm by editing the document and calling `validateSite` and `compilePage`. The checked operations that let an agent make changes by name, with dry runs and all-or-nothing batches, are stage 2.
+An agent can use Culm today by sending operations to `plan` or `apply`, reading with the four reads and `catalogue`, and compiling with `compilePage`. The only store is `memoryStore`. A site as a folder of files, the command and the MCP server are not built yet.
 
 ## Development
 
