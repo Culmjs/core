@@ -31,7 +31,7 @@ export function termHits(files: { path: string; source: string }[]): string[] {
     source.split('\n').forEach((raw, i) => {
       // split camelCase and snake_case so identifiers like paperId are seen as words
       const line = raw
-        .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+        .replace(/([A-Z]+)([A-Z](?!(?:s|es)\b)[a-z])/g, '$1 $2')
         .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
         .replace(/_/g, ' ')
       for (const [term, re] of PATTERNS)
