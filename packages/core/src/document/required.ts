@@ -1,4 +1,5 @@
 import { STATES } from './layers.ts'
+import { resolvePart } from './tree.ts'
 import type {
   Component,
   Layout,
@@ -46,141 +47,218 @@ const reasonOf = (x: Pick<Override, 'hide' | 'style'>) => {
   return s ? ({ how: 'hidden', where: s } as const) : undefined
 }
 
-/**
- * Why a node is hidden, or nothing. Looks at the node and its ancestors (root first in `ancestors`), then at the
- * overrides of the instances in `ctx.uses` and the variant patches of `ctx.component`, for the node and its ancestors.
- */
-export function hiddenBy(
-  node: Node,
-  ancestors: readonly Node[],
-  ctx: { component?: Component; uses?: readonly Node[] },
-): HiddenWhy | undefined {
-  const chain = [node, ...[...ancestors].reverse()]
-  for (const n of chain) {
-    const r = reasonOf(n)
-    if (r) return { by: n.id, ...r }
-  }
-  for (const inst of ctx.uses ?? [])
-    for (const n of chain) {
-      // a key is a plain part id, or `<nestedInstanceId>.<partId>` (any depth) from an outer instance
-      for (const [k, o] of Object.entries(inst.overrides ?? {})) {
-        if (k !== n.id && !k.endsWith(`.${n.id}`)) continue
-        const r = o && reasonOf(o)
-        if (r) return { by: inst.id, ...r, how: 'override' }
-      }
-    }
-  for (const v of ctx.component?.variants ?? [])
-    for (const n of chain) {
-      const o = v.patch?.[n.id]
-      const r = o && reasonOf(o)
-      if (r) return { by: ctx.component!.id, ...r, how: 'variant' }
-    }
-  return undefined
-}
+export type TreeAt =
+  'header' | 'footer' | { page: string } | { component: string }
 
-/** Visits every node with its ancestors (root first). */
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
+
+/** Visits every node with its ancestors (root first). Anything that is not a node object is skipped. */
 export function walkWithAncestors(
   root: Node,
   fn: (n: Node, ancestors: readonly Node[]) => void,
 ): void {
   const go = (n: Node, up: Node[]) => {
     fn(n, up)
-    for (const c of n.children ?? []) go(c, [...up, n])
+    for (const c of arr(n.children)) if (isObj(c)) go(c as Node, [...up, n])
   }
-  go(root, [])
+  if (isObj(root)) go(root, [])
 }
 
-type Tree = 'header' | 'footer' | { page: string } | { component: string }
-
-/** Every tree of the document with its root. */
-export function* trees(doc: SiteDocument): Generator<[Tree, Node]> {
-  for (const p of doc.pages) yield [{ page: p.id }, p.root]
-  yield ['header', doc.header]
-  yield ['footer', doc.footer]
-  for (const c of doc.components) yield [{ component: c.id }, c.root]
+/** Every tree of the document with its root; a tree of the wrong shape is skipped. */
+export function* trees(doc: SiteDocument): Generator<[TreeAt, Node]> {
+  for (const p of arr(doc.pages))
+    if (isObj(p) && isObj(p.root) && typeof p.id === 'string')
+      yield [{ page: p.id }, p.root as Node]
+  if (isObj(doc.header)) yield ['header', doc.header]
+  if (isObj(doc.footer)) yield ['footer', doc.footer]
+  for (const c of arr(doc.components))
+    if (isObj(c) && isObj(c.root) && typeof c.id === 'string')
+      yield [{ component: c.id }, c.root as Node]
 }
 
-/** Every instance node of the document, grouped by the component it follows. */
-export function usesByComponent(doc: SiteDocument): Map<string, Node[]> {
-  const out = new Map<string, Node[]>()
-  for (const [, root] of trees(doc))
-    walkWithAncestors(root, n => {
+type Use = { tree: TreeAt; path: readonly Node[] } // path: root .. the instance
+type Index = {
+  components: Map<string, Component>
+  uses: Map<string, Use[]>
+}
+
+/** The components by id, and every instance node by the component it follows. */
+function indexOf(doc: SiteDocument): Index {
+  const components = new Map<string, Component>()
+  for (const c of arr(doc.components))
+    if (isObj(c) && typeof c.id === 'string')
+      components.set(c.id, c as Component)
+  const uses = new Map<string, Use[]>()
+  for (const [tree, root] of trees(doc))
+    walkWithAncestors(root, (n, up) => {
       if (n.kind === 'instance' && typeof n.component === 'string')
-        out.set(n.component, [...(out.get(n.component) ?? []), n])
+        uses.set(n.component, [
+          ...(uses.get(n.component) ?? []),
+          { tree, path: [...up, n] },
+        ])
     })
-  return out
+  return { components, uses }
 }
 
-/** The instances whose overrides can reach a component's parts: its own, and those of the components that nest them, outward. */
-export function reachingUses(doc: SiteDocument, id: string): Node[] {
-  const by = usesByComponent(doc)
-  const owner = new Map<string, string>() // instance id -> component whose tree holds it
-  for (const c of doc.components)
-    walkWithAncestors(c.root, n => {
-      if (n.kind === 'instance') owner.set(n.id, c.id)
-    })
-  const out: Node[] = []
-  const seen = new Set<string>()
-  const go = (cid: string) => {
-    if (seen.has(cid)) return
-    seen.add(cid)
-    for (const i of by.get(cid) ?? []) {
-      out.push(i)
-      const o = owner.get(i.id)
-      if (o) go(o)
+const partOf = (ix: Index, c: Component, key: string) => {
+  try {
+    return resolvePart(ix.components, c, key)
+  } catch {
+    return undefined
+  }
+}
+
+/** The first reason among `nodes`, nearest first (`nodes` is root first). */
+const own = (nodes: readonly Node[]): HiddenWhy | undefined => {
+  for (const n of [...nodes].reverse()) {
+    const r = isObj(n) ? reasonOf(n) : undefined
+    if (r) return { by: n.id, ...r }
+  }
+  return undefined
+}
+
+/**
+ * Whether a part of component `cid`, or the nodes in `chain` (the part, its ancestors, and the instances above it), is hidden
+ * by a variant patch of the component or by an instance of it: the instance itself, its ancestors, or one of its overrides.
+ */
+function through(
+  ix: Index,
+  cid: string,
+  chain: ReadonlySet<Node>,
+  stack: ReadonlySet<string>,
+): HiddenWhy | undefined {
+  const comp = ix.components.get(cid)
+  if (!comp || stack.has(cid)) return undefined
+  const next = new Set(stack).add(cid)
+  const patch = (o: unknown, key: string) => {
+    const node = partOf(ix, comp, key)
+    return node && chain.has(node) && isObj(o) ? reasonOf(o) : undefined
+  }
+  for (const v of arr(comp.variants))
+    for (const [k, o] of Object.entries(
+      isObj(v) && isObj(v.patch) ? v.patch : {},
+    )) {
+      const r = patch(o, k)
+      if (r) return { by: cid, ...r, how: 'variant' }
+    }
+  for (const use of ix.uses.get(cid) ?? []) {
+    const inst = use.path[use.path.length - 1]
+    for (const [k, o] of Object.entries(
+      isObj(inst.overrides) ? inst.overrides : {},
+    )) {
+      const r = patch(o, k)
+      if (r) return { by: inst.id, ...r, how: 'override' }
+    }
+    const r = own(use.path)
+    if (r) return r
+    if (typeof use.tree === 'object' && 'component' in use.tree) {
+      const r2 = through(
+        ix,
+        use.tree.component,
+        new Set([...chain, ...use.path]),
+        next,
+      )
+      if (r2) return r2
     }
   }
-  go(id)
-  return out
+  return undefined
+}
+
+/** `hiddenBy` for a node already found: `path` runs from the root of `tree` to the node. */
+export function hiddenAt(
+  ix: Index,
+  tree: TreeAt,
+  path: readonly Node[],
+): HiddenWhy | undefined {
+  const r = own(path)
+  if (r || typeof tree !== 'object' || !('component' in tree)) return r
+  return through(ix, tree.component, new Set(path), new Set())
+}
+export { indexOf as hiddenIndex }
+
+/**
+ * Why a node is hidden, or nothing. It is hidden by `hide` or `hidden: true` on it or an ancestor; and, inside a component,
+ * by the same on an instance that uses the component (or its ancestors), by an instance override or a variant patch that
+ * resolves to it or to an ancestor, through any depth of nesting. Never throws; a malformed document gives nothing.
+ */
+export function hiddenBy(
+  doc: SiteDocument,
+  tree: TreeAt,
+  id: string,
+): HiddenWhy | undefined {
+  try {
+    for (const [t, root] of trees(doc)) {
+      if (JSON.stringify(t) !== JSON.stringify(tree)) continue
+      let hit: readonly Node[] | undefined
+      walkWithAncestors(root, (n, up) => {
+        if (!hit && n.id === id) hit = [...up, n]
+      })
+      return hit && hiddenAt(indexOf(doc), tree, hit)
+    }
+  } catch {
+    // a getter or proxy that throws counts as not hidden
+  }
+  return undefined
 }
 
 const num = (v: unknown): v is number => typeof v === 'number'
 
-/** Every text size of the document: `size` in a node's style layers (including `when`), in a run's style, in a named text style, and the `min` of a `fluidSize`. */
+/** The `size` of a declaration, and the `min` of its `fluidSize`; `at` is the path of the declaration. */
+function* sizesOf(
+  d: unknown,
+  at: string,
+): Iterable<{ size: number; path: string }> {
+  if (!isObj(d)) return
+  if (num(d.size)) yield { size: d.size, path: `${at}.size` }
+  const min = isObj(d.fluidSize) ? d.fluidSize.min : undefined
+  if (num(min)) yield { size: min, path: `${at}.fluidSize.min` }
+}
+
+/**
+ * Every text size of the document: `size` and the `min` of a `fluidSize` in a node's style layers (including `when`), in the
+ * styles of the runs in its `runs` prop, and in a named text style. A node's `path` is relative to the node.
+ */
 export function* textSizes(
   doc: SiteDocument,
 ): Iterable<{ size: number; nodeId?: string; path: string }> {
   for (const [, root] of trees(doc)) {
-    const stack = [root]
-    for (let n = stack.pop(); n; n = stack.pop()) {
-      stack.push(...[...(n.children ?? [])].reverse())
-      const at = `${n.id}.style`
-      const layers: [string, Style[StyleLayer]][] = [
-        ...STATES.map(k => [`${at}.${k}`, n.style?.[k]] as [string, never]),
-        ...(Array.isArray(n.style?.when) ? n.style.when : []).map(
-          (w, i) => [`${at}.when[${i}].decl`, w?.decl] as [string, never],
+    const found: Node[] = []
+    walkWithAncestors(root, n => found.push(n))
+    for (const n of found) {
+      const style: Record<string, unknown> = isObj(n.style) ? n.style : {}
+      const decls: [string, unknown][] = [
+        ...STATES.map(k => [`style.${k}`, style[k]] as [string, unknown]),
+        ...arr(style.when).map(
+          (w, i) =>
+            [`style.when.${i}`, isObj(w) ? w.decl : undefined] as [
+              string,
+              unknown,
+            ],
+        ),
+        ...arr(isObj(n.props) ? n.props.runs : undefined).map(
+          (r, i) =>
+            [`props.runs.${i}.style`, isObj(r) ? r.style : undefined] as [
+              string,
+              unknown,
+            ],
         ),
       ]
-      for (const [path, d] of layers) {
-        if (num(d?.size))
-          yield { size: d.size, nodeId: n.id, path: `${path}.size` }
-        const min = d?.fluidSize?.min
-        if (num(min))
-          yield { size: min, nodeId: n.id, path: `${path}.fluidSize.min` }
-      }
-      for (const [key, v] of Object.entries(n.props ?? {}))
-        if (Array.isArray(v))
-          for (const [i, run] of v.entries()) {
-            const size = (run as { style?: { size?: unknown } } | null)?.style
-              ?.size
-            if (num(size))
-              yield {
-                size,
-                nodeId: n.id,
-                path: `${n.id}.props.${key}[${i}].style.size`,
-              }
-          }
+      for (const [at, d] of decls)
+        for (const s of sizesOf(d, at)) yield { ...s, nodeId: n.id }
     }
   }
-  for (const [i, t] of (doc.styles?.text ?? []).entries())
-    if (num(t?.decl?.size))
-      yield { size: t.decl.size, path: `styles.text[${i}].decl.size` }
+  for (const [i, t] of arr(doc.styles?.text).entries())
+    yield* sizesOf(isObj(t) ? t.decl : undefined, `styles.text.${i}.decl`)
 }
 
 /** Every required node of every tree; a node inside a component counts only when an instance uses the component. */
-export function requiredRefs(doc: SiteDocument): { tree: Tree; id: string }[] {
-  const used = usesByComponent(doc)
-  const out: { tree: Tree; id: string }[] = []
+export function requiredRefs(
+  doc: SiteDocument,
+): { tree: TreeAt; id: string }[] {
+  const used = indexOf(doc).uses
+  const out: { tree: TreeAt; id: string }[] = []
   for (const [tree, root] of trees(doc)) {
     if (
       typeof tree === 'object' &&

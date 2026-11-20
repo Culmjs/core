@@ -232,3 +232,59 @@ test('a version 2 document passes through, and a version 3 document is refused',
   assert.ok(!r.ok)
   assert.match(r.problem.message, /newer/)
 })
+
+test('a malformed version 1 document migrates without a throw, and validation reports it later', () => {
+  const base = () =>
+    ({ ...siteWith([]), schemaVersion: 1 }) as Record<string, unknown>
+  const docs = [
+    { ...base(), pages: 5 },
+    { ...base(), pages: [{ id: 'p', root: null }] },
+    (() => {
+      const d = base()
+      delete d.components
+      return d
+    })(),
+    {
+      ...base(),
+      header: null,
+      components: [null, { id: 'c', root: { children: {} } }],
+    },
+    { ...base(), pages: [{ id: 'p', root: { id: 'r', children: [null, 3] } }] },
+  ]
+  for (const d of docs) {
+    const r = migrate(d)
+    assert.ok(r.ok, JSON.stringify(d).slice(0, 60))
+    assert.equal(r.doc.schemaVersion, 2)
+  }
+})
+
+test('a form is not made optional by a same-named part of another component', () => {
+  const d = siteWith([
+    {
+      ...node('i', 'instance'),
+      component: 'o',
+      overrides: { p: { hide: { phone: true } } },
+    },
+    { ...node('j', 'instance'), component: 'c' },
+  ])
+  d.schemaVersion = 1
+  d.components = [
+    {
+      id: 'c',
+      name: 'c',
+      props: [],
+      variants: [],
+      root: node('cr', 'column', [node('p', 'form')]),
+    },
+    {
+      id: 'o',
+      name: 'o',
+      props: [],
+      variants: [],
+      root: node('or', 'column', [node('p', 'text')]),
+    },
+  ]
+  const r = migrate(d)
+  assert.ok(r.ok)
+  assert.equal('required' in r.doc.components[0].root.children![0], false)
+})

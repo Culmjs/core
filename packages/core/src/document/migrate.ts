@@ -1,5 +1,5 @@
 import type { Problem } from './problems.ts'
-import { hiddenBy, trees, reachingUses, walkWithAncestors } from './required.ts'
+import { hiddenAt, hiddenIndex, trees, walkWithAncestors } from './required.ts'
 import type { SiteDocument } from './types.ts'
 
 export const SCHEMA_VERSION = 2
@@ -21,26 +21,20 @@ export type MigrationResult =
   | { ok: true; doc: SiteDocument; from: number }
   | { ok: false; problem: Problem }
 
-/** 1 to 2: a form or field that version 1 hides gets `required: false`, so the document stays valid under the `required` rule. */
+/** 1 to 2: a form or field that version 1 hides gets `required: false`, so the document stays valid under the `required` rule. A malformed part is skipped, and validation reports it. */
 const toVersion2: MigrationStep = {
   from: 1,
   migrate(input) {
     const doc = input as SiteDocument
-    const components = new Map(doc.components?.map(c => [c.id, c]))
-    for (const [tree, root] of trees(doc)) {
-      const id =
-        typeof tree === 'object' && 'component' in tree
-          ? tree.component
-          : undefined
-      const ctx = {
-        component: id ? components.get(id) : undefined,
-        uses: id ? reachingUses(doc, id) : undefined,
-      }
+    const ix = hiddenIndex(doc)
+    for (const [tree, root] of trees(doc))
       walkWithAncestors(root, (n, up) => {
-        if ((n.kind === 'form' || n.kind === 'field') && hiddenBy(n, up, ctx))
+        if (
+          (n.kind === 'form' || n.kind === 'field') &&
+          hiddenAt(ix, tree, [...up, n])
+        )
           n.required = false
       })
-    }
     doc.schemaVersion = 2
     return doc
   },
