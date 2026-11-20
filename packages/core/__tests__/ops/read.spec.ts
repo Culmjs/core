@@ -103,11 +103,12 @@ test('siteOutline bounds its header: long names are cut and long lists counted',
     },
   })
   const r = ok(siteOutline(head(doc)))
-  assert.equal(r.name.length, 200)
-  assert.equal(r.styles.colors.length, 50)
-  assert.equal(r.styles.more.colors, 250)
-  assert.equal(r.fonts.length, 50)
-  assert.equal(r.fontsMore, 250)
+  assert.equal(r.name.length, 198) // 200 serialised, quotes included
+  // 80-character names: the 4,000 limit of the header leaves fewer than 50 of each, and the rest is counted
+  assert.ok(r.styles.colors.length <= 50 && r.fonts.length <= 50)
+  assert.equal(r.styles.colors.length + r.styles.more.colors, 300)
+  assert.equal(r.fonts.length + r.fontsMore, 300)
+  assert.ok(size({ ...r, rows: [] }) <= 4100)
   assert.ok(size(r) <= READ_CAP)
 })
 
@@ -137,7 +138,7 @@ test('pageOutline gives one row per node with parent, index, hidden layouts, blo
     index: 0,
     hidden: ['tablet', 'phone'],
     required: false,
-    text: long.slice(0, 80),
+    text: long.slice(0, 98),
     children: 0,
   })
   assert.equal(byId[root].parent, null)
@@ -230,7 +231,7 @@ test('search: text is a case-insensitive substring, kind and block are exact, an
   // the match looks at the whole text, the row shows 80 characters
   const needle = ok(search(head(doc), { text: 'needle' })).rows
   assert.equal(needle.length, 1)
-  assert.equal(needle[0].text, long.slice(0, 80))
+  assert.equal(needle[0].text, long.slice(0, 98))
   assert.deepEqual(needle[0].tree, page)
   // name matches too
   assert.deepEqual(hits({ text: 'D1.COL' }), ['d1.col'])
@@ -323,12 +324,9 @@ test('no read throws on input of the wrong shape or changes its input', () => {
     )
   // a malformed document
   const broken = { doc: { pages: 5, header: 3 }, revision: 1 } as never
-  assert.equal(
-    siteOutline(broken).ok === false || siteOutline(broken).ok === true,
-    true,
-  )
+  assert.equal(code(siteOutline(broken)), 'INVALID_OPERATION')
   assert.equal(code(pageOutline(broken, page)), 'INVALID_OPERATION')
-  assert.equal(search(broken, { text: 'x' }).ok === false || true, true)
+  assert.equal(code(search(broken, { text: 'x' })), 'INVALID_OPERATION')
   assert.equal(
     code(siteOutline({ doc: null, revision: 1 } as never)),
     'INVALID_OPERATION',
@@ -343,23 +341,29 @@ test('no read throws on input of the wrong shape or changes its input', () => {
 test('on a 2,000-node page no reply exceeds READ_CAP and paging reaches every node', () => {
   const doc = bigPage(2000)
   let cursor: string | undefined
-  const ids = new Set<string>()
+  const ids: string[] = []
   let replies = 0
   let largest = 0
   do {
     const r = ok(pageOutline(head(doc, 3), page, cursor ? { cursor } : {}))
     largest = Math.max(largest, size(r))
     assert.ok(size(r) <= READ_CAP)
-    for (const row of r.rows) ids.add(row.id)
+    for (const row of r.rows) ids.push(row.id)
     cursor = r.cursor
     assert.equal(r.cut, cursor !== undefined)
     replies++
   } while (cursor)
-  assert.equal(ids.size, 2000)
+  const order: string[] = []
+  const dfs = (n: Node) => {
+    order.push(n.id)
+    n.children?.forEach(dfs)
+  }
+  dfs(doc.pages[0].root)
+  assert.deepEqual(ids, order)
   assert.ok(replies <= 40, `replies ${replies}`)
   console.log(`pageOutline 2000: ${replies} replies, largest ${largest}`)
 
-  const found = new Set<string>()
+  const found: string[] = []
   let sreplies = 0
   let slargest = 0
   cursor = undefined
@@ -369,17 +373,17 @@ test('on a 2,000-node page no reply exceeds READ_CAP and paging reaches every no
     )
     slargest = Math.max(slargest, size(r))
     assert.ok(size(r) <= READ_CAP)
-    for (const row of r.rows) found.add(row.id)
+    for (const row of r.rows) found.push(row.id)
     cursor = r.cursor
     sreplies++
   } while (cursor)
-  const texts = new Set<string>()
+  const texts: string[] = []
   const go = (n: Node) => {
-    if (n.kind === 'text') texts.add(n.id)
+    if (n.kind === 'text') texts.push(n.id)
     n.children?.forEach(go)
   }
   go(doc.pages[0].root)
-  assert.equal(found.size, texts.size)
+  assert.deepEqual(found, texts)
   console.log(`search 2000: ${sreplies} replies, largest ${slargest}`)
 
   // a site with 2,000 pages pages through siteOutline
@@ -391,17 +395,25 @@ test('on a 2,000-node page no reply exceeds READ_CAP and paging reaches every no
       slug: `/p${i}`,
       title: 'T'.repeat(500),
     })
-  const pages = new Set<string>()
+  const pages: string[] = []
   cursor = undefined
   let maxSite = 0
   do {
     const r = ok(siteOutline(head(many, 3), cursor ? { cursor } : {}))
     maxSite = Math.max(maxSite, size(r))
     assert.ok(size(r) <= READ_CAP)
-    for (const row of r.rows) pages.add(row.page)
+    for (const row of r.rows) pages.push(row.page)
     cursor = r.cursor
   } while (cursor)
-  assert.equal(pages.size, 2001)
+  assert.deepEqual(pages, [
+    'home',
+    ...Array.from({ length: 2000 }, (_, i) => `p${i}`),
+  ])
+  const first = ok(siteOutline(head(many, 3)))
+  assert.equal(
+    code(siteOutline(head(many, 4), { cursor: first.cursor })),
+    'REVISION_CONFLICT',
+  )
   console.log(`siteOutline 2001 pages: largest ${maxSite}`)
 })
 
@@ -411,7 +423,7 @@ test('a row stays small whatever the node holds', () => {
   const r = ok(pageOutline(head(doc), page))
   assert.ok(size(r) < 1000)
   const s = ok(search(head(doc), { text: 'www' }))
-  assert.equal(s.rows[0].text.length, 80)
+  assert.equal(s.rows[0].text.length, 98)
   assert.ok(size(s) < 1000)
 })
 
@@ -531,8 +543,8 @@ test('readNode cuts long strings and an oversized node never makes an oversized 
     }),
   ])
   const r = ok(readNode(head(doc), page, 't1'))
-  assert.equal(r.node.props.label.length, 2000)
-  assert.equal(r.node.props.nested.deep[1].length, 2000)
+  assert.equal(r.node.props.label.length, 1998)
+  assert.equal(r.node.props.nested.deep[1].length, 1998)
   assert.equal(r.node.props.nested.deep[0], 'ok')
   assert.deepEqual(r.cutFields.sort(), ['props.label', 'props.nested.deep.1'])
   assert.equal(
@@ -551,4 +563,175 @@ test('readNode cuts long strings and an oversized node never makes an oversized 
   assert.ok(size(t2) <= READ_CAP)
   assert.ok(t2.cutFields.includes('props.b'))
   assert.deepEqual(t2.node.props.runs, [{ text: 'r' }])
+})
+
+// ---- fix round 1: every bound is a serialised length
+
+const ESC = '\u0001'
+const Q = '"'
+/** Pages through a read; every reply must be within the cap. Returns the replies. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function drain(f: (cursor?: string) => any): any[] {
+  const out = []
+  let cursor: string | undefined
+  do {
+    const r = ok(f(cursor))
+    assert.ok(size(r) <= READ_CAP, `reply of ${size(r)}`)
+    out.push(r)
+    cursor = r.cursor
+    assert.ok(out.length < 5000)
+  } while (cursor)
+  return out
+}
+
+test('siteOutline: a header of escaped names stays within the cap, and its own length is at most 4,000', () => {
+  const heavy = (c: string) => c.repeat(500)
+  const doc = siteWith([], {
+    name: heavy(ESC),
+    fonts: Array.from({ length: 300 }, (_, i) => `up:${heavy(Q)}${i}`) as never,
+    languages: Array.from({ length: 40 }, () => ({ code: heavy(ESC) })),
+    styles: {
+      colors: Array.from({ length: 80 }, () => ({
+        id: 'c',
+        name: heavy(ESC),
+        value: '#000000' as const,
+      })),
+      text: Array.from({ length: 80 }, () => ({
+        id: 't',
+        name: heavy(Q),
+        decl: {},
+      })),
+      space: { xs: 1, s: 2, m: 3, l: 4, xl: 5, '2xl': 6 },
+      shadows: Array.from({ length: 80 }, () => ({
+        id: 's',
+        name: heavy(ESC),
+        value: { x: 0, y: 0, blur: 0, color: '#000000' } as never,
+      })),
+    },
+  })
+  for (let i = 0; i < 30; i++)
+    doc.pages.push({
+      ...clone(doc.pages[0]),
+      id: `p${i}`,
+      title: heavy(ESC),
+      slug: heavy(Q),
+    })
+  const replies = drain(c => siteOutline(head(doc), c ? { cursor: c } : {}))
+  const pages = replies.flatMap(r =>
+    r.rows.map((x: { page: string }) => x.page),
+  )
+  assert.deepEqual(pages, [
+    'home',
+    ...Array.from({ length: 30 }, (_, i) => `p${i}`),
+  ])
+  const bare = { ...replies[0], rows: [], cut: false, cursor: undefined }
+  assert.ok(size(bare) <= 4000 + 200, `header ${size(bare)}`)
+  console.log(
+    `escaped siteOutline: ${replies.length} replies, header ${size(bare)}, largest ${Math.max(...replies.map(size))}`,
+  )
+})
+
+test('readNode: a 100,000-character prop and 3,000 props keep the fixed part bounded and linear', () => {
+  const big = text('big', 'hi', {
+    props: {
+      runs: [{ text: 'hi' }],
+      a: 'A'.repeat(100000),
+      b: ESC.repeat(5000),
+    } as never,
+  })
+  const props: Record<string, unknown> = { runs: [{ text: 'hi' }] }
+  for (let i = 0; i < 3000; i++) props[`${ESC}${i}`] = 1
+  const many = text('many', 'x', { props: props as never })
+  const odd = text(ESC.repeat(900), 'x', { kind: ESC.repeat(900) as never })
+  const doc = siteWith([big, many, odd])
+  for (const id of ['big', 'many', ESC.repeat(900)]) {
+    const t0 = Date.now()
+    const replies = drain(c =>
+      readNode(head(doc), page, id, c ? { cursor: c } : {}),
+    )
+    const fixed = size({
+      ...replies[0],
+      node: { ...replies[0].node, props: undefined },
+    })
+    assert.ok(fixed <= 8000 + 4500, `fixed ${fixed}`)
+    assert.ok(replies[0].cutFields.length <= 50)
+    for (const p of replies[0].cutFields) assert.ok(len80(p))
+    console.log(
+      `readNode ${id.slice(0, 5)}: ${Date.now() - t0} ms, largest ${Math.max(...replies.map(size))}`,
+    )
+  }
+  const m = ok(readNode(head(doc), page, 'many'))
+  assert.deepEqual(m.node.props.runs, [{ text: 'hi' }])
+})
+const len80 = (p: string) => JSON.stringify(p).length <= 80
+
+test('readNode: a run with a 30,000-character link and 40,000 characters of text pages through whole', () => {
+  const long = Array.from({ length: 40000 }, (_, i) =>
+    String.fromCharCode(97 + (i % 26)),
+  ).join('')
+  const doc = siteWith([
+    withRuns('r', [
+      { text: long, link: { url: ESC.repeat(30000) }, style: { bold: true } },
+      { text: 'after' },
+    ]),
+  ])
+  const replies = drain(c =>
+    readNode(head(doc), page, 'r', c ? { cursor: c } : {}),
+  )
+  const runs = replies.flatMap(r => r.node.props.runs)
+  assert.equal(
+    runs.map((r: { text: string }) => r.text).join(''),
+    `${long}after`,
+  )
+  assert.ok(replies.length < 30, `replies ${replies.length}`)
+  assert.ok(replies[0].cutFields.includes('props.runs.0.link'))
+  assert.deepEqual(runs[0].style, { bold: true })
+  console.log(
+    `30,000 link: ${replies.length} replies, largest ${Math.max(...replies.map(size))}`,
+  )
+})
+
+test('readNode: a run with empty text and a large skeleton does not lose the runs after it', () => {
+  const rs = [
+    { text: 'one' },
+    {
+      text: '',
+      link: { url: ESC.repeat(5000) },
+      style: { a: ESC.repeat(1999), b: ESC.repeat(1999), c: ESC.repeat(1999) },
+    },
+    ...Array.from({ length: 30 }, (_, i) => ({
+      text: `${i}`.padStart(3, '0') + 'z'.repeat(400),
+    })),
+  ]
+  const doc = siteWith([withRuns('r', rs)])
+  const replies = drain(c =>
+    readNode(head(doc), page, 'r', c ? { cursor: c } : {}),
+  )
+  const runs = replies.flatMap(r => r.node.props.runs)
+  assert.equal(runs.length, 32)
+  assert.deepEqual(
+    runs.map((r: { text: string }) => r.text),
+    rs.map(r => r.text),
+  )
+  console.log(
+    `empty-text skeleton: ${replies.length} replies, largest ${Math.max(...replies.map(size))}`,
+  )
+})
+
+test('previews of escape characters stay within the cap, and the largest row is under 1,000', () => {
+  const kids = Array.from({ length: 300 }, (_, i) =>
+    text(`t${i}`, ESC.repeat(200), { name: Q.repeat(300) }),
+  )
+  const doc = siteWith(kids)
+  const ids = drain(c =>
+    pageOutline(head(doc), page, c ? { cursor: c } : {}),
+  ).flatMap(r => r.rows.map((x: { id: string }) => x.id))
+  assert.equal(ids.length, 301)
+  const found = drain(c =>
+    search(head(doc), { text: '\u0001', ...(c ? { cursor: c } : {}) }),
+  ).flatMap(r => r.rows.map((x: { id: string }) => x.id))
+  assert.equal(found.length, 300)
+  const row = ok(pageOutline(head(doc), page, { from: 't0' })).rows[0]
+  assert.ok(size(row) < 1000, `row ${size(row)}`)
+  assert.ok(size(ok(search(head(doc), { kind: 'text' })).rows[0]) < 1000)
 })

@@ -68,7 +68,7 @@ export type NodeRead = {
   settings?: Record<string, PropValue | undefined>
   /** Dotted paths of the fields that were cut or replaced by `{ cut: <characters> }`. */
   cutFields?: string[]
-  cutFieldsMore?: number
+  moreCut?: number
 } & Page
 export type SearchQuery = {
   text?: string
@@ -82,26 +82,34 @@ export type SearchResult = {
   rows: { tree: TreeRef; id: string; kind: string; text?: string }[]
 } & Page
 
-// ---- limits (every row and every header field is bounded; `paged` always takes one row)
-/** Characters of a node's text shown in a row. */
-const PREVIEW = 80
-/** Characters of a name, title or slug in a row. */
-const LABEL = 80
-/** Characters of the site's name in the header of `siteOutline`. */
+// ---- limits. Every bound is a serialised length: `JSON.stringify(value).length`, never a count of characters.
+/** A preview of a node's text in a row. */
+const PREVIEW = 100
+/** A name, title, slug or kind in a row. */
+const LABEL = 100
+/** The site's name in the header of `siteOutline`. */
 const SITE_NAME = 200
-/** Characters of a style or font name in the header. */
-const NAME = 32
+/** A style, font or language name in the header. */
+const NAME = 80
 /** Names listed per style list and fonts listed; the rest is counted. */
 const LISTED = 50
 /** Languages listed. */
 const LANGUAGES = 20
+/** The header of `siteOutline` (everything but the paged rows). */
+const HEADER = 4000
 /** A string of `readNode` longer than this is cut. */
 const FIELD = 2000
+/** An id or kind of the node `readNode` returns. */
+const ID = 200
 /** The node of `readNode`, without its runs, may be this long. */
 const NODE_BUDGET = READ_CAP / 2
+/** A run of `readNode` without its `text` may be this long. */
+const SKELETON = 2000
 /** Paths listed in `cutFields`, and their length. */
 const CUT_LISTED = 50
-const CUT_PATH = 100
+const CUT_PATH = 80
+
+const len = (v: unknown) => JSON.stringify(v)?.length ?? 0
 
 const LAYOUTS: readonly Layout[] = ['desktop', 'tablet', 'phone']
 const isObj = (v: unknown): v is Record<string, unknown> =>
@@ -110,11 +118,42 @@ const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
 const isNode = (v: unknown): v is Node => isObj(v) && typeof v.id === 'string'
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 
-/** The first `n` characters, never ending inside a surrogate pair. */
-function cut(s: string, n: number): string {
-  if (s.length <= n) return s
-  const c = s.charCodeAt(n - 1)
-  return s.slice(0, c >= 0xd800 && c <= 0xdbff ? n - 1 : n)
+/**
+ * The longest prefix of `s` whose JSON form (quotes included) is at most `budget` characters, so a string of quotes or control
+ * characters comes out shorter than a plain one. Never ends inside a surrogate pair. Reads no further than the budget.
+ */
+function cut(s: string, budget: number): string {
+  let cost = 2
+  let i = 0
+  while (i < s.length) {
+    const c = s.charCodeAt(i)
+    let w = 1
+    let step = 1
+    if (c === 34 || c === 92) w = 2
+    else if (c < 32)
+      w = c === 8 || (c >= 9 && c <= 10) || c === 12 || c === 13 ? 2 : 6
+    else if (c >= 0xd800 && c <= 0xdbff) {
+      const d = s.charCodeAt(i + 1)
+      if (d >= 0xdc00 && d <= 0xdfff) {
+        w = 2
+        step = 2
+      } else w = 6
+    } else if (c >= 0xdc00 && c <= 0xdfff) w = 6
+    if (cost + w > budget) break
+    cost += w
+    i += step
+  }
+  return i >= s.length ? s : s.slice(0, i)
+}
+
+/** The marker for a value that is too big to show. Its size is bounded and it never needs shrinking. */
+const marker = (v: unknown) => ({ cut: len(v) })
+
+/** A reply that is over the cap is never returned; it would be a mistake in the reads. */
+function capped<R>(r: R | Refusal): R | Refusal {
+  return (r as { ok?: unknown }).ok === true && len(r) > READ_CAP
+    ? refuse('RESOURCE_LIMIT_EXCEEDED', 'The reply could not be made to fit.')
+    : r
 }
 
 /** The text of a node: its runs joined, a line break as a space; at most `limit` characters are collected. */
@@ -212,12 +251,10 @@ function safe<A extends unknown[], R>(f: (...a: A) => R) {
 
 // ---- siteOutline
 
-const names = (list: unknown, n = LISTED) => {
-  const all = arr(list).flatMap(x =>
+const names = (list: unknown) =>
+  arr(list).flatMap(x =>
     isObj(x) && typeof x.name === 'string' ? [cut(x.name, NAME)] : [],
   )
-  return { listed: all.slice(0, n), more: Math.max(0, all.length - n) }
-}
 
 /**
  * A summary of the site that fits in one reply: the header (name, languages, text range, counts, style and font names) is in
@@ -242,31 +279,40 @@ export const siteOutline = safe(function siteOutline(
       if (n.kind === 'instance' && typeof n.component === 'string')
         used.set(n.component, (used.get(n.component) ?? 0) + 1)
     })
-  const colors = names(styles.colors)
-  const text = names(styles.text)
-  const shadows = names(styles.shadows)
-  const fonts = arr(doc.fonts).filter((f): f is string => typeof f === 'string')
-  const langs = arr(doc.languages).flatMap(l =>
-    isObj(l) && typeof l.code === 'string'
-      ? [
-          {
-            code: cut(l.code, NAME),
-            ...(l.dir === 'rtl' ? { dir: 'rtl' as const } : {}),
-          },
-        ]
-      : [],
-  )
-  const more = {
-    ...(colors.more ? { colors: colors.more } : {}),
-    ...(text.more ? { text: text.more } : {}),
-    ...(shadows.more ? { shadows: shadows.more } : {}),
+  // The lists, each cut to its limit; the rest is counted. Then entries leave from the end of the longest list until the header fits.
+  const lists = {
+    colors: names(styles.colors),
+    text: names(styles.text),
+    shadows: names(styles.shadows),
+    fonts: arr(doc.fonts).flatMap(f =>
+      typeof f === 'string' ? [cut(f, NAME)] : [],
+    ),
+    languages: arr(doc.languages).flatMap(l =>
+      isObj(l) && typeof l.code === 'string'
+        ? [
+            {
+              code: cut(l.code, NAME),
+              ...(l.dir === 'rtl' ? { dir: 'rtl' as const } : {}),
+            },
+          ]
+        : [],
+    ),
   }
-  const header = {
+  type Key = keyof typeof lists
+  const keys = Object.keys(lists) as Key[]
+  const total = Object.fromEntries(
+    keys.map(k => [k, lists[k].length]),
+  ) as Record<Key, number>
+  const limit: Record<Key, number> = {
+    colors: LISTED,
+    text: LISTED,
+    shadows: LISTED,
+    fonts: LISTED,
+    languages: LANGUAGES,
+  }
+  for (const k of keys) lists[k].length = Math.min(total[k], limit[k])
+  const fixed = {
     name: cut(str(doc.name), SITE_NAME),
-    languages: langs.slice(0, LANGUAGES),
-    ...(langs.length > LANGUAGES
-      ? { languagesMore: langs.length - LANGUAGES }
-      : {}),
     ...(isObj(range) &&
     typeof range.min === 'number' &&
     typeof range.max === 'number'
@@ -275,15 +321,36 @@ export const siteOutline = safe(function siteOutline(
     required: requiredRefs(site.doc).length,
     header: count(doc.header),
     footer: count(doc.footer),
-    styles: {
-      colors: colors.listed,
-      text: text.listed,
-      shadows: shadows.listed,
-      ...(Object.keys(more).length ? { more } : {}),
-    },
-    fonts: fonts.slice(0, LISTED).map(f => cut(f, NAME)),
-    ...(fonts.length > LISTED ? { fontsMore: fonts.length - LISTED } : {}),
   }
+  const build = () => {
+    const left = (k: Key) => total[k] - lists[k].length
+    const more = {
+      ...(left('colors') ? { colors: left('colors') } : {}),
+      ...(left('text') ? { text: left('text') } : {}),
+      ...(left('shadows') ? { shadows: left('shadows') } : {}),
+    }
+    return {
+      ...fixed,
+      languages: lists.languages as { code: string; dir?: 'rtl' }[],
+      ...(left('languages') ? { languagesMore: left('languages') } : {}),
+      styles: {
+        colors: lists.colors as string[],
+        text: lists.text as string[],
+        shadows: lists.shadows as string[],
+        ...(Object.keys(more).length ? { more } : {}),
+      },
+      fonts: lists.fonts as string[],
+      ...(left('fonts') ? { fontsMore: left('fonts') } : {}),
+    }
+  }
+  while (len(build()) > HEADER) {
+    const longest = keys.reduce((a, k) =>
+      len(lists[k]) > len(lists[a]) ? k : a,
+    )
+    if (!lists[longest].length) break
+    lists[longest].pop()
+  }
+  const header = build()
   const rows: SiteOutline['rows'] = [
     ...pages.flatMap(p =>
       typeof p.id === 'string'
@@ -310,19 +377,21 @@ export const siteOutline = safe(function siteOutline(
         : [],
     ),
   ]
-  return paged(
-    rows,
-    site.revision,
-    o.cursor as string | undefined,
-    (page, cutIt, cursor) => ({
-      ok: true as const,
-      revision: site.revision,
-      cut: cutIt,
-      ...(cursor ? { cursor } : {}),
-      ...header,
-      rows: page,
-    }),
-  ) as SiteOutline | Refusal
+  return capped(
+    paged(
+      rows,
+      site.revision,
+      o.cursor as string | undefined,
+      (page, cutIt, cursor) => ({
+        ok: true as const,
+        revision: site.revision,
+        cut: cutIt,
+        ...(cursor ? { cursor } : {}),
+        ...header,
+        rows: page,
+      }),
+    ) as SiteOutline | Refusal,
+  )
 })
 
 // ---- pageOutline
@@ -367,7 +436,7 @@ export const pageOutline = safe(function pageOutline(
     const preview = cut(textOf(n, PREVIEW), PREVIEW)
     rows.push({
       id: n.id,
-      kind: str(n.kind),
+      kind: cut(str(n.kind), LABEL),
       name: cut(str(n.name), LABEL),
       parent: c.parent,
       index: c.index,
@@ -379,18 +448,20 @@ export const pageOutline = safe(function pageOutline(
     })
     return o.depth === undefined || c.depth - base < (o.depth as number)
   })
-  return paged(
-    rows,
-    site.revision,
-    o.cursor as string | undefined,
-    (page, cutIt, cursor) => ({
-      ok: true as const,
-      revision: site.revision,
-      cut: cutIt,
-      ...(cursor ? { cursor } : {}),
-      rows: page,
-    }),
-  ) as PageOutline | Refusal
+  return capped(
+    paged(
+      rows,
+      site.revision,
+      o.cursor as string | undefined,
+      (page, cutIt, cursor) => ({
+        ok: true as const,
+        revision: site.revision,
+        cut: cutIt,
+        ...(cursor ? { cursor } : {}),
+        rows: page,
+      }),
+    ) as PageOutline | Refusal,
+  )
 })
 
 // ---- search
@@ -432,28 +503,30 @@ export const search = safe(function search(
       rows.push({
         tree,
         id: n.id,
-        kind: str(n.kind),
+        kind: cut(str(n.kind), LABEL),
         ...(preview ? { text: preview } : {}),
       })
     })
-  return paged(rows, site.revision, query.cursor, (page, cutIt, cursor) => ({
-    ok: true as const,
-    revision: site.revision,
-    cut: cutIt,
-    ...(cursor ? { cursor } : {}),
-    rows: page,
-  })) as SearchResult | Refusal
+  return capped(
+    paged(rows, site.revision, query.cursor, (page, cutIt, cursor) => ({
+      ok: true as const,
+      revision: site.revision,
+      cut: cutIt,
+      ...(cursor ? { cursor } : {}),
+      rows: page,
+    })) as SearchResult | Refusal,
+  )
 })
 
 // ---- readNode
 
 type Cuts = string[]
-/** A copy of `v` in which every string longer than FIELD is cut; the dotted path of each cut is added to `cuts`. */
+/** A copy of `v` in which every string longer than FIELD (serialised) is cut; the dotted path of each cut is added to `cuts`. */
 function clip(v: unknown, path: string, cuts: Cuts, depth = 0): unknown {
   if (typeof v === 'string') {
-    if (v.length <= FIELD) return v
-    cuts.push(path)
-    return cut(v, FIELD)
+    const c = cut(v, FIELD)
+    if (c !== v) cuts.push(path)
+    return c
   }
   if (typeof v !== 'object' || v === null || depth > 64) return v
   if (Array.isArray(v))
@@ -478,7 +551,32 @@ function layersOf(style: unknown): Record<string, unknown> | undefined {
   return Object.keys(out).length ? out : undefined
 }
 
-const len = (v: unknown) => JSON.stringify(v)?.length ?? 0
+/**
+ * Replaces the largest fields of `o` with markers, largest first, until `total` (the serialised length of what `o` is part of)
+ * is at most `budget`. Each field is measured once and `total` is kept as a running sum. Returns the keys replaced and the new total.
+ */
+function shrink(
+  o: Record<string, unknown>,
+  skip: (k: string) => boolean,
+  total: number,
+  budget: number,
+): { keys: string[]; total: number } {
+  const sized = Object.keys(o)
+    .filter(k => !skip(k))
+    .map(k => ({ k, n: len(o[k]) }))
+    .sort((a, b) => b.n - a.n)
+  const keys: string[] = []
+  for (const { k, n } of sized) {
+    if (total <= budget) break
+    const m = marker(o[k])
+    const gain = n - len(m)
+    if (gain <= 0) break // the rest are smaller still
+    o[k] = m
+    total -= gain
+    keys.push(k)
+  }
+  return { keys, total }
+}
 
 /** `"<revision>:<run>:<char>"`. */
 function runCursor(
@@ -512,9 +610,12 @@ function runCursor(
  * own, and is then cut by characters, the next page continuing it (same fields, the next slice of `text`). The cursor is
  * `"<revision>:<run>:<char>"`.
  *
- * The rest is bounded: a string longer than 2,000 characters anywhere but a run's `text` is cut to 2,000 and its dotted path listed
- * in `cutFields`; if the node without its runs is still longer than half the cap, its largest fields (a top-level field, or one
- * key of `props`, or `settings`) are replaced one by one by `{ cut: <characters> }` and listed too, until it fits.
+ * Every bound is a serialised length. A string longer than 2,000 anywhere but a run's `text` is cut and its dotted path listed in
+ * `cutFields` (at most 50 paths of at most 80, `moreCut` counts the rest). If the node without its runs (with `settings`) is still
+ * over half the cap, its largest fields (a top-level field, one key of `props`, or `settings`) are replaced by `{ cut: <length> }`,
+ * largest first, and listed too; `props` as a whole, then the whole node but `id` and `kind`, are the last resorts. A run without
+ * its `text` is held to 2,000 the same way (`props.runs.<i>.<field>`), so a page always has room for text. A field that was cut is
+ * not available through a read; a cut `children` is recovered with `pageOutline` and `from`.
  */
 export const readNode = safe(function readNode(
   site: Head,
@@ -542,18 +643,29 @@ export const readNode = safe(function readNode(
 
   const props = isObj(found.props) ? found.props : undefined
   const rawRuns = props && Array.isArray(props.runs) ? props.runs : undefined
-  const runs = rawRuns?.map((r, i) =>
-    isObj(r)
-      ? Object.fromEntries(
-          Object.entries(r).map(([k, v]) => [
-            k,
-            k === 'text' && typeof v === 'string'
-              ? v
-              : clip(v, `props.runs.${i}.${k}`, cuts),
-          ]),
-        )
-      : clip(r, `props.runs.${i}`, cuts),
-  )
+  const runs = rawRuns?.map((r, i) => {
+    const at = `props.runs.${i}`
+    if (!isObj(r)) {
+      const v = clip(r, at, cuts)
+      if (len(v) <= SKELETON) return v
+      cuts.push(at)
+      return marker(v)
+    }
+    const { text: t, ...rest } = r
+    const skeleton = clip(rest, at, cuts) as Record<string, unknown>
+    const total = len(skeleton)
+    if (total > SKELETON) {
+      const s = shrink(skeleton, () => false, total, SKELETON)
+      for (const k of s.keys) cuts.push(`${at}.${k}`)
+      if (s.total > SKELETON) {
+        // Too many small fields: keep the text, give up the rest.
+        cuts.push(at)
+        return { ...(typeof t === 'string' ? { text: t } : {}), cut: total }
+      }
+    }
+    return typeof t === 'string' ? { ...skeleton, text: t } : skeleton
+  })
+
   const body: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(found)) {
     if (k === 'children')
@@ -572,64 +684,71 @@ export const readNode = safe(function readNode(
           'props',
           cuts,
         )
+    } else if (k === 'id' || k === 'kind') {
+      const c = typeof v === 'string' ? cut(v, ID) : v
+      if (c !== v) cuts.push(k)
+      body[k] = c
     } else body[k] = clip(v, k, cuts)
   }
   if (body.children === undefined && 'children' in found) body.children = []
-  let settings: Record<string, unknown> | undefined
+  const fixed: { node: Record<string, unknown>; settings?: unknown } = {
+    node: body,
+  }
   if (registry && isObj(found.origin))
-    settings = clip(
-      readSettings(registry, found),
-      'settings',
-      cuts,
-    ) as typeof settings
+    fixed.settings = clip(readSettings(registry, found), 'settings', cuts)
 
-  // Keep the fixed part of every reply under half the cap.
-  const marked = (v: unknown) => isObj(v) && Object.keys(v).join() === 'cut'
-  const fixed = { node: body, ...(settings ? { settings } : {}) }
-  const cutNote = () => ({
-    ...(cuts.length
-      ? { cutFields: cuts.slice(0, CUT_LISTED).map(p => cut(p, CUT_PATH)) }
-      : {}),
-    ...(cuts.length > CUT_LISTED
-      ? { cutFieldsMore: cuts.length - CUT_LISTED }
-      : {}),
-  })
-  if (len({ ...fixed, ...cutNote() }) > NODE_BUDGET) {
-    type Slot = { path: string; get: () => unknown; set: (v: unknown) => void }
-    const slots: Slot[] = []
-    for (const k of Object.keys(body))
-      if (k === 'props' && isObj(body.props)) {
-        const p = body.props
-        for (const pk of Object.keys(p))
-          slots.push({
-            path: `props.${pk}`,
-            get: () => p[pk],
-            set: v => void (p[pk] = v),
-          })
-      } else if (k !== 'id' && k !== 'kind')
-        slots.push({
-          path: k,
-          get: () => body[k],
-          set: v => void (body[k] = v),
-        })
-    if (settings)
-      slots.push({
-        path: 'settings',
-        get: () => fixed.settings,
-        set: v => void (fixed.settings = v as typeof settings),
-      })
-    const sized = slots
-      .map(s => ({ s, n: len(s.get()) }))
+  // Keep the fixed part under half the cap, measuring each field once.
+  let total = len(fixed)
+  if (total > NODE_BUDGET) {
+    const p = isObj(body.props) ? body.props : undefined
+    const slots = [
+      ...Object.keys(body)
+        .filter(k => k !== 'id' && k !== 'kind' && k !== 'props')
+        .map(k => ({ path: k, host: body, key: k })),
+      ...Object.keys(p ?? {}).map(k => ({
+        path: `props.${k}`,
+        host: p!,
+        key: k,
+      })),
+      ...(fixed.settings === undefined
+        ? []
+        : [
+            {
+              path: 'settings',
+              host: fixed as Record<string, unknown>,
+              key: 'settings',
+            },
+          ]),
+    ]
+      .map(s => ({ ...s, n: len(s.host[s.key]) }))
       .sort((a, b) => b.n - a.n)
-    for (const { s, n } of sized) {
-      if (len({ ...fixed, ...cutNote() }) <= NODE_BUDGET) break
-      if (marked(s.get())) continue
-      s.set({ cut: n })
+    for (const s of slots) {
+      if (total <= NODE_BUDGET) break
+      const m = marker(s.host[s.key])
+      const gain = s.n - len(m)
+      if (gain <= 0) break
+      s.host[s.key] = m
+      total -= gain
       cuts.push(s.path)
+    }
+    if (total > NODE_BUDGET && p) {
+      body.props = marker(p)
+      cuts.push('props')
+      total = len(fixed)
+    }
+    if (total > NODE_BUDGET) {
+      fixed.node = { id: body.id, kind: body.kind }
+      delete fixed.settings
+      cuts.push('*')
     }
   }
 
-  const note = cutNote()
+  const note = {
+    ...(cuts.length
+      ? { cutFields: cuts.slice(0, CUT_LISTED).map(p => cut(p, CUT_PATH)) }
+      : {}),
+    ...(cuts.length > CUT_LISTED ? { moreCut: cuts.length - CUT_LISTED } : {}),
+  }
   const withRuns = (page: unknown[] | undefined): Record<string, unknown> =>
     page === undefined
       ? fixed.node
@@ -650,15 +769,15 @@ export const readNode = safe(function readNode(
     cut: cutIt,
     ...(cursor ? { cursor } : {}),
     node: withRuns(page),
-    ...(fixed.settings
-      ? { settings: fixed.settings as NodeRead['settings'] }
-      : {}),
+    ...(fixed.settings === undefined
+      ? {}
+      : { settings: fixed.settings as NodeRead['settings'] }),
     ...note,
   })
   if (!runs) {
     if (o.cursor !== undefined)
       return bad('This node has no runs to continue.', { path: 'cursor' })
-    return reply(undefined, false)
+    return capped(reply(undefined, false))
   }
 
   let i = 0
@@ -692,15 +811,16 @@ export const readNode = safe(function readNode(
       c = 0
       continue
     }
-    if (txt === undefined) {
-      // not splittable: take it if the page is empty, so there is progress
+    if (page.length && n <= room) break // fits a page of its own: the next one
+    if (!txt || c >= txt.length) {
+      // Nothing to cut. It is at most a skeleton, so this is only reached when the room is already gone.
       if (!page.length) {
         page.push(piece)
         i++
+        c = 0
       }
       break
     }
-    if (page.length && n <= room) break // fits a page of its own: the next one
     const rest = txt.slice(c)
     const fit = (p: number) =>
       len({ ...(run as object), text: rest.slice(0, p) }) + 1 <= left
@@ -715,11 +835,14 @@ export const readNode = safe(function readNode(
     if (p === 0 && page.length) break
     if (p === 0) p = 1
     const last = rest.charCodeAt(p - 1)
-    if (last >= 0xd800 && last <= 0xdbff) p = p > 1 ? p - 1 : p + 1
+    if (last >= 0xd800 && last <= 0xdbff && p < rest.length)
+      p = p > 1 ? p - 1 : p + 1
     page.push({ ...(run as object), text: rest.slice(0, p) })
     c += p
     break
   }
   const more = i < runs.length
-  return reply(page, more, more ? `${site.revision}:${i}:${c}` : undefined)
+  return capped(
+    reply(page, more, more ? `${site.revision}:${i}:${c}` : undefined),
+  )
 })
