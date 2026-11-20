@@ -370,6 +370,7 @@ test('key order does not make a node changed', () => {
   const a = siteWith([
     {
       ...text('t1', 'one'),
+      slot: { x: 1, y: 2, w: 6, h: 4, z: 0 },
       style: { base: { color: 'brand', size: 20 } },
       hide: { phone: true },
     } as Node,

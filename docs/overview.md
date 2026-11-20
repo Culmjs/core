@@ -43,14 +43,14 @@ The limits are 2,000 nodes per page and 12 levels of nesting. `KINDS`, the table
 
 A node can be marked `required: true`. A required node must stay in the site and stay visible:
 
-- Validation refuses a document in which a required node is hidden, with a `POLICY_VIOLATION` whose `rule` is `required`. The hiding can be a `hide` flag for any layout, `hidden: true` in any style layer, an instance override or component variant that hides the part, or a hidden ancestor. The problem names the node and the path of the hiding.
-- A required `text` must keep a run that has text or a data binding. For a text inside a component, each use of the component is judged by the text it shows.
-- `remove` refuses a subtree that holds a required node. It also refuses to remove the last instance of a component that holds one.
+- Validation refuses a document in which a required node is hidden, with a `POLICY_VIOLATION` whose `rule` is `required`. The hiding can be a `hide` flag for any layout, `hidden: true` in any style layer, an instance override or component variant that hides the part, an on/off property (`field: 'hidden'`) of a component that is set to off by its default or by an instance, or a hidden ancestor. The problem names the node and the path of the hiding. A property bound to data is a show condition and, like any `showIf`, is not judged.
+- A required `text` must keep a run that has a data binding or some text that is not only whitespace. For a text inside a component, each use of the component is judged by the part as the page shows it: the master with the component's property defaults, the matching looks, the instance's `set` values, its bindings and its overrides applied in the order the page applies them.
+- `remove` refuses a subtree that holds a required node. It also refuses to remove the last instance of a component that holds one. `removePage`, `updateBlock` and `setBlockSetting` refuse any result that no longer holds a node that was required, and `detach` gives the detached root the instance's own mark.
 - A `form` is required unless it is marked `required: false`. A `field` is required unless it is marked `required: false` or its form is. These two kinds are the only ones that can be marked `false`.
 
 To take required content out on purpose, change the mark first, in the same batch: `setRequired` with `null` deletes the mark, and with `false` it opts a form or field out. A form is required by its kind, so it needs `false`. The refusal is meant to be a decision, not an accident.
 
-The site styles can also hold `textRange: { min, max }`, whole numbers from 1 to 400. A text size outside the range, in a node layer, a run style, a named text style or the smallest value of a fluid size, is refused with a `POLICY_VIOLATION` whose `rule` is `textRange` and whose `allowed` is `[min, max]`. With no `textRange`, no size is refused. `setSiteStyles` sets it, and `null` removes it.
+The site styles can also hold `textRange: { min, max }`, whole numbers from 1 to 400. A text size outside the range, in a node layer, a run style, a named text style or the smallest value of a fluid size, is refused with a `POLICY_VIOLATION` whose `rule` is `textRange` and whose `allowed` is `[min, max]`. That includes a size an instance or a component gives a part: in an override, in a look's patch, or as the value of a `fontSize` property. With no `textRange`, no size is refused. `setSiteStyles` sets it, and `null` removes it.
 
 ### Versions and migration
 
@@ -154,7 +154,7 @@ There are 26 operations. Each has typed arguments, and `catalogue` lists them wi
 | Pieces (4) | `makeComponent`, `setInstance`, `detach`, `removeComponent`                                                                |
 | Site (8)   | `addPage`, `removePage`, `setPage`, `movePage`, `setSite`, `setLook`, `setSiteStyles`, `setFonts`                          |
 
-A node is addressed by a tree and an id: `{ tree: 'header' | 'footer' | { page: id } | { component: id }, id }`. A component's tree has its own ids, apart from the pages. `add` fills in an id (the lowest unused `n` id), a slot and a name when the node leaves them out. `detach` turns an instance back into its own nodes with new ids. `updateBlock` brings an inserted block to the registered version of its block and lists, as a note, the parts a person had changed.
+A node is addressed by a tree and an id: `{ tree: 'header' | 'footer' | { page: id } | { component: id }, id }`. A component's tree has its own ids, apart from the pages. `add` fills in an id (the lowest unused `n` id), a slot and a name when the node leaves them out. `detach` turns an instance back into its own nodes with new ids. `updateBlock` brings an inserted block to the registered version of its block and lists, as a note, the parts a person had changed. The block's root keeps its slot, placement, hiding, show conditions, lock and name.
 
 A refusal is a list of problems. Each has a stable `code`, a `message`, and where they apply the `nodeId`, the `path` of the field, the `allowed` values and the `rule`. A problem from a batch also has `op`, the index of the operation that raised it. For a problem that a validation found at the end, `op` is the last operation that changed that node, and a problem that names no node has no `op`. `INVALID_OPERATION` means the operation itself is wrong (an unknown id, a value of the wrong type, an unsafe key, an unknown operation name, with the allowed names listed). `UNKNOWN_BLOCK`, `POLICY_VIOLATION` and the other codes of validation mean the same as in validation.
 
@@ -172,7 +172,7 @@ A refusal is a list of problems. Each has a stable `code`, a `message`, and wher
 
 `plan(doc, registry, request, allow?)` runs the batch on a document and returns the result without a store. `apply(store, registry, request, allow?)` does the same against a store, in four steps: replay the key, check the revision, plan, commit. Both return problems and never throw for a bad request. A store that throws makes `apply` reject with that error.
 
-A successful result has `created` and `changed` (node references, with no repeats), `pages` (the ids of the pages affected), `notes`, and from `apply` the new `revision`. A note has a `kind` (`reset`, `expanded` or `info`), the node `ids` it is about and a `text`. One note says which links now lead to no page after a page was removed, switched off or given another slug. Culm does not rewrite links.
+A successful result has `created` and `changed` (node references, with no repeats), `pages` (the ids of the pages affected), `notes`, and from `apply` the new `revision`. `created` and `changed` are what `diffSites` reports between the document before and after the batch: `created` is every id the diff lists as added, `changed` every id it lists as changed or moved that is not created. A node that was removed is in neither list (the diff lists it as removed), and a parent whose children changed is not changed. A page's own settings are in `pages`, not in `changed`. A note has a `kind` (`reset`, `expanded` or `info`), the node `ids` it is about and a `text`. One note says which links now lead to no page after a page was removed, switched off or given another slug. Culm does not rewrite links.
 
 `allow` is a function a product passes to refuse an operation for its own reasons. It is called once for each operation, with the operation and the working document, and returns a problem or nothing. The result is a `POLICY_VIOLATION` with the rule it gave, or with the rule `allow` if the function threw.
 
@@ -193,12 +193,12 @@ A store is the interface the contract writes through:
 
 An agent reads a site without receiving the whole document. The four reads take a head (what `store.head` returns), never change it, and never throw.
 
-| Read                                       | Returns                                                                                                              |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| `siteOutline(head)`                        | The site name, languages, text range, counts, style and font names, then one row per page and component              |
-| `pageOutline(head, tree, { depth, from })` | One row per node: id, kind, parent, index, layouts it is hidden on, block of origin, required, a preview of its text |
-| `readNode(head, tree, id)`                 | One node without its children, the ids of the children and, for a block root, the current settings                   |
-| `search(head, { text, kind, block })`      | The nodes that match every condition given, with a preview                                                           |
+| Read                                            | Returns                                                                                                                               |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `siteOutline(head)`                             | The site name, languages, text range, counts, style and font names, then one row per page and component                               |
+| `pageOutline(head, tree, { depth, from })`      | One row per node: id, kind, parent, index, layouts it is hidden on, block of origin, required, a preview of its text                  |
+| `readNode(head, tree, id, options?, registry?)` | One node without its children, the ids of the children and, for a block root, the current settings (only when the registry is passed) |
+| `search(head, { text, kind, block })`           | The nodes that match every condition given, with a preview                                                                            |
 
 A reply is at most `READ_CAP` (16,000) characters of JSON. A long string is cut and its path listed, and a node too large to show whole is shown with its largest fields replaced by their length. When a reply cannot hold every row it has `cut: true` and a `cursor` such as `"3:120"` (the revision and the offset); pass it back in `options.cursor` (or `query.cursor`) to get the next rows. A cursor made for another revision is refused with `REVISION_CONFLICT`, so a page never mixes two versions of a site.
 
@@ -217,7 +217,7 @@ catalogue(registry, { what: 'kinds', id: 'text' }) // one entry in full
 diffSites(a, b)
 ```
 
-`diffSites` compares two documents and returns, for each tree with a difference, the ids that were `added`, `removed` and `moved`, and the `changed` ones with the paths of their changed fields. `site` lists the site-level keys that differ (`pages.<id>.inMenu`, `components.<id>`, `pages` for page order and so on), and `pages` lists the affected pages: the page whose own tree changed, every page for a changed header, footer, look or style, and the pages that use a changed component, also through a nested one. Its replies are paged like the reads. It never throws for a malformed document.
+`diffSites` compares two documents and returns, for each tree with a difference, the ids that were `added`, `removed` and `moved`, and the `changed` ones with the paths of their changed fields. `site` lists the site-level keys that differ (`pages.<id>.inMenu`, `components.<id>`, `pages` for page order and so on), and `pages` lists the affected pages: the page whose own tree changed, every page that is on for a changed header or footer, every page for a changed look or style, and the pages that use a changed component, also through a nested one. Its replies are paged like the reads. It never throws: a malformed document or options of the wrong shape give a refusal or an empty diff, and a tree nested past 64 levels is compared level by level down to that depth, and below it as one value.
 
 ```ts
 restore(store, registry, { site: 'main', to: 0, baseRevision: 3, key: 'undo-1' }, allow?)

@@ -144,6 +144,7 @@ const done = await apply(store, registry, {
   ],
 })
 // { ok: true, revision: 1, created: [...], changed: [...], pages: ['home', 'p1'], notes: [] }
+// `created` and `changed` are the ids `diffSites` reports for this change; a removed node is in neither
 
 const head = await store.head('main') // { revision: 1, doc }
 siteOutline(head).rows // one row per page and component
@@ -165,17 +166,17 @@ Read [docs/overview.md](docs/overview.md) for the document model, the plug-in AP
 
 Stage 1 and the first checkpoint of stage 2, in `packages/core` (`@culmjs/core`), with no runtime dependencies. It runs in Node 22+, edge workers and the browser.
 
-| Area       | What you get                                                                                                                                                                     |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Document   | Types for the site document, 21 core node kinds (frozen), tree helpers, `emptySite`, schema version 2 with a migration runner, `required` marks and a `textRange` for text sizes |
-| Plug-ins   | `createRegistry`, blocks with declared settings, data sources with row checks, validation rules, extra node kinds                                                                |
-| Validation | `validateSite`, with stable problem codes                                                                                                                                        |
-| Operations | 26 operations, `plan` and `apply` with request keys and revisions, `restore`, `memoryStore`, `allow` for a product's own refusals                                                |
-| Reads      | `siteOutline`, `pageOutline`, `readNode` and `search`, paged under a 16,000-character cap, and `catalogue` of kinds, blocks, sources and operations                              |
-| Diff       | `diffSites`, which lists the added, removed, moved and changed nodes and the affected pages of two revisions                                                                     |
-| Data       | `expand` and `rowsOf`: filter, sort, group, limit and nested repeats over rows the caller supplies                                                                               |
-| Compiler   | `compilePage`, `compileSubtree` (for editors that replace part of a canvas) and `compileSite` (every page plus a manifest), and `buildIdentity`, one hash of what a build used   |
-| Budgets    | `BUDGETS` and `checkBudgets`                                                                                                                                                     |
+| Area       | What you get                                                                                                                                                                                                                                        |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Document   | Types for the site document, 21 core node kinds (frozen), tree helpers, `emptySite`, schema version 2 with a migration runner, `required` marks and a `textRange` for text sizes                                                                    |
+| Plug-ins   | `createRegistry`, blocks with declared settings, data sources with row checks, validation rules, extra node kinds                                                                                                                                   |
+| Validation | `validateSite`, with stable problem codes                                                                                                                                                                                                           |
+| Operations | 26 operations, `plan` and `apply` with request keys and revisions, `restore`, `memoryStore`, `allow` for a product's own refusals                                                                                                                   |
+| Reads      | `siteOutline`, `pageOutline`, `readNode(head, tree, id, options?, registry?)` (a block root's settings come back only with the registry) and `search`, paged under a 16,000-character cap, and `catalogue` of kinds, blocks, sources and operations |
+| Diff       | `diffSites`, which lists the added, removed, moved and changed nodes and the affected pages of two revisions                                                                                                                                        |
+| Data       | `expand` and `rowsOf`: filter, sort, group, limit and nested repeats over rows the caller supplies                                                                                                                                                  |
+| Compiler   | `compilePage`, `compileSubtree` (for editors that replace part of a canvas) and `compileSite` (every page plus a manifest), and `buildIdentity`, one hash of what a build used                                                                      |
+| Budgets    | `BUDGETS` and `checkBudgets`                                                                                                                                                                                                                        |
 
 Not built yet, by stage:
 
