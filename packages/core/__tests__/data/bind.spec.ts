@@ -9,7 +9,7 @@ import {
   type Run,
 } from '../../src/document/index.ts'
 import { expand } from '../../src/data/index.ts'
-import { unrollInstances } from '../../src/data/bind.ts'
+import { unrollInstances, unrollOne } from '../../src/data/bind.ts'
 import { defaultSiteStyles } from '../../src/style/index.ts'
 import type { Row } from '../../src/registry/index.ts'
 import { validateSite } from '../../src/validate/index.ts'
@@ -1292,4 +1292,31 @@ test('an override on a part of a plug-in kind is applied when the kinds are give
   reg.use(calloutPlugin())
   assert.deepEqual(doc(reg.kinds()), { phone: true })
   assert.equal(doc(), undefined)
+})
+
+test('unrollOne returns the one instance unrolled with its set and overrides applied, ids as <instanceId>.<partId>', () => {
+  const doc = site(page(inst()))
+  doc.components = [card]
+  const instance = inst({
+    set: { title: 'Hello' },
+    overrides: { badge: { props: { runs: [{ text: 'New' }] } } },
+    hide: { tablet: true },
+  })
+  const out = unrollOne(doc, reg, instance)
+  assert.deepEqual(
+    [out.id, out.kind, out.slot, out.hide, out.component],
+    ['c1', 'box', { grow: 1 }, { tablet: true }, undefined],
+  )
+  assert.deepEqual(
+    out.children!.map(k => k.id),
+    ['c1.title', 'c1.badge', 'c1.body'],
+  )
+  assert.deepEqual(runsOf(out.children![0]), [{ text: 'Hello' }])
+  assert.deepEqual(runsOf(out.children![1]), [{ text: 'New' }])
+  // the same tree `expand` builds for that instance
+  const viaExpand = expand(page(instance), withC(card)).tree.children![0]
+  assert.deepEqual(out, viaExpand)
+  // a missing component comes back unchanged
+  const lost = inst({ component: 'gone' })
+  assert.equal(unrollOne(doc, reg, lost), lost)
 })

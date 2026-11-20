@@ -101,7 +101,7 @@ export const indexOk = (v: unknown, max: number): v is number =>
   typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max
 
 /** Applies `entries` to a copy of `base`: null deletes. Keys were checked by the caller. */
-function merge(base: object | undefined, entries: object): Fields {
+export function merge(base: object | undefined, entries: object): Fields {
   const out: Fields = { ...base }
   for (const [k, v] of Object.entries(entries))
     if (v === null) delete out[k]
