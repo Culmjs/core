@@ -24,9 +24,9 @@ type Target = { tree: TreeRef; root: Node; node: Node }
 type Fields = Record<string, unknown>
 
 const LAYOUTS: readonly Layout[] = ['desktop', 'tablet', 'phone']
-const bad = (message: string, more: Parameters<typeof refuse>[2] = {}) =>
+export const bad = (message: string, more: Parameters<typeof refuse>[2] = {}) =>
   refuse('INVALID_OPERATION', message, more)
-const isRefusal = (v: unknown): v is Refusal =>
+export const isRefusal = (v: unknown): v is Refusal =>
   isObj(v) && v.ok === false && 'problems' in v
 
 /** The path of the first key from `UNSAFE_FIELDS` anywhere in `v` (or of a value nested too deep to check), else undefined. */
@@ -43,7 +43,7 @@ function unsafePath(v: unknown, path: string, depth = 0): string | undefined {
 }
 
 /** A refusal when any of the named fields of the operation holds an unsafe key. */
-function checkSafe(o: Fields, id: string | undefined, keys: string[]) {
+export function checkSafe(o: Fields, id: string | undefined, keys: string[]) {
   for (const k of keys) {
     const hit = unsafePath(o[k], k)
     if (hit)
@@ -53,7 +53,7 @@ function checkSafe(o: Fields, id: string | undefined, keys: string[]) {
 }
 
 /** The tree and the node of an operation, or the refusal. Everything on `o` is untrusted. */
-function at(doc: SiteDocument, o: Fields): Target | Refusal {
+export function at(doc: SiteDocument, o: Fields): Target | Refusal {
   const root = rootOf(doc, o.tree as TreeRef)
   if (!root) return bad('No such tree.', { path: 'tree' })
   if (typeof o.id !== 'string')
@@ -63,7 +63,7 @@ function at(doc: SiteDocument, o: Fields): Target | Refusal {
   return { tree: o.tree as TreeRef, root, node }
 }
 
-const ref = (tree: TreeRef, id: string): NodeRef => ({ tree, id })
+export const ref = (tree: TreeRef, id: string): NodeRef => ({ tree, id })
 
 /** Replaces the target node by what `make` returns (or refuses with what it returns). */
 function edit(
@@ -97,7 +97,7 @@ const put = <K extends keyof Node>(
 }
 
 /** Whole numbers from 0 to `max`. */
-const indexOk = (v: unknown, max: number): v is number =>
+export const indexOk = (v: unknown, max: number): v is number =>
   typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max
 
 /** Applies `entries` to a copy of `base`: null deletes. Keys were checked by the caller. */
@@ -107,6 +107,16 @@ function merge(base: object | undefined, entries: object): Fields {
     if (v === null) delete out[k]
     else out[k] = v
   return out
+}
+
+/** Ids already in the id space of a tree: a component has its own; header, footer and pages share one. */
+export function usedIds(doc: SiteDocument, tree: TreeRef, root: Node) {
+  const used = new Set<string>()
+  const component = isObj(tree) && 'component' in tree
+  for (const t of trees(doc))
+    if (component === (typeof t.tree === 'object' && 'component' in t.tree))
+      if (!component || t.root === root) walk(t.root, w => used.add(w.id))
+  return used
 }
 
 // ---- add
@@ -134,12 +144,7 @@ export const add: OpFn<'add'> = (doc, registry, op) => {
   const unsafe = checkSafe(o, undefined, ['node'])
   if (unsafe) return unsafe
 
-  // Ids already in the id space of the tree: a component has its own; header, footer and pages share one.
-  const used = new Set<string>()
-  const component = isObj(o.tree) && 'component' in o.tree
-  for (const t of trees(doc))
-    if (component === (typeof t.tree === 'object' && 'component' in t.tree))
-      if (!component || t.root === root) walk(t.root, w => used.add(w.id))
+  const used = usedIds(doc, o.tree as TreeRef, root)
 
   // Shape and given ids, in document order.
   const given = new Set<string>()
@@ -222,6 +227,14 @@ export function lostRequired(
   return requiredRefs(before).find(r => !kept.has(key(r)))
 }
 
+/** The refusal for a change that would lose a node that was required. */
+export const requiredRefusal = (lost: NodeRef) =>
+  refuse(
+    'POLICY_VIOLATION',
+    `"${lost.id}" must stay in the site${typeof lost.tree === 'object' && 'component' in lost.tree ? ` (in component "${lost.tree.component}")` : ''}.`,
+    { nodeId: lost.id, rule: 'required' },
+  )
+
 export const remove: OpFn<'remove'> = (doc, _registry, op) => {
   const t = at(doc, op as unknown as Fields)
   if (isRefusal(t)) return t
@@ -230,15 +243,7 @@ export const remove: OpFn<'remove'> = (doc, _registry, op) => {
   const parent = parentOf(t.root, t.node.id)!
   const result = withRoot(doc, t.tree, removeNode(t.root, t.node.id))
   const lost = lostRequired(doc, result)
-  if (lost)
-    return refuse(
-      'POLICY_VIOLATION',
-      `"${lost.id}" must stay in the site${typeof lost.tree === 'object' && 'component' in lost.tree ? ` (in component "${lost.tree.component}")` : ''}.`,
-      {
-        nodeId: lost.id,
-        rule: 'required',
-      },
-    )
+  if (lost) return requiredRefusal(lost)
   return {
     ok: true,
     doc: result,

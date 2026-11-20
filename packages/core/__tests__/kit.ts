@@ -8,6 +8,8 @@ import type {
   Registry,
   SettingFn,
 } from '../src/registry/index.ts'
+import { walk } from '../src/document/index.ts'
+import type { KindSpec } from '../src/document/index.ts'
 
 export const LOOK: Look = {
   id: 'plain',
@@ -232,3 +234,176 @@ export const stateful = (id = 'tabs'): Node => ({
     },
   ],
 })
+
+// ---- the test plug-in: a kind, a rule, a setting function and a block with an insert function
+
+/** A leaf kind. The compiler writes a plug-in kind's tag and attributes only, so the label is also its `tip`. */
+const BADGE: KindSpec = {
+  role: 'leaf',
+  parents: 'any',
+  tag: () => 'span',
+  display: () => 'inline-block',
+  props: {
+    label: { type: 'text', maxLength: 40 },
+    tip: { type: 'text', maxLength: 40 },
+  },
+  styles: [],
+  states: [],
+  bindable: [],
+  repeatable: true,
+  label: 'Badge',
+  icon: 'tag',
+}
+
+/** More than three badges in one tree. */
+const MAX_BADGES = {
+  name: 'max-badges',
+  check(doc: SiteDocument) {
+    const roots = [
+      doc.header,
+      doc.footer,
+      ...doc.pages.map(p => p.root),
+      ...doc.components.map(c => c.root),
+    ]
+    return roots.flatMap(root => {
+      let n = 0
+      walk(root, w => {
+        if (w.kind === 'badge') n++
+      })
+      return n > 3
+        ? [
+            {
+              code: 'POLICY_VIOLATION' as const,
+              message: `At most 3 badges in one tree, found ${n}.`,
+              nodeId: root.id,
+            },
+          ]
+        : []
+    })
+  },
+}
+
+export const stampTree = (): Node => ({
+  id: 'root',
+  kind: 'column',
+  name: 'Stamp',
+  slot: {},
+  children: [
+    {
+      id: 'title',
+      kind: 'text',
+      name: 'Title',
+      slot: {},
+      required: true,
+      props: { runs: [{ text: 'Stamp' }], sample: true },
+    },
+    {
+      id: 'badge',
+      kind: 'badge',
+      name: 'Badge',
+      slot: {},
+      props: { label: 'New', tip: 'New' },
+    },
+  ],
+})
+
+export const STAMP: BlockDef = {
+  id: 'stamp',
+  version: 1,
+  name: 'Stamp',
+  category: 'utility',
+  looks: [{ id: 'default', name: 'Default', tree: stampTree() }],
+  onInsert: () => stampTree(),
+  settings: [
+    {
+      key: 'title',
+      label: 'Title',
+      type: 'text',
+      actions: [{ do: 'set', path: 'title.props.runs.0.text' }],
+    },
+    { key: 'shout', label: 'Shout', type: 'text', fn: 'shout' },
+  ],
+}
+
+export const SHOUT: SettingFn = {
+  read: root =>
+    (find(root, `${root.id}.title`)?.props?.runs as Run[] | undefined)?.[0]
+      .text,
+  apply(root, value) {
+    const out: Node = JSON.parse(JSON.stringify(root))
+    find(out, `${out.id}.title`)!.props!.runs = [{ text: `${String(value)}!` }]
+    return out
+  },
+}
+
+export const KIT_PLUGIN: Plugin = {
+  name: 'kit',
+  version: 1,
+  api: [1],
+  runs: ['build'],
+  trust: 'declarative',
+  kinds: { badge: BADGE },
+  rules: [MAX_BADGES],
+  blocks: [STAMP],
+  settingFns: { shout: SHOUT },
+}
+
+/** DEMO_PLUGIN and KIT_PLUGIN. */
+export function kitRegistry(): Registry {
+  const r = createRegistry()
+  r.use(DEMO_PLUGIN)
+  r.use(KIT_PLUGIN)
+  return r
+}
+
+/** A registry whose `demo` block is at version 2: its look adds a text `sub` and drops `note`; `hidenote` and `upper` are gone with them. */
+export function demoV2Registry(): Registry {
+  const tree = demoTree()
+  tree.children = [
+    ...tree.children!.filter(c => c.id !== 'note'),
+    { id: 'sub', kind: 'text', name: 'Sub', slot: {} },
+  ]
+  const r = createRegistry()
+  r.use({
+    ...DEMO_PLUGIN,
+    version: 2,
+    settingFns: undefined,
+    blocks: [
+      {
+        ...DEMO,
+        version: 2,
+        looks: [{ id: 'default', name: 'Default', tree }],
+        settings: DEMO.settings.slice(0, 2),
+      },
+    ],
+  })
+  return r
+}
+
+/** One page whose tree holds exactly `n` nodes (the page's root counts): columns of up to nine texts, each text a distinct word. */
+export function bigPage(n: number): SiteDocument {
+  const kids: Node[] = []
+  let left = n - 1
+  let i = 0
+  const word = (k: number) => `word${k}`
+  while (left > 0) {
+    if (left === 1) {
+      kids.push(text(`t${i}`, word(i)))
+      left = 0
+    } else {
+      const take = Math.min(10, left) - 1
+      kids.push(
+        node(
+          `c${i}`,
+          'column',
+          Array.from({ length: take }, (_, j) =>
+            text(`t${i}x${j}`, word(i * 10 + j + 1000)),
+          ),
+        ),
+      )
+      left -= take + 1
+    }
+    i++
+  }
+  return siteWith(kids)
+}
