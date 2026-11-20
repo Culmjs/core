@@ -365,3 +365,78 @@ test('20,000 children under one parent diff correctly for one inserted node', ()
     [['fresh'], [], [], []],
   )
 })
+
+test('key order does not make a node changed', () => {
+  const a = siteWith([
+    {
+      ...text('t1', 'one'),
+      style: { base: { color: 'brand', size: 20 } },
+      hide: { phone: true },
+    } as Node,
+  ])
+  const b = clone(a)
+  const t = homeRoot(b)[0] as unknown as Record<string, unknown>
+  // the same node with every object's keys in the opposite order
+  const flip = (x: unknown): unknown =>
+    Array.isArray(x)
+      ? x.map(flip)
+      : typeof x === 'object' && x !== null
+        ? Object.fromEntries(
+            Object.entries(x)
+              .reverse()
+              .map(([k, v]) => [k, flip(v)]),
+          )
+        : x
+  homeRoot(b)[0] = flip(t) as Node
+  assert.notEqual(JSON.stringify(a), JSON.stringify(b))
+  const d = ok(diffSites(a, b))
+  assert.deepEqual(d.trees, [])
+  assert.deepEqual(d.site, [])
+  assert.deepEqual(d.pages, [])
+})
+
+test('diffSites never throws: options of any shape, a null document, a tree 20,000 levels deep', () => {
+  const a = siteWith([text('t1', 'one')])
+  const b = clone(a)
+  for (const options of [null, 'x', 5, [], { cursor: 7 }, { cursor: {} }]) {
+    const r = diffSites(a, b, options as never)
+    assert.equal(typeof r.ok, 'boolean', JSON.stringify(options))
+  }
+  assert.equal(ok(diffSites(a, b, null as never)).trees.length, 0)
+  for (const [x, y] of [
+    [null, b],
+    [a, undefined],
+    [null, null],
+    ['x', 5],
+  ])
+    assert.equal(typeof diffSites(x as never, y as never).ok, 'boolean')
+  // a column nested 20,000 deep, built in a loop
+  const chain = (leaf: string): Node => {
+    let top: Node = text('leaf', leaf)
+    for (let i = 20000; i > 0; i--) top = node(`d${i}`, 'column', [top])
+    return top
+  }
+  const deepA = siteWith([chain('one')])
+  const deepB = siteWith([chain('two')])
+  const same = diffSites(deepA, deepA)
+  assert.equal(same.ok, true)
+  const r = diffSites(deepA, deepB)
+  assert.equal(r.ok, true)
+  // the content below the guard depth counts as one changed leaf, and the part above it is still diffed
+  assert.ok((r as SiteDiff).trees.length > 0)
+  assert.equal(diffAll(deepA, deepB).rows.length > 0, true)
+  assert.equal(diffAll(deepA, deepA).rows.length, 0)
+})
+
+test('a throwing getter in a document becomes INVALID_OPERATION, not an exception', () => {
+  const a = siteWith([text('t1', 'one')])
+  const bad = clone(a)
+  Object.defineProperty(bad, 'pages', {
+    get() {
+      throw new Error('boom')
+    },
+  })
+  const r = diffSites(a, bad)
+  assert.equal(r.ok, false)
+  if (!r.ok) assert.equal(r.problems[0].code, 'INVALID_OPERATION')
+})

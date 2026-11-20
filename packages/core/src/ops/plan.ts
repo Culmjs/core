@@ -12,6 +12,7 @@ import * as site from './site.ts'
 import { trees } from './trees.ts'
 import {
   refuse,
+  why,
   type Allow,
   type ChangeRequest,
   type Note,
@@ -20,6 +21,8 @@ import {
   type OpFn,
   type PlanResult,
 } from './types.ts'
+
+export { why }
 
 export const MAX_OPS = 200
 export const MAX_REQUEST_CHARS = 1_000_000
@@ -117,19 +120,6 @@ function brokenLinks(before: SiteDocument, after: SiteDocument): Note[] {
         },
       ]
     : []
-}
-
-/** Text for any thrown value; cannot throw. */
-export function why(e: unknown): string {
-  try {
-    const m =
-      typeof e === 'object' && e !== null
-        ? (e as { message?: unknown }).message
-        : e
-    return String(m).slice(0, 300) || 'unknown error'
-  } catch {
-    return 'unknown error'
-  }
 }
 
 const key = (r: NodeRef) => `${JSON.stringify(r.tree)}\0${r.id}`

@@ -1,7 +1,7 @@
 import { canonicalJson } from '../document/hash.ts'
 import type { Node, Problem, SiteDocument } from '../document/index.ts'
 import { paged } from './cap.ts'
-import type { TreeRef } from './types.ts'
+import { refuse, why, type TreeRef } from './types.ts'
 
 export type SiteDiff = {
   ok: true
@@ -30,7 +30,15 @@ type Row = {
 }
 /** At most this many paths in one `changed` row; the rest are counted in `more`. */
 const MAX_PATHS = 20
-type Entry = { node: Node; parent: string | null; index: number }
+/** How deep a tree is compared node by node; what lies below is one leaf: its `children` differ or they do not. Keeps the recursion off the stack limit. */
+const DEPTH_GUARD = 64
+type Entry = {
+  node: Node
+  parent: string | null
+  index: number
+  /** true when this node sits at the guard depth and has children that were not walked */
+  cut?: true
+}
 type Tree = { tree: TreeRef; key: string; root: Node | undefined }
 
 const isObj = (x: unknown): x is Record<string, unknown> =>
@@ -48,12 +56,20 @@ const same = (x: unknown, y: unknown) => x === y || text(x) === text(y)
 /** Every node of a tree by id (first one wins) in document order; what is not a node is skipped. */
 function index(root: Node | undefined): Map<string, Entry> {
   const out = new Map<string, Entry>()
-  const go = (n: unknown, parent: string | null, i: number) => {
+  const go = (n: unknown, parent: string | null, i: number, depth: number) => {
     if (!isObj(n) || typeof n.id !== 'string') return
-    if (!out.has(n.id)) out.set(n.id, { node: n as Node, parent, index: i })
-    arr(n.children).forEach((c, j) => go(c, n.id as string, j))
+    const kids = arr(n.children)
+    const cut = depth >= DEPTH_GUARD && kids.length > 0
+    if (!out.has(n.id))
+      out.set(n.id, {
+        node: n as Node,
+        parent,
+        index: i,
+        ...(cut ? { cut: true as const } : {}),
+      })
+    if (!cut) kids.forEach((c, j) => go(c, n.id as string, j, depth + 1))
   }
-  go(root, null, 0)
+  go(root, null, 0, 0)
   return out
 }
 
@@ -151,6 +167,9 @@ function treeRows(t: Tree, a: Tree | undefined, b: Tree | undefined): Row[] {
           1,
           out,
         )
+    // Below the guard depth nothing was walked: the children count as one value.
+    if ((e.cut || o.cut) && !same(e.node.children, o.node.children))
+      out.add('children')
     if (out.size) changed.push(row('changed', id, [...out].sort()))
   }
   return [
@@ -334,25 +353,34 @@ function group(rows: Row[]): SiteDiff['trees'] {
  * The paged view over `diffAll`. Every part of a reply is paged: the rows are, in order, one per `site` entry, one per affected page id,
  * then the tree rows (one per tree, id and kind of difference). Each reply carries only its slice: `site`, `pages` and `trees` hold the
  * entries of THIS reply (any may be empty) and a caller concatenates them across replies. The cursor's revision is 0.
+ * Never throws: `options` that is not an object counts as none, and anything that goes wrong is an INVALID_OPERATION.
  */
 export function diffSites(
   a: SiteDocument,
   b: SiteDocument,
   options: { cursor?: string } = {},
 ): SiteDiff | { ok: false; problems: Problem[] } {
-  const all = diffAll(a, b)
-  type R = { s: string } | { p: string } | Row
-  const rows: R[] = [
-    ...all.site.map(s => ({ s })),
-    ...all.pages.map(p => ({ p })),
-    ...all.rows,
-  ]
-  return paged(rows, 0, options.cursor, (page, cut, cursor): SiteDiff => ({
-    ok: true,
-    trees: group(page.filter((r): r is Row => 'key' in r)),
-    site: page.flatMap(r => ('s' in r ? [r.s] : [])),
-    pages: page.flatMap(r => ('p' in r ? [r.p] : [])),
-    cut,
-    ...(cursor ? { cursor } : {}),
-  }))
+  try {
+    const cursor = isObj(options) ? options.cursor : undefined
+    const all = diffAll(a, b)
+    type R = { s: string } | { p: string } | Row
+    const rows: R[] = [
+      ...all.site.map(s => ({ s })),
+      ...all.pages.map(p => ({ p })),
+      ...all.rows,
+    ]
+    return paged(rows, 0, cursor, (page, cut, next): SiteDiff => ({
+      ok: true,
+      trees: group(page.filter((r): r is Row => 'key' in r)),
+      site: page.flatMap(r => ('s' in r ? [r.s] : [])),
+      pages: page.flatMap(r => ('p' in r ? [r.p] : [])),
+      cut,
+      ...(next ? { cursor: next } : {}),
+    }))
+  } catch (e) {
+    return refuse(
+      'INVALID_OPERATION',
+      `The documents cannot be compared: ${why(e)}`,
+    )
+  }
 }

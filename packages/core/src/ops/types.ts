@@ -202,3 +202,16 @@ export const refuse = (
   ok: false,
   problems: [{ code, message, ...more }],
 })
+
+/** Text for any thrown value; cannot throw. */
+export function why(e: unknown): string {
+  try {
+    const m =
+      typeof e === 'object' && e !== null
+        ? (e as { message?: unknown }).message
+        : e
+    return String(m).slice(0, 300) || 'unknown error'
+  } catch {
+    return 'unknown error'
+  }
+}
