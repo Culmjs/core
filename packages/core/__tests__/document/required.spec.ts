@@ -89,7 +89,7 @@ test('yields size from a node layer, a run style, a named text style, and the mi
       { size: 16, nodeId: 'c', path: 'style.base.fluidSize.min' },
       { size: 18, path: 'styles.text.0.decl.size' },
       { size: 20, nodeId: 'b', path: 'props.runs.0.style.size' },
-      { size: 30, nodeId: 'c', path: 'style.when.0.size' },
+      { size: 30, nodeId: 'c', path: 'style.when.0.decl.size' },
     ],
   )
 })

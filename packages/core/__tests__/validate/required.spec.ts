@@ -411,7 +411,7 @@ test('sizes written through an instance or a component are held to the text rang
         },
       }),
     ),
-    [['textRange', 'i1', 'parts.title.style.when.0.size']],
+    [['textRange', 'i1', 'parts.title.style.when.0.decl.size']],
   )
   assert.deepEqual(
     at(
@@ -779,13 +779,13 @@ test('H2: a required instance hidden through its component root is refused, with
 })
 
 test('H2: content in an instance slot is refused when the slot host, or a part above it, is hidden by the use', () => {
-  // the content is a page node: it is reported at its own id, and the message names the host
-  const refused = (d: object, path: string) => {
+  // the content is a page node: it is reported at its own id with no path (the hiding is on the host), and the message names the host
+  const refused = (d: object, how: string) => {
     const p = validateSite(d, reg)
     assert.deepEqual(
       p.map(x => [x.rule, x.nodeId, x.path]),
-      [['required', 'rt', path]],
-      path,
+      [['required', 'rt', undefined]],
+      how,
     )
     assert.match(p[0].message, /i1\.body/)
   }
@@ -808,7 +808,7 @@ test('H2: content in an instance slot is refused when the slot host, or a part a
     ),
     [
       ['required', 'i1', 'style.phone.hidden'],
-      ['required', 'rt', 'style.phone.hidden'],
+      ['required', 'rt', undefined],
     ],
   )
   // a hide an override gives the root is dropped by the unroll (m1)
@@ -943,7 +943,7 @@ test('M-b: a required part hidden for a use is reported on the use, one shape fo
   assert.match(msg, /"i1"/)
   // the use itself hidden, and an ancestor of the use: the node that carries the hiding
   assert.deepEqual(at(shownDoc([], [], { hide: { phone: true } })), [
-    [POLICY, 'required', 'i1', 'hide.phone'],
+    [POLICY, 'required', 'i1', 'parts.title'],
   ])
   const wrapped = shownDoc([], [])
   wrapped.pages[0].root.children = [
@@ -957,9 +957,7 @@ test('M-b: a required part hidden for a use is reported on the use, one shape fo
     }),
   ]
   wrapped.pages[0].root.children[0].children![0].slot = {}
-  assert.deepEqual(at(wrapped), [
-    [POLICY, 'required', 'i1', 'style.base.hidden'],
-  ])
+  assert.deepEqual(at(wrapped), [[POLICY, 'required', 'i1', 'parts.title']])
   assert.match(validateSite(wrapped, reg)[0].message, /"wrap"/)
   // hidden in the component's own tree: the same shape
   assert.deepEqual(at(shownDoc([], [], {}, { hide: { phone: true } })), [
@@ -1043,20 +1041,22 @@ const req3 = (d: object) =>
     .map(x => [x.rule, x.nodeId, x.path])
 
 test('N1: an outer override hiding the box around the nested use, or the outer root, is refused at the outer instance and the part', () => {
+  // the hiding is on an ancestor: the path is the part's, and the message names the ancestor
   const cases: [object, string][] = [
-    [{ b2: hidePhone }, 'parts.b2.hide.phone'],
-    [{ b2: baseHidden }, 'parts.b2.style.base.hidden'],
-    [{ b2: whenHidden }, 'parts.b2.style.when.0.hidden'],
-    [{ r2: baseHidden }, 'style.base.hidden'],
+    [{ b2: hidePhone }, 'u0.b2'],
+    [{ b2: baseHidden }, 'u0.b2'],
+    [{ b2: whenHidden }, 'u0.b2'],
+    [{ r2: baseHidden }, 'u0'],
   ]
-  for (const [overrides, path] of cases) {
+  for (const [overrides, by] of cases) {
     const p = validateSite(levels(2, { overrides }), reg)
     assert.deepEqual(
       p.map(x => [x.rule, x.nodeId, x.path]),
-      [['required', 'u0', path]],
+      [['required', 'u0', 'parts.n2.title']],
       JSON.stringify(overrides),
     )
     assert.match(p[0].message, /n2\.title/)
+    assert.match(p[0].message, new RegExp(`by "${by.replace('.', '\\.')}"`))
   }
   assert.deepEqual(
     validateSite(
@@ -1068,13 +1068,10 @@ test('N1: an outer override hiding the box around the nested use, or the outer r
 })
 
 test('N1: a look in use of the outer component that hides the box or the nested instance is refused; unused, it is not', () => {
-  for (const [part, path] of [
-    ['b2', 'parts.b2.hide.phone'],
-    ['n2', 'parts.n2.hide.phone'],
-  ]) {
+  for (const part of ['b2', 'n2']) {
     const more = { 2: lookOn(part, hidePhone) }
     assert.deepEqual(req3(levels(2, { set: { look: 'b' } }, more)), [
-      ['required', 'u0', path],
+      ['required', 'u0', 'parts.n2.title'],
     ])
     assert.deepEqual(validateSite(levels(2, {}, more), reg), [])
     assert.deepEqual(
@@ -1084,14 +1081,14 @@ test('N1: a look in use of the outer component that hides the box or the nested 
   }
   const style = { 2: lookOn('b2', baseHidden) }
   assert.deepEqual(req3(levels(2, { set: { look: 'b' } }, style)), [
-    ['required', 'u0', 'parts.b2.style.base.hidden'],
+    ['required', 'u0', 'parts.n2.title'],
   ])
 })
 
 test('N2: the outer toggle on the box around the nested use is refused when it is off', () => {
   const more = { 2: { props: [toggleOn('b2', { default: true })] } }
   assert.deepEqual(req3(levels(2, { set: { show: false } }, more)), [
-    ['required', 'u0', 'parts.b2.style.base.hidden'],
+    ['required', 'u0', 'parts.n2.title'],
   ])
   assert.deepEqual(
     validateSite(levels(2, { set: { show: true } }, more), reg),
@@ -1101,25 +1098,29 @@ test('N2: the outer toggle on the box around the nested use is refused when it i
 })
 
 test('N1: three and four levels, hiding a middle nested use or a box inside it', () => {
-  for (const [key, path] of [
-    ['n3', 'parts.n3.hide.phone'],
-    ['n3.b2', 'parts.n3.b2.hide.phone'],
-    ['n3.n2', 'parts.n3.n2.hide.phone'],
-  ])
-    assert.deepEqual(req3(levels(3, { overrides: { [key]: hidePhone } })), [
-      ['required', 'u0', path],
-    ])
-  for (const key of ['n4', 'n4.n3', 'n4.n3.b2', 'n4.n3.n2'])
-    assert.deepEqual(req3(levels(4, { overrides: { [key]: hidePhone } })), [
-      ['required', 'u0', `parts.${key}.hide.phone`],
-    ])
+  for (const key of ['n3', 'n3.b2', 'n3.n2']) {
+    const p = validateSite(levels(3, { overrides: { [key]: hidePhone } }), reg)
+    assert.deepEqual(
+      p.map(x => [x.rule, x.nodeId, x.path]),
+      [['required', 'u0', 'parts.n3.n2.title']],
+    )
+    assert.ok(p[0].message.includes(`by "u0.${key}"`), p[0].message)
+  }
+  for (const key of ['n4', 'n4.n3', 'n4.n3.b2', 'n4.n3.n2']) {
+    const p = validateSite(levels(4, { overrides: { [key]: hidePhone } }), reg)
+    assert.deepEqual(
+      p.map(x => [x.rule, x.nodeId, x.path]),
+      [['required', 'u0', 'parts.n4.n3.n2.title']],
+    )
+    assert.ok(p[0].message.includes(`by "u0.${key}"`), p[0].message)
+  }
   assert.deepEqual(validateSite(levels(4), reg), [])
 })
 
 test('N1: from a header instance', () => {
   assert.deepEqual(
     req3(levels(2, { overrides: { b2: hidePhone } }, {}, 'header')),
-    [['required', 'h0', 'parts.b2.hide.phone']],
+    [['required', 'h0', 'parts.n2.title']],
   )
   assert.deepEqual(validateSite(levels(2, {}, {}, 'header'), reg), [])
 })
@@ -1242,10 +1243,14 @@ test('m1: a hide an override puts on the component root is dropped by the unroll
   // the instance's own hide is kept, and refused
   const own = levels(1, { required: true, hide: { phone: true } })
   assert.deepEqual(findIn(unrolledPage(own), 'u0')?.hide, { phone: true })
-  assert.deepEqual(req3(own), [['required', 'u0', 'hide.phone']])
+  // the instance (on itself) and its required title (through the instance)
+  assert.deepEqual(req3(own), [
+    ['required', 'u0', 'hide.phone'],
+    ['required', 'u0', 'parts.title'],
+  ])
 })
 
-test('m2: one problem per place, however many required nodes it hides', () => {
+test('m2: one problem per required node under a hidden ancestor, each at its own place, none twice', () => {
   const d = levels(2, { overrides: { b2: hidePhone } })
   const k = d.components[0] as { root: Node }
   k.root.children![0].children!.push(
@@ -1273,7 +1278,14 @@ test('m2: one problem per place, however many required nodes it hides', () => {
   ;(
     (d.components[1] as { root: Node }).root.children![0].children![0] as Node
   ).required = true
-  assert.deepEqual(req3(d), [['required', 'u0', 'parts.b2.hide.phone']])
+  const p = req3(d)
+  assert.deepEqual(p, [
+    ['required', 'u0', 'parts.n2'],
+    ['required', 'u0', 'parts.n2.title'],
+    ['required', 'u0', 'parts.n2.f'],
+    ['required', 'u0', 'parts.n2.a'],
+  ])
+  assert.equal(new Set(p.map(x => JSON.stringify(x))).size, p.length)
 })
 
 test('m4: slot content is judged in the host the unroll puts it in; a second slot host cannot be written', () => {
@@ -1316,7 +1328,7 @@ test('m4: slot content is judged in the host the unroll puts it in; a second slo
   const p = validateSite(d, reg)
   assert.deepEqual(
     p.map(x => [x.rule, x.nodeId, x.path]),
-    [['required', 's', 'hide.phone']],
+    [['required', 's', undefined]],
   )
   assert.match(p[0].message, /u0\.h1/)
 })
@@ -1329,9 +1341,12 @@ test('m5: an ancestor of a nested use hidden in the middle master and shown by t
     return d
   }
   okSite(build({ set: { show: true } }))
-  assert.deepEqual(req3(build({})), [
-    ['required', 'u0', 'parts.b2.style.base.hidden'],
-  ])
+  const p = validateSite(build({}), reg)
+  assert.deepEqual(
+    p.map(x => [x.rule, x.nodeId, x.path]),
+    [['required', 'u0', 'parts.n2.title']],
+  )
+  assert.match(p[0].message, /components\.lv2/)
 })
 
 /** Ten lines, independent of the code under test: is a required node, or an ancestor of it, hidden in the unrolled tree? */
@@ -1540,4 +1555,116 @@ test('a tree the unroll cuts at the node limit: one problem when it holds requir
   // with no required content the cut page stays valid
   delete leaf.required
   okSite(d)
+})
+
+// ---- fourth round: problem paths, the master pointer, invisible characters ----
+
+const shapes = (d: object) =>
+  validateSite(d, reg)
+    .filter(x => x.rule === 'required')
+    .map(x => [x.nodeId, x.path])
+
+test('minor 1: a path is always on the node named; a hiding on an ancestor gives no path, and the message names the ancestor', () => {
+  // slot content hidden by a part of the instance
+  const slot = hosted({ overrides: { body: { hide: { phone: true } } } })
+  const p = validateSite(slot, reg)
+  assert.deepEqual(
+    p.map(x => [x.nodeId, x.path]),
+    [['rt', undefined]],
+  )
+  assert.match(p[0].message, /"i1\.body"/)
+  // a page node hidden by a page ancestor
+  const wrapped = put(
+    n({
+      id: 'wrap',
+      kind: 'box',
+      name: 'wrap',
+      slot: fs(),
+      hide: { phone: true },
+      children: [text('t', { slot: {}, required: true })],
+    }),
+  )
+  const q = validateSite(wrapped, reg)
+  assert.deepEqual(
+    q.map(x => [x.nodeId, x.path]),
+    [['t', undefined]],
+  )
+  assert.match(q[0].message, /"wrap"/)
+  // a part hidden by an ancestor part: the part's own path, no field
+  assert.deepEqual(shapes(levels(2, { overrides: { b2: hidePhone } })), [
+    ['u0', 'parts.n2.title'],
+  ])
+  // a part hidden by the outer root
+  assert.deepEqual(shapes(levels(2, { overrides: { r2: baseHidden } })), [
+    ['u0', 'parts.n2.title'],
+  ])
+  // a part hidden on itself keeps the field
+  assert.deepEqual(
+    shapes(levels(2, { overrides: { 'n2.title': hidePhone } })),
+    [['u0', 'parts.n2.title.hide.phone']],
+  )
+})
+
+test('minor 2: when paths keep .decl, as the document writes them', () => {
+  const d = put(
+    n({
+      ...text0('t'),
+      required: true,
+      style: {
+        when: [{ state: 'tab', is: 'b', decl: { hidden: true, size: 8 } }],
+      },
+    }),
+  )
+  d.pages[0].root.state = [{ name: 'tab', values: ['a', 'b'], initial: 'a' }]
+  assert.deepEqual(
+    validateSite(withRange(d), reg).map(x => [x.rule, x.nodeId, x.path]),
+    [
+      ['required', 't', 'style.when.0.decl.hidden'],
+      ['textRange', 't', 'style.when.0.decl.size'],
+    ],
+  )
+})
+
+test('minor 3: a part hidden in the master is reported once per use, and each message points at the master', () => {
+  const d = levels(1)
+  titleOf(d).hide = { phone: true }
+  d.pages[0].root.children!.push(ninst('u1', lv(1)))
+  const p = validateSite(d, reg)
+  assert.deepEqual(
+    p.map(x => [x.nodeId, x.path]),
+    [
+      ['u0', 'parts.title.hide.phone'],
+      ['u1', 'parts.title.hide.phone'],
+    ],
+  )
+  for (const x of p) {
+    assert.match(x.message, /components\.lv1/)
+    assert.match(x.message, /"title"/)
+  }
+  // hidden by the use, not the master: no pointer
+  const o = validateSite(levels(1, { overrides: { title: hidePhone } }), reg)
+  assert.equal(o.length, 1)
+  assert.doesNotMatch(o[0].message, /components\./)
+})
+
+test('minor 4: an invisible character alone is not content; text in any script is', () => {
+  const one = (s: string) =>
+    validateSite(
+      put(
+        n({
+          ...text0('t'),
+          required: true,
+          props: { level: 'p', runs: [{ text: s }] },
+        }),
+      ),
+      reg,
+    ).map(x => [x.rule, x.nodeId, x.path])
+  for (const s of ['​', '⁠', '­', '​⁠ ­', '﻿'])
+    assert.deepEqual(
+      one(s),
+      [['required', 't', 'props.runs']],
+      JSON.stringify(s),
+    )
+  for (const s of ['Hello', 'مرحبا', '你好', 'Привет', 'नमस्ते', '​x'])
+    assert.deepEqual(one(s), [], s)
 })

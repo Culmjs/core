@@ -12,7 +12,7 @@ import type {
   SiteDocument,
 } from '../document/index.ts'
 import { isObj } from '../document/rules.ts'
-import { resolvePart } from '../document/tree.ts'
+import { find, resolvePart } from '../document/tree.ts'
 import type { Registry } from '../registry/index.ts'
 import { stylesOf } from '../style/siteStyles.ts'
 import { unrollInstances } from './unroll.ts'
@@ -28,10 +28,13 @@ const policy = (
   ...p,
 })
 
-/** A run counts as content when it has a binding or some text that is not only whitespace. */
+/** A character a reader sees: not whitespace, not a separator, not a format or control character (a zero-width space, a soft hyphen). */
+const VISIBLE = /[^\s\p{Cf}\p{Cc}\p{Z}]/u
+
+/** A run counts as content when it has a binding or a character a reader sees. */
 const runHas = (r: unknown) =>
   isObj(r) &&
-  ((typeof r.text === 'string' && r.text.trim() !== '') || isObj(r.bind))
+  ((typeof r.text === 'string' && VISIBLE.test(r.text)) || isObj(r.bind))
 
 /** A text has content when a run has text or a binding. */
 const hasContent = (n: Node) => {
@@ -46,7 +49,7 @@ function hiddenPath(n: Node): string | undefined {
   if (r.how === 'hide') return `hide.${r.where}`
   if (r.where !== 'when') return `style.${r.where}.hidden`
   const i = (n.style?.when ?? []).findIndex(w => w?.decl?.hidden === true)
-  return `style.when.${i}.hidden`
+  return `style.when.${i}.decl.hidden`
 }
 
 /**
@@ -57,7 +60,8 @@ function hiddenPath(n: Node): string | undefined {
  *
  * A node the document holds under its own id (a page node, or the root of an unrolled instance, which keeps the instance's
  * id) is reported at that id. A part of an instance (`<instance>.<part>`, at any depth) is reported at the outermost
- * instance, with the path `parts.<the rest of the id>.<where on the part>`.
+ * instance, with the path `parts.<the rest of the id>`. A `path` is always on the node named: it ends in the field only when
+ * the value sits on the node itself; for a hiding on an ancestor the message names the ancestor.
  */
 export function checkShown(doc: SiteDocument, registry: Registry): Problem[] {
   const required: Problem[] = []
@@ -129,15 +133,40 @@ export function checkShown(doc: SiteDocument, registry: Registry): Problem[] {
       const src = comp && resolvePart(byId, comp, rest.join('.'))
       return src?.kind === 'instance' && src.required === true
     }
-    /** `nodeId` and `path` for a value at `rel` on `at`, reported for the required node `n`. */
-    const place = (n: Node, at: Node, rel: string) => {
-      const top = n.id.split('.')[0]
+    /** `nodeId` and `path` for the node `n`, and the field `rel` on it when the value sits there. */
+    const place = (n: Node, rel?: string) => {
+      const i = n.id.indexOf('.')
+      const path =
+        i < 0 ? rel : `parts.${n.id.slice(i + 1)}${rel ? `.${rel}` : ''}`
       return {
-        nodeId: top,
-        path: at.id.startsWith(`${top}.`)
-          ? `parts.${at.id.slice(top.length + 1)}.${rel}`
-          : rel,
+        nodeId: i < 0 ? n.id : n.id.slice(0, i),
+        ...(path === undefined ? {} : { path }),
       }
+    }
+    /** The component master that writes the hiding `rel` the unrolled node `h` shows, when the master part itself carries it. */
+    const writtenIn = (h: Node, rel: string) => {
+      const [top, ...rest] = h.id.split('.')
+      const inst = own.get(top)
+      // an instance's own `hide` is the use's, never the master's (the unroll keeps only the use's)
+      if (!rest.length && rel.startsWith('hide.')) return undefined
+      let c =
+        inst?.kind === 'instance'
+          ? byId.get(inst.component as string)
+          : undefined
+      let x = c?.root
+      for (const seg of rest) {
+        if (x?.kind === 'instance') {
+          c = byId.get(x.component as string)
+          x = c?.root
+        }
+        x = c && x && find(c.root, seg)
+      }
+      // the root of a nested use is the inner master's root, but its own `hide` is written on the use
+      if (x?.kind === 'instance' && !rel.startsWith('hide.')) {
+        c = byId.get(x.component as string)
+        x = c?.root
+      }
+      return c && x && hiddenPath(x) === rel ? { c, x } : undefined
     }
     const what = (n: Node) => {
       const i = n.id.indexOf('.')
@@ -153,7 +182,7 @@ export function checkShown(doc: SiteDocument, registry: Registry): Problem[] {
             policy(
               'textRange',
               `A text size of ${s.size} is outside the site's range of ${range!.min} to ${range!.max}${n.id.includes('.') ? ` (the part "${n.id}")` : ''}.`,
-              { ...place(n, n, s.path), allowed },
+              { ...place(n, s.path), allowed },
             ),
           )
       let form: Node | undefined
@@ -161,22 +190,29 @@ export function checkShown(doc: SiteDocument, registry: Registry): Problem[] {
         if (up[i].kind === 'form') form = up[i]
       if (!isRequired(n, form) && !marked(n.id)) return
       const by = [n, ...[...up].reverse()].find(a => hiddenPath(a))
-      if (by)
+      if (by) {
+        const rel = hiddenPath(by)!
+        const m = writtenIn(by, rel)
         add(
           required,
           policy(
             'required',
-            `${what(n)} must stay on the page, but it is hidden${by === n ? '' : ` by "${by.id}"`}.`,
-            place(n, by, hiddenPath(by)!),
+            `${what(n)} must stay on the page, but it is hidden${by === n ? '' : ` by "${by.id}"`}.${
+              m
+                ? ` The hiding is written in the component itself (components.${m.c.id}, the part "${m.x.id}", ${rel}), so changing it there fixes every use.`
+                : ''
+            }`,
+            place(n, by === n ? rel : undefined),
           ),
         )
+      }
       if (n.kind === 'text' && !hasContent(n))
         add(
           required,
           policy(
             'required',
             `${what(n)} must keep some text or a data field.`,
-            place(n, n, 'props.runs'),
+            place(n, 'props.runs'),
           ),
         )
     })

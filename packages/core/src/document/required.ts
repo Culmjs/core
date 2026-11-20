@@ -137,7 +137,10 @@ export function* nodeSizes(n: Node): Iterable<{ size: number; path: string }> {
     ...STATES.map(k => [`style.${k}`, style[k]] as [string, unknown]),
     ...arr(style.when).map(
       (w, i) =>
-        [`style.when.${i}`, isObj(w) ? w.decl : undefined] as [string, unknown],
+        [`style.when.${i}.decl`, isObj(w) ? w.decl : undefined] as [
+          string,
+          unknown,
+        ],
     ),
     ...arr(isObj(n.props) ? n.props.runs : undefined).map(
       (r, i) =>

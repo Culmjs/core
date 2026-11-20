@@ -522,16 +522,10 @@ const at = (p: { rule?: string; nodeId?: string; path?: string }[]) =>
 
 test('N1 refused through plan: an outer override hides the box around the nested use, or the outer root', () => {
   for (const [overrides, path] of [
-    [{ obox: { hide: { phone: true } } }, 'parts.obox.hide.phone'],
-    [
-      { obox: { style: { base: { hidden: true } } } },
-      'parts.obox.style.base.hidden',
-    ],
-    [
-      { obox: { style: { dark: { hidden: true } } } },
-      'parts.obox.style.dark.hidden',
-    ],
-    [{ oroot: { style: { base: { hidden: true } } } }, 'style.base.hidden'],
+    [{ obox: { hide: { phone: true } } }, 'parts.k.title'],
+    [{ obox: { style: { base: { hidden: true } } } }, 'parts.k.title'],
+    [{ obox: { style: { dark: { hidden: true } } } }, 'parts.k.title'],
+    [{ oroot: { style: { base: { hidden: true } } } }, 'parts.k.title'],
   ] as const) {
     assert.deepEqual(validateSite(boxed(), reg), [])
     const r = plan(boxed(), reg, req([overAt('u0', overrides)]))
@@ -549,9 +543,9 @@ test('N1 refused through plan: an outer override hides the box around the nested
 
 test('N1 refused through plan: three levels, the middle nested use or a box inside it', () => {
   for (const [key, path] of [
-    ['o', 'parts.o.hide.phone'],
-    ['o.obox', 'parts.o.obox.hide.phone'],
-    ['o.k', 'parts.o.k.hide.phone'],
+    ['o', 'parts.o.k.title'],
+    ['o.obox', 'parts.o.k.title'],
+    ['o.k', 'parts.o.k.title'],
   ]) {
     const r = plan(
       boxed(3),
@@ -567,7 +561,7 @@ test('N2 refused through plan: the outer toggle on the box around the nested use
   const off = { op: 'setInstance', tree: T, id: 'u0', set: { oshow: false } }
   const r = plan(boxed(), reg, req([off]))
   assert.ok(!r.ok)
-  assert.deepEqual(at(r.problems), [['u0', 'parts.obox.style.base.hidden']])
+  assert.deepEqual(at(r.problems), [['u0', 'parts.k.title']])
   assert.ok(plan(boxed(), reg, req([{ ...off, set: { oshow: true } }])).ok)
 })
 
