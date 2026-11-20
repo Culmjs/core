@@ -6,7 +6,7 @@ import { plan } from '../../src/ops/plan.ts'
 import type { ChangeRequest } from '../../src/ops/types.ts'
 import { defaultSiteStyles } from '../../src/style/index.ts'
 import { validateSite } from '../../src/validate/index.ts'
-import { kitRegistry, node, text, twoPages } from '../kit.ts'
+import { kitRegistry, node, siteWith, text, twoPages } from '../kit.ts'
 
 // Goal 5 through `plan`: what a person cannot do to required content, however it is tried.
 
@@ -321,4 +321,177 @@ test('accepted: a show condition on data, and turning the page off', () => {
     req([{ op: 'setPage', page: 'about', on: false }]),
   )
   assert.ok(off.ok, JSON.stringify(!off.ok && off.problems))
+})
+
+// ---- second fix round: nested components, instances and slots, looks in use ----
+
+/** `count` uses of an outer component `outer` that holds a nested `card` (its title is required); the root of both is a column. */
+const nestedSite = (count: number, levels = 2): SiteDocument => {
+  const d = siteWith([])
+  const innerUse = inst('k')
+  d.components = [
+    card() as never,
+    {
+      id: 'outer',
+      name: 'Outer',
+      root: node('oroot', 'column', [innerUse]),
+      props: [],
+      variants: [],
+    },
+  ]
+  let top = 'outer'
+  if (levels === 3) {
+    d.components.push({
+      id: 'outmost',
+      name: 'Outmost',
+      root: node('mroot', 'column', [inst('o', { component: 'outer' })]),
+      props: [],
+      variants: [],
+    })
+    top = 'outmost'
+  }
+  d.pages[0].root.children = Array.from({ length: count }, (_, i) =>
+    inst(`u${i}`, { component: top }),
+  )
+  return d
+}
+const overAt = (id: string, overrides: object) => ({
+  op: 'setInstance',
+  tree: T,
+  id,
+  overrides,
+})
+const must = (doc: SiteDocument, ops: unknown[], rule: string) => {
+  const r = plan(doc, reg, req(ops))
+  assert.ok(!r.ok, 'expected a refusal')
+  assert.ok(
+    r.problems.some(p => p.rule === rule),
+    JSON.stringify(r.problems),
+  )
+}
+const ranged = (d: SiteDocument): SiteDocument => ({
+  ...d,
+  styles: { ...defaultSiteStyles(d.look), textRange: { min: 11, max: 96 } },
+})
+
+for (const count of [9, 20])
+  for (const [name, overrides, rule] of [
+    [
+      'empty its text',
+      { 'k.title': { props: { runs: [{ text: '' }] } } },
+      'required',
+    ],
+    ['size 8', { 'k.title': { style: { base: { size: 8 } } } }, 'textRange'],
+    ['hide', { 'k.title': { hide: { phone: true } } }, 'required'],
+    [
+      'hidden in a style layer',
+      { 'k.title': { style: { phone: { hidden: true } } } },
+      'required',
+    ],
+    [
+      'hide the nested use itself',
+      { k: { hide: { desktop: true } } },
+      'required',
+    ],
+  ] as const)
+    test(`refused through plan (${rule}): an override of the nested part on the last of ${count} uses: ${name}`, () => {
+      assert.deepEqual(validateSite(ranged(nestedSite(count)), reg), [])
+      must(
+        ranged(nestedSite(count)),
+        [overAt(`u${count - 1}`, overrides)],
+        rule,
+      )
+    })
+
+test('refused through plan: the same override given by the outermost of three levels, past the ninth use', () => {
+  const d = ranged(nestedSite(12, 3))
+  assert.deepEqual(validateSite(d, reg), [])
+  must(d, [overAt('u11', { 'o.k.title': { props: { runs: [] } } })], 'required')
+  must(
+    d,
+    [overAt('u11', { 'o.k.title': { style: { base: { size: 8 } } } })],
+    'textRange',
+  )
+})
+
+test('accepted: 200 uses of a nested component with no overrides, and a harmless override on one of them', () => {
+  const d = ranged(nestedSite(200))
+  assert.deepEqual(validateSite(d, reg), [])
+  const r = plan(
+    d,
+    reg,
+    req([overAt('u150', { 'k.title': { style: { base: { size: 20 } } } })]),
+  )
+  assert.ok(r.ok, JSON.stringify(!r.ok && r.problems))
+})
+
+test('refused through plan: a required instance hidden through its component root', () => {
+  const d = start()
+  d.pages[0].root.children![1] = inst('i1', { required: true })
+  assert.deepEqual(validateSite(d, reg), [])
+  must(
+    d,
+    [overAt('i1', { croot: { style: { base: { hidden: true } } } })],
+    'required',
+  )
+  must(d, [overAt('i1', { croot: { hide: { phone: true } } })], 'required')
+  d.components[0].props.push(
+    prop('rootshow', 'toggle', 'hidden', {
+      part: 'croot',
+      default: true,
+    }) as never,
+  )
+  assert.deepEqual(validateSite(d, reg), [])
+  must(d, [set({ rootshow: false })], 'required')
+  // the visible twin
+  assert.ok(plan(d, reg, req([set({ rootshow: true })])).ok)
+})
+
+test('refused through plan: required content in a slot whose host the use hides; accepted when it does not', () => {
+  const d = start()
+  d.components[0].root.children!.push(node('host', 'box'))
+  d.components[0].props.push(
+    { key: 'content', label: 'Content', type: 'slot', part: 'host' } as never,
+    prop('hostshow', 'toggle', 'hidden', {
+      part: 'host',
+      default: true,
+    }) as never,
+  )
+  d.pages[0].root.children![1] = inst('i1', {
+    children: [text('slotted', 'In the slot', { required: true })],
+  })
+  assert.deepEqual(validateSite(d, reg), [])
+  must(d, [over({ host: { hide: { phone: true } } })], 'required')
+  must(d, [set({ hostshow: false })], 'required')
+  must(d, [over({ croot: { style: { base: { hidden: true } } } })], 'required')
+  assert.ok(plan(d, reg, req([set({ hostshow: true })])).ok)
+  assert.ok(
+    plan(d, reg, req([over({ host: { style: { base: { color: 'brand' } } } })]))
+      .ok,
+  )
+})
+
+test('a look hides a required part only for a use that selects it, and a part its use shows is visible', () => {
+  const d = start()
+  d.components[0].variants = [
+    { when: { look: 'b' }, patch: { title: { hide: { phone: true } } } },
+  ]
+  // nobody selects b
+  assert.deepEqual(validateSite(d, reg), [])
+  assert.ok(plan(d, reg, req([set({ look: 'a' })])).ok)
+  // one use selects it, through plan
+  must(d, [set({ look: 'b' })], 'required')
+  // a master hidden for good is shown by a use whose toggle turns it on
+  const m = start()
+  m.components[0].root.children![0] = {
+    ...m.components[0].root.children![0],
+    style: { base: { hidden: true } },
+  }
+  m.components[0].props = m.components[0].props.filter(p => p.key !== 'show')
+  m.components[0].props.push(
+    prop('show', 'toggle', 'hidden', { default: false }) as never,
+  )
+  assert.ok(validateSite(m, reg).some(p => p.rule === 'required'))
+  m.pages[0].root.children![1] = inst('i1', { set: { show: true } })
+  assert.deepEqual(validateSite(m, reg), [])
 })
