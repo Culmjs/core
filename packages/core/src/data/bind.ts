@@ -7,13 +7,11 @@ import {
   type Node,
   type Ref,
   type Run,
-  type SiteDocument,
   type SiteStyles,
 } from '../document/index.ts'
 import { UNSAFE_FIELDS, isObj } from '../document/rules.ts'
 import { retarget } from '../document/tree.ts'
-import type { Registry, Row } from '../registry/index.ts'
-import { stylesOf } from '../style/siteStyles.ts'
+import type { Row } from '../registry/index.ts'
 import {
   DEPTH_GUARD,
   unrollInstances,
@@ -194,21 +192,4 @@ export function expand(
     depth = Math.max(depth, d + 1)
   })
   return { tree, count, depth, over: seen.over }
-}
-
-/**
- * Internal (used by the `detach` operation, not exported from the layer): the one `instance` of the document unrolled with the
- * environment `expand` builds (the registry's plug-in kinds, the document's fonts and styles). Nested instances unroll too.
- * An instance of a missing component, or of a cycle, comes back unchanged.
- */
-export function unrollOne(
-  doc: SiteDocument,
-  registry: Registry,
-  instance: Node,
-): Node {
-  return unrollInstances(instance, doc.components, {
-    fonts: doc.fonts,
-    styles: stylesOf(doc),
-    kinds: registry.kinds(),
-  })
 }

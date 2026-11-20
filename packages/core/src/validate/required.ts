@@ -14,10 +14,9 @@ import type {
 import { isObj } from '../document/rules.ts'
 import { find, resolvePart } from '../document/tree.ts'
 import type { Registry } from '../registry/index.ts'
-import { stylesOf } from '../style/siteStyles.ts'
 import { dropSamples } from '../document/samples.ts'
 import { mathOk } from './tree.ts'
-import { unrollInstances } from './unroll.ts'
+import { unrollEnv, unrollInstances } from './unroll.ts'
 
 const policy = (
   rule: string,
@@ -113,11 +112,7 @@ const place = (l: Loc, rel?: string) => {
  * with the enclosing form, or the instance's own `required: true` (an unrolled root keeps the instance's id but not its mark).
  */
 function* views(doc: SiteDocument, registry: Registry) {
-  const env = {
-    fonts: doc.fonts,
-    styles: stylesOf(doc),
-    kinds: registry.kinds(),
-  }
+  const env = unrollEnv(doc, registry.kinds())
   const byId = new Map<string, Component>(doc.components.map(c => [c.id, c]))
   const roots: [string, Node][] = [
     ...doc.pages.map(p => [`pages.${p.id}`, p.root] as [string, Node]),

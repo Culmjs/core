@@ -9,6 +9,7 @@ import {
   type PropValue,
   type Ref,
   type Run,
+  type SiteDocument,
   type SiteStyles,
 } from '../document/index.ts'
 import { DEPTH_GUARD, MAX_ROWS } from '../document/kinds.ts'
@@ -22,7 +23,14 @@ import {
 } from '../document/components.ts'
 import { blockIds, resolvePart } from '../document/tree.ts'
 import { touched } from '../document/samples.ts'
+import { stylesOf } from '../style/siteStyles.ts'
 import { overrideProblem } from './components.ts'
+
+/** The environment of an unroll for a document: its fonts and styles, and the registry's plug-in kinds (no data). One place builds it for validation and `detach`. */
+export const unrollEnv = (
+  doc: Pick<SiteDocument, 'fonts' | 'styles' | 'look'>,
+  kinds: ReadonlyMap<string, KindSpec>,
+): Env => ({ fonts: doc.fonts, styles: stylesOf(doc), kinds })
 
 type Env = {
   fonts: FontRef[]

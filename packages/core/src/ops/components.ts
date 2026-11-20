@@ -3,8 +3,7 @@ import { isObj } from '../document/rules.ts'
 import { replace, retarget, targetOf, walk } from '../document/tree.ts'
 import { MAX_NODES } from '../document/index.ts'
 import type { Component, Node, SiteDocument } from '../document/index.ts'
-import { stylesOf } from '../style/siteStyles.ts'
-import { unrollInstances } from '../validate/unroll.ts'
+import { unrollEnv, unrollInstances } from '../validate/unroll.ts'
 import { MAX_COMPONENTS, validateSite } from '../validate/validate.ts'
 import { nextIds } from './ids.ts'
 import { MARKS, at, bad, checkSafe, isRefusal, merge, ref } from './nodes.ts'
@@ -258,7 +257,7 @@ export const detach: OpFn<'detach'> = (doc, registry, op) => {
   const unrolled = unrollInstances(
     bare as Node,
     doc.components,
-    { fonts: doc.fonts, styles: stylesOf(doc), kinds: registry.kinds() },
+    unrollEnv(doc, registry.kinds()),
     budget,
   )
   if (budget.over)
