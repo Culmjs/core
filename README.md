@@ -146,11 +146,14 @@ const done = await apply(store, registry, {
 // { ok: true, revision: 1, created: [...], changed: [...], pages: ['home', 'p1'], notes: [] }
 // `created` and `changed` are the ids `diffSites` reports for this change; a removed node is in neither
 
-const head = await store.head('main') // { revision: 1, doc }
-siteOutline(head).rows // one row per page and component
+const head = await store.head('main') // { revision: 1, doc }, or { problems } if the site cannot be read
+if ('doc' in head) {
+  const outline = siteOutline(head) // a page of the outline, or a refusal
+  if (outline.ok) outline.rows // one row per page and component
+}
 ```
 
-A batch against an old revision is refused with `REVISION_CONFLICT`. A batch with a bad operation is refused whole, and the problem carries the index of the operation: `{ code: 'INVALID_OPERATION', message: 'No page "nope".', path: 'page', nodeId: 'nope', op: 1 }`. `restore(store, registry, { site: 'main', to: 0, baseRevision: 1, key: 'undo' })` makes revision 2 equal to revision 0, and `diffSites(a, b)` lists the ids that differ between two documents.
+A batch against an old revision is refused with `REVISION_CONFLICT`. A batch with a bad operation is refused whole, and the problem carries the index of the operation: `{ code: 'INVALID_OPERATION', message: 'No page "nope".', path: 'page', op: 1 }`. `restore(store, registry, { site: 'main', to: 0, baseRevision: 1, key: 'undo' })` makes revision 2 equal to revision 0, and `diffSites(a, b)` lists the ids that differ between two documents.
 
 ## How it works
 
