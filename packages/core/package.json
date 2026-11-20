@@ -48,6 +48,11 @@
       "source": "./src/compile/index.ts",
       "types": "./dist/compile/index.d.ts",
       "default": "./dist/compile/index.js"
+    },
+    "./ops": {
+      "source": "./src/ops/index.ts",
+      "types": "./dist/ops/index.d.ts",
+      "default": "./dist/ops/index.js"
     }
   },
   "files": [

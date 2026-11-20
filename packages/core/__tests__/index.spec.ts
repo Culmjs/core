@@ -17,10 +17,13 @@ const PUBLIC_NAMES = [
   'MAX_NODES',
   'MigrationError',
   'OPEN_SCRIPT',
+  'READ_CAP',
   'SCHEMA_VERSION',
   'STATES_SCRIPT',
+  'apply',
   'applySetting',
   'buildIdentity',
+  'catalogue',
   'checkBudgets',
   'checkDeclaration',
   'checkLook',
@@ -32,6 +35,7 @@ const PUBLIC_NAMES = [
   'count',
   'createRegistry',
   'defaultSiteStyles',
+  'diffSites',
   'emptySite',
   'escapeHtml',
   'expand',
@@ -40,14 +44,21 @@ const PUBLIC_NAMES = [
   'insert',
   'insertBlock',
   'kindSpec',
+  'memoryStore',
   'migrate',
   'move',
+  'pageOutline',
   'parentOf',
+  'plan',
   'previewMigration',
+  'readNode',
   'readSettings',
   'remove',
   'replace',
+  'restore',
   'rowsOf',
+  'search',
+  'siteOutline',
   'validateSite',
   'walk',
   'writeHtml',
@@ -71,6 +82,19 @@ test('internal helpers are not reachable from the entry', () => {
     'compileStyles',
     'urlOk',
     'isObj',
+    'add',
+    'setText',
+    'nextIds',
+    'paged',
+    'canonicalJson',
+    'sha256',
+    'hiddenBy',
+    'OPERATIONS',
+    'OP_NAMES',
+    'diffAll',
+    'why',
+    'lostRequired',
+    'MAX_OPS',
   ])
     assert.equal(n in core, false, n)
 })
@@ -92,4 +116,9 @@ test('the entry compiles a site made only from what it exports', () => {
   const r = core.compilePage(doc, 'home', { registry: core.createRegistry() })
   assert.ok(r.ok)
   assert.deepEqual(r.problems, [])
+})
+
+test('the stage 1 names remove, move, insert and insertBlock are still the stage 1 functions', () => {
+  assert.equal(core.insertBlock.length, 4)
+  assert.equal(core.remove.length, 2)
 })
