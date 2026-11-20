@@ -3,8 +3,11 @@ import { test } from 'node:test'
 import { migrate, type Node } from '../../src/document/index.ts'
 import { unrollInstances } from '../../src/data/bind.ts'
 import { validateSite } from '../../src/validate/index.ts'
+import { shownPart } from '../../src/validate/required.ts'
 import { defaultSiteStyles } from '../../src/style/index.ts'
 import { dv, fs, n, put, reg, text as t0 } from './helpers.ts'
+
+const text0 = (id: string) => t0(id, { slot: fs() })
 
 const text = (id: string, extra: object = {}) =>
   t0(id, { slot: fs(), ...extra })
@@ -263,7 +266,7 @@ test('a variant patch can supply the text', () => {
   assert.equal(refused(d).length, 1)
 })
 
-test('shownRuns agrees with unrollInstances on whether the unrolled part has text', () => {
+test('shownPart agrees with unrollInstances on whether the unrolled part has text', () => {
   const cases: [object, object, Node][] = [
     [{}, {}, empty],
     [{ set: { title: '' } }, {}, hi],
@@ -295,4 +298,502 @@ test('shownRuns agrees with unrollInstances on whether the unrolled part has tex
       JSON.stringify([inst, prop]),
     )
   }
+})
+
+// ---- the part as the page shows it (final fix wave, group A) ----
+
+/** A component `c1` with a required, two-run title, used once as `i1`. `props` and `variants` are the component's; `inst` is the use. */
+const shownDoc = (
+  props: object[],
+  variants: object[],
+  inst: object = {},
+  titleExtra: object = {},
+) => ({
+  ...put(
+    n({
+      id: 'i1',
+      kind: 'instance',
+      name: 'i1',
+      slot: fs(),
+      component: 'c1',
+      ...inst,
+    }),
+  ),
+  components: [
+    {
+      id: 'c1',
+      name: 'c1',
+      root: n({
+        id: 'root',
+        kind: 'box',
+        name: 'root',
+        slot: {},
+        children: [
+          n({
+            id: 'title',
+            kind: 'text',
+            name: 'title',
+            slot: {},
+            required: true,
+            props: {
+              level: 'p',
+              runs: [{ text: 'Hello' }, { text: 'World' }],
+            },
+            ...titleExtra,
+          }),
+        ],
+      }),
+      props,
+      variants,
+    },
+  ],
+})
+const toggle = (extra: object = {}) => ({
+  key: 'show',
+  label: 'Show',
+  type: 'toggle',
+  part: 'title',
+  field: 'hidden',
+  ...extra,
+})
+const size = (extra: object = {}) => ({
+  key: 'sz',
+  label: 'Size',
+  type: 'number',
+  part: 'title',
+  field: 'fontSize',
+  ...extra,
+})
+const look = {
+  key: 'look',
+  label: 'Look',
+  type: 'choice',
+  options: ['a', 'b'],
+}
+const ranged = (d: ReturnType<typeof shownDoc>) => withRange(d as never)
+const probs = (d: object) =>
+  validateSite(d, reg).map(x => [x.rule, x.nodeId, x.path])
+
+test('hiding through a toggle property: a default of false and a set value of false are refused', () => {
+  assert.deepEqual(probs(shownDoc([toggle({ default: false })], [])), [
+    ['required', undefined, 'components.c1.props.0.default'],
+  ])
+  assert.deepEqual(
+    probs(shownDoc([toggle({ default: true })], [], { set: { show: false } })),
+    [['required', 'i1', 'set.show']],
+  )
+  assert.deepEqual(
+    probs(shownDoc([toggle({ default: false })], [], { set: { show: true } })),
+    [],
+  )
+  assert.deepEqual(probs(shownDoc([toggle({ default: true })], [])), [])
+})
+
+test('a toggle bound to data is a condition and out of reach', () => {
+  const bound = shownDoc([toggle({ default: true })], [], {
+    bind: { show: { from: 'site', field: 'title' } },
+  })
+  assert.deepEqual(probs(bound), [])
+})
+
+test('a required part hidden by a variant patch or an override style is refused whichever way it is written', () => {
+  const variant = shownDoc(
+    [look],
+    [
+      {
+        when: { look: 'b' },
+        patch: { title: { style: { base: { hidden: true } } } },
+      },
+    ],
+    { set: { look: 'b' } },
+  )
+  assert.equal(probs(variant).length, 1)
+  assert.equal(probs(variant)[0][0], 'required')
+  const over = shownDoc([], [], {
+    overrides: { title: { style: { phone: { hidden: true } } } },
+  })
+  assert.equal(probs(over)[0]?.[0], 'required')
+})
+
+test('sizes written through an instance or a component are held to the text range', () => {
+  const at = (d: object) => probs(ranged(d as never))
+  assert.deepEqual(
+    at(
+      shownDoc([], [], {
+        overrides: { title: { style: { base: { size: 8 } } } },
+      }),
+    ),
+    [['textRange', 'i1', 'overrides.title.style.base.size']],
+  )
+  assert.deepEqual(
+    at(
+      shownDoc([], [], {
+        overrides: {
+          title: { props: { runs: [{ text: 'x', style: { size: 8 } }] } },
+        },
+      }),
+    ),
+    [['textRange', 'i1', 'overrides.title.props.runs.0.style.size']],
+  )
+  assert.deepEqual(
+    at(
+      shownDoc([], [], {
+        overrides: {
+          title: {
+            style: {
+              when: [{ state: 'tab', is: 'papers', decl: { size: 8 } }],
+            },
+          },
+        },
+      }),
+    ),
+    [['textRange', 'i1', 'overrides.title.style.when.0.decl.size']],
+  )
+  assert.deepEqual(
+    at(
+      shownDoc([], [], {
+        overrides: {
+          title: { style: { base: { fluidSize: { min: 8, max: 20 } } } },
+        },
+      }),
+    ),
+    [['textRange', 'i1', 'overrides.title.style.base.fluidSize.min']],
+  )
+  assert.deepEqual(
+    at(
+      shownDoc(
+        [look],
+        [
+          {
+            when: { look: 'b' },
+            patch: { title: { style: { phone: { size: 8 } } } },
+          },
+        ],
+        { set: { look: 'b' } },
+      ),
+    ),
+    [
+      [
+        'textRange',
+        undefined,
+        'components.c1.variants.0.patch.title.style.phone.size',
+      ],
+    ],
+  )
+  assert.deepEqual(at(shownDoc([size()], [], { set: { sz: 8 } })), [
+    ['textRange', 'i1', 'set.sz'],
+  ])
+  assert.deepEqual(at(shownDoc([size({ default: 8 })], [])), [
+    ['textRange', undefined, 'components.c1.props.0.default'],
+  ])
+  assert.deepEqual(at(shownDoc([size()], [], { set: { sz: 20 } })), [])
+})
+
+test('the text range reaches a component part that is not required', () => {
+  const d = shownDoc([], [], {
+    overrides: { title: { style: { base: { size: 8 } } } },
+  })
+  delete d.components[0].root.children![0].required
+  assert.equal(probs(ranged(d))[0]?.[0], 'textRange')
+})
+
+test('a whitespace-only run is not content', () => {
+  const ws = (text: string) =>
+    put(
+      n({
+        ...text0('t'),
+        required: true,
+        props: { level: 'p', runs: [{ text }] },
+      }),
+    )
+  assert.deepEqual(probs(ws('   ')), [['required', 't', 'props.runs']])
+  assert.deepEqual(probs(ws(' \n\t')), [['required', 't', 'props.runs']])
+  assert.deepEqual(probs(ws(' a ')), [])
+  const c = shownDoc(
+    [{ key: 'title', label: 'T', type: 'text', part: 'title', field: 'text' }],
+    [],
+    { set: { title: '  ' } },
+  )
+  assert.deepEqual(probs(c), [['required', 'i1', 'set.title']])
+})
+
+test('shownPart agrees with unrollInstances on hide, style and runs, for every control field that can affect them', () => {
+  const textP = (extra: object = {}) => ({
+    key: 'title',
+    label: 'T',
+    type: 'text',
+    part: 'title',
+    field: 'text',
+    ...extra,
+  })
+  const hit = (look: string, patch: object) => [
+    { when: { look }, patch: { title: patch } },
+  ]
+  const cases: [string, object[], object[], object][] = [
+    ['text default', [textP({ default: 'D' })], [], {}],
+    ['text set', [textP()], [], { set: { title: 'S' } }],
+    [
+      'text set empty over default',
+      [textP({ default: 'D' })],
+      [],
+      { set: { title: '' } },
+    ],
+    [
+      'text variant',
+      [look],
+      hit('b', { props: { runs: [{ text: 'V' }] } }),
+      { set: { look: 'b' } },
+    ],
+    [
+      'text variant not matching',
+      [look],
+      hit('b', { props: { runs: [{ text: 'V' }] } }),
+      { set: { look: 'a' } },
+    ],
+    [
+      'text variant, set choice not an option',
+      [look],
+      hit('a', { props: { runs: [{ text: 'V' }] } }),
+      { set: { look: 'zzz' } },
+    ],
+    [
+      'text override',
+      [],
+      [],
+      { overrides: { title: { props: { runs: [{ text: 'O' }] } } } },
+    ],
+    [
+      'text set then override',
+      [textP()],
+      [],
+      {
+        set: { title: 'S' },
+        overrides: { title: { props: { runs: [{ text: 'O' }] } } },
+      },
+    ],
+    [
+      'text variant then set',
+      [look, textP()],
+      hit('b', { props: { runs: [{ text: 'V' }] } }),
+      { set: { look: 'b', title: 'S' } },
+    ],
+    [
+      'text bind',
+      [textP()],
+      [],
+      { bind: { title: { from: 'site', field: 'title' } } },
+    ],
+    ['run default', [textP({ run: 1, default: 'R' })], [], {}],
+    ['run set', [textP({ run: 1 })], [], { set: { title: 'R' } }],
+    ['run set empty', [textP({ run: 0 })], [], { set: { title: '' } }],
+    [
+      'run bind',
+      [textP({ run: 1 })],
+      [],
+      { bind: { title: { from: 'site', field: 'title' } } },
+    ],
+    ['run out of range', [textP({ run: 5 })], [], { set: { title: 'R' } }],
+    ['hidden default off', [toggle({ default: false })], [], {}],
+    ['hidden default on', [toggle({ default: true })], [], {}],
+    [
+      'hidden set off',
+      [toggle({ default: true })],
+      [],
+      { set: { show: false } },
+    ],
+    [
+      'hidden set on over default off',
+      [toggle({ default: false })],
+      [],
+      { set: { show: true } },
+    ],
+    [
+      'hidden bind',
+      [toggle({ default: true })],
+      [],
+      { bind: { show: { from: 'site', field: 'title' } } },
+    ],
+    [
+      'hidden variant hide',
+      [look],
+      hit('b', { hide: { phone: true } }),
+      { set: { look: 'b' } },
+    ],
+    [
+      'hidden variant style',
+      [look],
+      hit('b', { style: { base: { hidden: true } } }),
+      { set: { look: 'b' } },
+    ],
+    [
+      'hidden override hide',
+      [],
+      [],
+      { overrides: { title: { hide: { desktop: true } } } },
+    ],
+    [
+      'hidden override when',
+      [],
+      [],
+      {
+        overrides: {
+          title: {
+            style: {
+              when: [{ state: 'tab', is: 'papers', decl: { hidden: true } }],
+            },
+          },
+        },
+      },
+    ],
+    [
+      'hidden property then override un-hides',
+      [toggle({ default: false })],
+      [],
+      { overrides: { title: { style: { base: { hidden: false } } } } },
+    ],
+    ['size default', [size({ default: 8 })], [], {}],
+    ['size set', [size()], [], { set: { sz: 8 } }],
+    ['size set over default', [size({ default: 8 })], [], { set: { sz: 40 } }],
+    [
+      'size variant',
+      [look],
+      hit('b', { style: { phone: { size: 9 } } }),
+      { set: { look: 'b' } },
+    ],
+    [
+      'size override base',
+      [],
+      [],
+      { overrides: { title: { style: { base: { size: 8 } } } } },
+    ],
+    [
+      'size override layers merge',
+      [size({ default: 8 })],
+      [],
+      {
+        overrides: {
+          title: { style: { base: { color: 'brand' }, phone: { size: 9 } } },
+        },
+      },
+    ],
+    [
+      'size override run style',
+      [],
+      [],
+      {
+        overrides: {
+          title: { props: { runs: [{ text: 'x', style: { size: 8 } }] } },
+        },
+      },
+    ],
+    [
+      'size override when',
+      [],
+      [],
+      {
+        overrides: {
+          title: {
+            style: {
+              when: [{ state: 'tab', is: 'papers', decl: { size: 8 } }],
+            },
+          },
+        },
+      },
+    ],
+    [
+      'size variant when then override when',
+      [look],
+      hit('b', {
+        style: { when: [{ state: 'tab', is: 'papers', decl: { size: 9 } }] },
+      }),
+      {
+        set: { look: 'b' },
+        overrides: {
+          title: {
+            style: { when: [{ state: 'tab', is: 'other', decl: { size: 8 } }] },
+          },
+        },
+      },
+    ],
+    ['nothing', [], [], {}],
+  ]
+  const of = (v: unknown) => JSON.parse(JSON.stringify(v ?? null))
+  for (const [name, props, variants, inst] of cases) {
+    const d = shownDoc(props, variants, inst, { style: { base: { size: 20 } } })
+    const root = unrollInstances(d.pages[0].root, d.components as never, {
+      fonts: [],
+      styles: defaultSiteStyles(d.look),
+    })
+    let real: Node | undefined
+    const go = (w: Node) => {
+      if (w.id === 'i1.title') real = w
+      w.children?.forEach(go)
+    }
+    go(root)
+    assert.ok(real, name)
+    const comp = d.components[0] as never
+    const part = d.components[0].root.children![0]
+    const inst1 = d.pages[0].root.children![0]
+    const got = shownPart(part, comp, inst1)
+    for (const k of ['hide', 'style'] as const)
+      assert.deepEqual(of(got[k]), of(real[k]), `${name}: ${k}`)
+    assert.deepEqual(of(got.props?.runs), of(real.props?.runs), `${name}: runs`)
+  }
+})
+
+// A component inside a component: the instance of the outer one can reach the inner part as `<inner>.<part>`.
+const nested = (overrides: object, innerText = 'Hello') => {
+  const d = shownDoc(
+    [],
+    [],
+    {},
+    { props: { level: 'p', runs: [{ text: innerText }] } },
+  )
+  d.components.push({
+    id: 'c2',
+    name: 'c2',
+    root: n({
+      id: 'root2',
+      kind: 'box',
+      name: 'root2',
+      slot: {},
+      children: [
+        n({ id: 'k', kind: 'instance', name: 'k', slot: {}, component: 'c1' }),
+      ],
+    }),
+    props: [],
+    variants: [],
+  })
+  d.pages[0].root.children = [
+    n({
+      id: 'o',
+      kind: 'instance',
+      name: 'o',
+      slot: fs(),
+      component: 'c2',
+      overrides,
+    }),
+  ]
+  return d
+}
+
+test('an override an outer instance gives a nested part is judged: sizes, content and hiding', () => {
+  assert.deepEqual(
+    probs(
+      ranged(nested({ 'k.title': { style: { base: { size: 8 } } } }) as never),
+    ),
+    [['textRange', 'o', 'overrides.k.title.style.base.size']],
+  )
+  assert.deepEqual(
+    probs(nested({ 'k.title': { props: { runs: [{ text: '' }] } } })),
+    [['required', 'o', 'overrides.k.title.props.runs']],
+  )
+  assert.deepEqual(
+    probs(nested({ 'k.title': { props: { runs: [{ text: 'Filled' }] } } }, '')),
+    [],
+  )
+  assert.equal(
+    probs(nested({ 'k.title': { hide: { phone: true } } }))[0]?.[0],
+    'required',
+  )
 })

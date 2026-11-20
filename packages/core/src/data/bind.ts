@@ -6,7 +6,6 @@ import {
   type FontRef,
   type KindSpec,
   type Node,
-  type Override,
   type PropValue,
   type Ref,
   type Run,
@@ -19,6 +18,7 @@ import {
   BIND_KEY,
   CONTROL_FIELDS,
   changeFor,
+  applyOverride,
   runChange,
 } from '../document/components.ts'
 import { blockIds, resolvePart, retarget } from '../document/tree.ts'
@@ -65,29 +65,6 @@ function suffix(w: Node, n: number) {
   walk(w, x => retarget(x, renamed))
   walk(w, x => void (x.id = `${x.id}~${n}`))
   return w
-}
-
-function patch(w: Node, o: Override) {
-  if (o.props) w.props = { ...w.props, ...structuredClone(o.props) }
-  // Words the owner set on a use are the owner's, whatever the master's text was.
-  if (
-    o.props &&
-    ('runs' in o.props || 'label' in o.props || 'summary' in o.props) &&
-    w.props
-  )
-    w.props = touched(w.props)
-  if (o.hide) w.hide = { ...w.hide, ...o.hide }
-  if (o.style) {
-    const style = (w.style ??= {}) as Record<string, object>
-    for (const [layer, decl] of Object.entries(structuredClone(o.style)))
-      style[layer] =
-        layer === 'when'
-          ? ([
-              ...((style[layer] as unknown as unknown[]) ?? []),
-              ...(decl as unknown as unknown[]),
-            ] as never)
-          : { ...style[layer], ...decl }
-  }
 }
 
 /** Writes a prop's value to its part, unless the check an override passes refuses it for that kind of part. */
@@ -227,7 +204,8 @@ export function unrollInstances(
       if (Object.entries(v.when).every(([k, val]) => values[k] === val))
         for (const [id, o] of Object.entries(v.patch)) {
           const part = parts.get(id)
-          if (part && !overrideProblem(o, part.kind, env)) patch(part, o)
+          if (part && !overrideProblem(o, part.kind, env))
+            applyOverride(part, o)
         }
     for (const p of plain)
       if (Object.hasOwn(set, p.key)) apply(p, set[p.key] as PropValue, true)
@@ -272,7 +250,7 @@ export function unrollInstances(
       const master = resolvePart(byId, c, id)
       const target = all.get(id)
       if (master && target && !overrideProblem(o, master.kind, env))
-        patch(target, o)
+        applyOverride(target, o)
     }
     const out = blockIds(inst.id, nested)
     out.name = inst.name

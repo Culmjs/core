@@ -127,9 +127,13 @@ export const setBlockSetting: OpFn<'setBlockSetting'> = (doc, registry, op) => {
     if (was === undefined) created.push(w.id)
     else if (was !== flat(w)) changed.push(w.id)
   })
+  // A setting function is plug-in code and can return any subtree: nothing required may be lost to it.
+  const result = withRoot(doc, t.tree, replace(t.root, t.node.id, r.root))
+  const lost = lostRequired(doc, result)
+  if (lost) return requiredRefusal(lost)
   return {
     ok: true,
-    doc: withRoot(doc, t.tree, replace(t.root, t.node.id, r.root)),
+    doc: result,
     created: created.map(i => ref(t.tree, i)),
     changed: changed.map(i => ref(t.tree, i)),
   }

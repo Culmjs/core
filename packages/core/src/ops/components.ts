@@ -257,6 +257,8 @@ export const detach: OpFn<'detach'> = (doc, registry, op) => {
   if (copy.origin?.block === 'pattern' && copy.placement?.mode === undefined)
     copy.placement = { ...copy.placement, mode: 'behind' }
   delete copy.origin
+  // The use's own `required` mark is a person's and goes with the root (the unroll leaves it behind).
+  if (n.required !== undefined) copy.required = n.required
   const fresh = nextIds(doc, t.tree, rename.length)
   const map = new Map(rename.map((w, i) => [w.id, fresh[i]]))
   walk(copy, w => {

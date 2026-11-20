@@ -2,19 +2,31 @@ import {
   hiddenAt,
   hiddenIndex,
   isRequired,
+  nodeSizes,
+  outerChains,
+  reasonOf,
   textSizes,
   trees,
   walkWithAncestors,
   type HiddenWhy,
+  type Outer,
 } from '../document/required.ts'
 import type {
   Component,
   ComponentProp,
   Node,
+  Override,
   Problem,
+  Run,
   SiteDocument,
 } from '../document/index.ts'
 import { isObj } from '../document/rules.ts'
+import {
+  CONTROL_FIELDS,
+  applyOverride,
+  changeFor,
+  runChange,
+} from '../document/components.ts'
 
 const policy = (
   rule: string,
@@ -28,7 +40,7 @@ const policy = (
 })
 
 /** Where the hiding is written, relative to the node that carries it. A reason from an override or a variant names no single path. */
-const pathOf = (w: HiddenWhy) =>
+const pathOf = (w: Pick<HiddenWhy, 'how' | 'where'>) =>
   w.how === 'hide'
     ? `hide.${w.where}`
     : w.how === 'hidden'
@@ -37,8 +49,10 @@ const pathOf = (w: HiddenWhy) =>
         : `style.${w.where}.hidden`
       : undefined
 
+/** A run counts as content when it has a binding or some text that is not only whitespace. */
 const runHas = (r: unknown) =>
-  isObj(r) && ((typeof r.text === 'string' && r.text !== '') || isObj(r.bind))
+  isObj(r) &&
+  ((typeof r.text === 'string' && r.text.trim() !== '') || isObj(r.bind))
 
 /** A text has content when a run has text or a binding. */
 const hasContent = (n: Node) => {
@@ -46,31 +60,35 @@ const hasContent = (n: Node) => {
   return Array.isArray(runs) && runs.some(runHas)
 }
 
-/**
- * The runs the page shows for a part of `comp` in one `inst`. The order is the one `unrollInstances` (data/bind.ts) follows;
- * validate cannot import it, so keep the two in step (a test in required.spec.ts compares them):
- * master runs, property defaults, matching variants' patches, the instance's `set`, its `bind`, its `overrides`.
- */
-function shownRuns(part: Node, comp: Component, inst: Node): unknown[] {
-  let runs: unknown[] =
-    isObj(part.props) && Array.isArray(part.props.runs) ? part.props.runs : []
-  const props = (comp.props ?? []).filter(isObj)
-  const mine = props.filter(p => p.field === 'text' && p.part === part.id)
-  const set = isObj(inst.set) ? inst.set : {}
-  const bind = isObj(inst.bind) ? inst.bind : {}
-  const text = (p: ComponentProp, v: unknown) => {
-    if (typeof v !== 'string') return
-    if (p.run === undefined) runs = [{ text: v }]
-    else if (isObj(runs[p.run])) {
-      const r = { ...(runs[p.run] as Record<string, unknown>) }
-      delete r.bind
-      delete r.bindHref
-      runs = runs.map((x, i) => (i === p.run ? { ...r, text: v } : x))
-    }
-  }
-  for (const p of mine) if (p.default !== undefined) text(p, p.default)
+/** A component property that writes to a part, with its place in the component's list. */
+type Mine = { p: ComponentProp; i: number }
+/** The properties that write to each part, in list order. Choice and slot properties write nothing (`unrollInstances` skips them). */
+const minesOf = (comp: Component): Map<string, Mine[]> => {
+  const out = new Map<string, Mine[]>()
+  ;(Array.isArray(comp.props) ? comp.props : []).forEach((p, i) => {
+    if (!isObj(p) || p.type === 'choice' || p.type === 'slot') return
+    if (typeof p.part !== 'string') return
+    out.set(p.part, [...(out.get(p.part) ?? []), { p, i }])
+  })
+  return out
+}
+
+/** What `shownPart` reads of one use of a component, worked out once per use. */
+type Use = {
+  comp: Component
+  inst: Node
+  mines: Map<string, Mine[]>
+  set: Record<string, unknown>
+  /** the variants that apply to this use, by place in the component's list */
+  looks: number[]
+}
+const useOf = (comp: Component, inst: Node, mines = minesOf(comp)): Use => {
+  const obj = (v: unknown) =>
+    isObj(v) || Array.isArray(v) ? (v as Record<string, unknown>) : {}
+  const set = obj(inst.set)
   const values: Record<string, unknown> = {}
-  for (const p of props) {
+  for (const p of Array.isArray(comp.props) ? comp.props : []) {
+    if (!isObj(p)) continue
     const given = Object.hasOwn(set, p.key) ? set[p.key] : undefined
     values[p.key] =
       p.type === 'choice'
@@ -79,35 +97,242 @@ function shownRuns(part: Node, comp: Component, inst: Node): unknown[] {
           : (p.default ?? p.options?.[0])
         : (given ?? p.default)
   }
-  const patched = (o: unknown) =>
-    isObj(o) && isObj(o.props) && Array.isArray(o.props.runs)
-      ? (o.props.runs as unknown[])
-      : undefined
-  for (const v of comp.variants ?? [])
+  const looks: number[] = []
+  ;(Array.isArray(comp.variants) ? comp.variants : []).forEach((v, i) => {
     if (
       isObj(v) &&
       isObj(v.when) &&
       Object.entries(v.when).every(([k, val]) => values[k] === val)
     )
-      runs = patched(isObj(v.patch) ? v.patch[part.id] : undefined) ?? runs
-  for (const p of mine) if (Object.hasOwn(set, p.key)) text(p, set[p.key])
-  for (const p of mine) {
-    const ref = bind[p.key]
-    if (!isObj(ref)) continue
-    if (p.run === undefined) runs = [{ text: '', bind: ref }]
-    else if (isObj(runs[p.run]))
-      runs = runs.map((x, i) =>
-        i === p.run ? { ...(x as object), text: '', bind: ref } : x,
+      looks.push(i)
+  })
+  return { comp, inst, mines, set, looks }
+}
+
+/** Where a change to the part came from, in the order `unrollInstances` applies them. */
+type Source =
+  | { by: 'master' }
+  | { by: 'default'; i: number }
+  | { by: 'variant'; i: number }
+  | { by: 'set'; key: string; inst: Node }
+  | { by: 'bind'; inst: Node }
+  | { by: 'override'; key: string; inst: Node }
+type Stage = { source: Source; node: Node }
+
+/** A node whose props, hide and style objects are its own, so a change to them leaves the original alone. */
+const fork = (n: Node): Node => ({
+  ...n,
+  ...(isObj(n.props) ? { props: { ...n.props } } : {}),
+  ...(isObj(n.hide) ? { hide: { ...n.hide } } : {}),
+  ...(isObj(n.style) ? { style: { ...n.style } } : {}),
+})
+
+/** `bind.ts`' `write`, without its save check (validation holds the same values to it elsewhere): a property's value on its part, through `changeFor` and `runChange`. */
+function writeProp(node: Node, p: ComponentProp, v: unknown): Node {
+  if (p.run !== undefined) {
+    const change = runChange(node.props?.runs, p.run, p.field!, v)
+    return change
+      ? {
+          ...node,
+          props: {
+            ...node.props,
+            runs: (change.props as { runs: Run[] }).runs,
+          },
+        }
+      : node
+  }
+  // How many a list shows says nothing about hiding, content or size.
+  if (p.field === 'limit') return node
+  const path = CONTROL_FIELDS[p.field!].path
+  const val = path.reduce<unknown>(
+    (o, k) => (o as Record<string, unknown>)[k],
+    changeFor(p.field!, v, true),
+  )
+  const at = (o: unknown, d: number): unknown => ({
+    ...(isObj(o) ? o : {}),
+    [path[d]]:
+      d === path.length - 1
+        ? val
+        : at((o as Record<string, unknown>)?.[path[d]], d + 1),
+  })
+  return at(node, 0) as Node
+}
+
+const writes = (p: ComponentProp, v: unknown) =>
+  p.field !== undefined &&
+  v !== undefined &&
+  Object.hasOwn(CONTROL_FIELDS, p.field)
+
+/**
+ * Every state of `part` on the way to the page, for one use of its component: the master, then what each step of
+ * `unrollInstances` (data/bind.ts) does to it, in its order, listing a step only when it changed something:
+ * 1. each property that writes to the part, with its `default`;
+ * 2. each variant that applies, through `applyOverride` (shared with bind.ts);
+ * 3. the instance's `set` values;
+ * 4. the instance's `bind` on a property. A text takes it as its content. A `hidden` property bound to data becomes a show
+ *    condition, and a bound `fontSize` writes nothing: data cannot be judged, so both are out of reach, like `showIf`;
+ * 5. the instance's `overrides` entry for the part, then those of the instances further out (`outer`, innermost first).
+ * A change `unrollInstances` would drop for failing the save check is applied here too: validation refuses it elsewhere.
+ */
+function stagesOf(part: Node, use: Use, outer: readonly Outer[] = []): Stage[] {
+  let node = fork(part)
+  const out: Stage[] = [{ source: { by: 'master' }, node }]
+  const push = (source: Source, next: Node) => {
+    node = next
+    out.push({ source, node })
+  }
+  const mine = use.mines.get(part.id) ?? []
+  for (const { p, i } of mine)
+    if (writes(p, p.default))
+      push({ by: 'default', i }, writeProp(node, p, p.default))
+  for (const i of use.looks) {
+    const v = use.comp.variants[i]
+    const o =
+      isObj(v.patch) && Object.hasOwn(v.patch, part.id)
+        ? v.patch[part.id]
+        : undefined
+    if (isObj(o)) push({ by: 'variant', i }, patched(node, o))
+  }
+  for (const { p } of mine)
+    if (Object.hasOwn(use.set, p.key) && writes(p, use.set[p.key]))
+      push(
+        { by: 'set', key: p.key, inst: use.inst },
+        writeProp(node, p, use.set[p.key]),
+      )
+  const binds =
+    isObj(use.inst.bind) || Array.isArray(use.inst.bind) ? use.inst.bind : {}
+  const plain = (Array.isArray(use.comp.props) ? use.comp.props : []).filter(
+    p => isObj(p) && p.type !== 'choice' && p.type !== 'slot',
+  )
+  for (const [key, ref] of Object.entries(binds)) {
+    const p = plain.find(x => x.key === key)
+    if (!p || p.part !== part.id || !p.field) continue
+    const runs = node.props?.runs as Run[] | undefined
+    if (p.run !== undefined) {
+      if (Array.isArray(runs) && runs[p.run])
+        push(
+          { by: 'bind', inst: use.inst },
+          {
+            ...node,
+            props: {
+              ...node.props,
+              runs: runs.map((r: Run, i: number) =>
+                i !== p.run
+                  ? r
+                  : p.field === 'link'
+                    ? { ...r, bindHref: ref }
+                    : { ...r, text: '', bind: ref },
+              ),
+            },
+          },
+        )
+    } else if (p.field === 'text')
+      push(
+        { by: 'bind', inst: use.inst },
+        { ...node, props: { ...node.props, runs: [{ text: '', bind: ref }] } },
       )
   }
-  const over = isObj(inst.overrides) ? inst.overrides[part.id] : undefined
-  return patched(over) ?? runs
+  const given = (inst: Node, key: string) => {
+    const all =
+      isObj(inst.overrides) || Array.isArray(inst.overrides)
+        ? inst.overrides
+        : {}
+    const o = Object.hasOwn(all, key)
+      ? (all as Record<string, unknown>)[key]
+      : undefined
+    if (isObj(o)) push({ by: 'override', key, inst }, patched(node, o))
+  }
+  given(use.inst, part.id)
+  for (const o of outer) given(o.inst, `${o.via}.${part.id}`)
+  return out
+}
+
+const patched = (n: Node, o: Record<string, unknown>): Node => {
+  const w = fork(n)
+  applyOverride(w, o as Override)
+  return w
+}
+
+/**
+ * The part as the page shows it for one use of its component: a copy of `part` with everything `inst` does to it applied
+ * (see `stagesOf`). The one place validation reads the unroll rules from; a test pins it against `unrollInstances`.
+ */
+export function shownPart(
+  part: Node,
+  comp: Component,
+  inst: Node,
+  outer: readonly Outer[] = [],
+): Node {
+  return stagesOf(part, useOf(comp, inst), outer).at(-1)!.node
+}
+
+/** The value at a dotted path of a node (`style.when.0.decl.size`). */
+const valueAt = (n: unknown, path: string): unknown =>
+  path
+    .split('.')
+    .reduce<unknown>(
+      (o, k) =>
+        isObj(o) || Array.isArray(o)
+          ? (o as Record<string, unknown>)[k]
+          : undefined,
+      n,
+    )
+
+/** How many `when` layers a node has. */
+const whens = (n: Node) =>
+  isObj(n.style) && Array.isArray(n.style.when) ? n.style.when.length : 0
+
+/**
+ * Where a stage put something: the problem's `nodeId` and `path`, `rel` being the path inside the part as the stage wrote it.
+ * A property's default and a variant's patch belong to the component, so they name no node.
+ */
+function placeOf(
+  st: Stage,
+  before: Node,
+  comp: Component,
+  partId: string,
+  rel: string,
+): { nodeId?: string; path: string } | undefined {
+  const s = st.source
+  // `when` layers are appended, so the index inside the patch is the shown index less the layers there already were.
+  const own = rel.replace(
+    /^style\.when\.(\d+)/,
+    (_, k) => `style.when.${Number(k) - whens(before)}`,
+  )
+  switch (s.by) {
+    case 'set':
+      return { nodeId: s.inst.id, path: `set.${s.key}` }
+    case 'default':
+      return { path: `components.${comp.id}.props.${s.i}.default` }
+    case 'variant':
+      return {
+        path: `components.${comp.id}.variants.${s.i}.patch.${partId}.${own}`,
+      }
+    case 'override':
+      return { nodeId: s.inst.id, path: `overrides.${s.key}.${own}` }
+    default:
+      return undefined
+  }
 }
 
 /** A required node that is hidden, and a required text with no content. Assumes a well-formed tree. */
 export function checkRequired(doc: SiteDocument): Problem[] {
   const out: Problem[] = []
+  const seen = new Set<string>()
+  const add = (p: Problem) => {
+    const k = JSON.stringify([p.rule, p.nodeId, p.path, p.message])
+    if (!seen.has(k)) {
+      seen.add(k)
+      out.push(p)
+    }
+  }
   const ix = hiddenIndex(doc)
+  const minesCache = new Map<Component, Map<string, Mine[]>>()
+  const mines = (c: Component) => {
+    let m = minesCache.get(c)
+    if (!m) minesCache.set(c, (m = minesOf(c)))
+    return m
+  }
   for (const [tree, root] of trees(doc)) {
     const cid =
       typeof tree === 'object' && 'component' in tree
@@ -116,6 +341,14 @@ export function checkRequired(doc: SiteDocument): Problem[] {
     // A component's parts count only when an instance uses it.
     const uses = cid === undefined ? undefined : ix.uses.get(cid)
     if (cid !== undefined && !uses) continue
+    const owner = cid === undefined ? undefined : ix.components.get(cid)
+    // The ways each use of a component is shown, worked out once per tree.
+    const views = (uses ?? []).flatMap(u =>
+      outerChains(ix, u).map(outer => ({
+        use: useOf(owner!, u.path[u.path.length - 1], mines(owner!)),
+        outer,
+      })),
+    )
     walkWithAncestors(root, (n, up) => {
       let form: Node | undefined
       for (let i = up.length - 1; i >= 0 && !form; i--)
@@ -124,19 +357,41 @@ export function checkRequired(doc: SiteDocument): Problem[] {
       const why = hiddenAt(ix, tree, [...up, n])
       if (why) {
         const path = pathOf(why)
-        out.push(
+        add(
           policy(
             'required',
             `This block must stay on the page, but it is hidden${why.by === n.id ? '' : ` by "${why.by}"`}.`,
             { nodeId: n.id, ...(path ? { path } : {}) },
           ),
         )
-      }
+      } else if (owner)
+        // Hidden by what a use gives the part or one of its ancestors in the component: a property, a look, an override.
+        for (const v of views)
+          for (const a of [...up, n]) {
+            const st = stagesOf(a, v.use, v.outer)
+            const i = st.findIndex(s => reasonOf(s.node))
+            if (i < 1 || !reasonOf(st[st.length - 1].node)) continue
+            const r = reasonOf(st[i].node)!
+            const place = placeOf(
+              st[i],
+              st[i - 1].node,
+              owner,
+              a.id,
+              pathOf(r) ?? '',
+            )
+            if (place)
+              add(
+                policy(
+                  'required',
+                  `The block "${n.id}" of the component "${cid}" must stay on the page, but ${a === n ? 'this use hides it' : `this use hides "${a.id}"`}.`,
+                  place,
+                ),
+              )
+          }
       if (n.kind !== 'text') return
-      const owner = cid === undefined ? undefined : ix.components.get(cid)
       if (!owner) {
         if (!hasContent(n))
-          out.push(
+          add(
             policy(
               'required',
               'This text must keep some text or a data field.',
@@ -149,22 +404,33 @@ export function checkRequired(doc: SiteDocument): Problem[] {
       const key = (owner.props ?? []).find(
         p => isObj(p) && p.field === 'text' && p.part === n.id,
       )?.key
-      for (const u of uses ?? []) {
-        const inst = u.path[u.path.length - 1]
-        if (!shownRuns(n, owner, inst).some(runHas))
-          out.push(
-            policy(
-              'required',
-              `The text "${n.id}" of the component "${cid}" must keep some text, and this use shows none.`,
-              {
-                nodeId: inst.id,
-                path:
-                  key === undefined
-                    ? `overrides.${n.id}.props.runs`
-                    : `set.${key}`,
-              },
-            ),
-          )
+      for (const v of views) {
+        const st = stagesOf(n, v.use, v.outer)
+        const runs = (x: Stage) => x.node.props?.runs
+        if ((runs(st[st.length - 1]) as unknown[] | undefined)?.some(runHas))
+          continue
+        // Emptied by an instance further out: that one is where to look. Otherwise it is this use's own `set` or override.
+        const last = st.findLastIndex(
+          (x, j) => j > 0 && runs(x) !== runs(st[j - 1]),
+        )
+        const s = last > 0 ? st[last].source : undefined
+        const far =
+          s?.by === 'override' && s.inst !== v.use.inst ? s : undefined
+        add(
+          policy(
+            'required',
+            `The text "${n.id}" of the component "${cid}" must keep some text, and this use shows none.`,
+            far
+              ? { nodeId: far.inst.id, path: `overrides.${far.key}.props.runs` }
+              : {
+                  nodeId: v.use.inst.id,
+                  path:
+                    key === undefined
+                      ? `overrides.${n.id}.props.runs`
+                      : `set.${key}`,
+                },
+          ),
+        )
       }
     })
   }
@@ -176,8 +442,10 @@ export function checkTextRange(doc: SiteDocument): Problem[] {
   const r = doc.styles?.textRange
   if (!r) return []
   const out: Problem[] = []
+  const outside = (size: number) => size < r.min || size > r.max
+  const allowed = [String(r.min), String(r.max)]
   for (const s of textSizes(doc))
-    if (s.size < r.min || s.size > r.max)
+    if (outside(s.size))
       out.push(
         policy(
           'textRange',
@@ -185,9 +453,53 @@ export function checkTextRange(doc: SiteDocument): Problem[] {
           {
             ...(s.nodeId === undefined ? {} : { nodeId: s.nodeId }),
             path: s.path,
-            allowed: [String(r.min), String(r.max)],
+            allowed,
           },
         ),
       )
+  // The sizes a use of a component gives its parts: through a property, a look, or an override. Those of the master are in `textSizes`.
+  const ix = hiddenIndex(doc)
+  const seen = new Set<string>()
+  for (const [tree, root] of trees(doc)) {
+    const cid =
+      typeof tree === 'object' && 'component' in tree
+        ? tree.component
+        : undefined
+    const comp = cid === undefined ? undefined : ix.components.get(cid)
+    const uses = cid === undefined ? undefined : ix.uses.get(cid)
+    if (!comp || !uses) continue
+    const mines = minesOf(comp)
+    const views = uses.flatMap(u =>
+      outerChains(ix, u).map(outer => ({
+        use: useOf(comp, u.path[u.path.length - 1], mines),
+        outer,
+      })),
+    )
+    walkWithAncestors(root, part => {
+      for (const v of views) {
+        const st = stagesOf(part, v.use, v.outer)
+        for (const s of nodeSizes(st[st.length - 1].node)) {
+          if (!outside(s.size)) continue
+          const i = st.findIndex(
+            (x, j) =>
+              valueAt(x.node, s.real) === s.size &&
+              (j === 0 || valueAt(st[j - 1].node, s.real) !== s.size),
+          )
+          if (i < 1) continue
+          const place = placeOf(st[i], st[i - 1].node, comp, part.id, s.real)
+          const key = JSON.stringify([place?.nodeId, place?.path])
+          if (!place || seen.has(key)) continue
+          seen.add(key)
+          out.push(
+            policy(
+              'textRange',
+              `A text size of ${s.size} is outside the site's range of ${r.min} to ${r.max} (the part "${part.id}" of the component "${comp.id}").`,
+              { ...place, allowed },
+            ),
+          )
+        }
+      }
+    })
+  }
   return out
 }

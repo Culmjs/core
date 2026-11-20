@@ -450,3 +450,38 @@ test('insertBlock of a block with an insert function uses the tree that function
     { text: 'Stamp' },
   ])
 })
+
+test('setBlockSetting is refused when a setting function drops a required part', () => {
+  const dropper = createRegistry()
+  dropper.use({
+    ...DEMO_PLUGIN,
+    settingFns: {
+      upper: {
+        read: () => undefined,
+        apply(root) {
+          const out: Node = JSON.parse(JSON.stringify(root))
+          out.children = out.children!.filter(c => c.id !== `${root.id}.title`)
+          return out
+        },
+      },
+    },
+  })
+  const doc = withBlock()
+  // without the mark the function may drop the part, so the test shows the function does
+  const free = ok(setting(doc, 'b1', 'upper', 'x', dropper))
+  assert.equal(find(subtree(free.doc!, 'b1'), 'b1.title'), undefined)
+  const marked = ok(
+    nodeOps.setRequired(doc, reg, {
+      op: 'setRequired',
+      tree: T,
+      id: 'b1.title',
+      required: true,
+    }),
+  ).doc!
+  refused(setting(marked, 'b1', 'upper', 'x', dropper), 'POLICY_VIOLATION', {
+    rule: 'required',
+    nodeId: 'b1.title',
+  })
+  // a setting that keeps every part is still accepted
+  ok(setting(marked, 'b1', 'heading', 'Hello'))
+})

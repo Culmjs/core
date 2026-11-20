@@ -1,5 +1,6 @@
 import { isObj } from './rules.ts'
-import type { ControlField } from './types.ts'
+import { touched } from './samples.ts'
+import type { ControlField, Node, Override } from './types.ts'
 
 export type ControlType =
   'text' | 'link' | 'asset' | 'color' | 'number' | 'switch'
@@ -69,4 +70,28 @@ export function runChange(
   copy[run] =
     field === 'text' ? { ...line, text: value } : { ...copy[run], link: value }
   return { props: { runs: copy } }
+}
+
+/** Lays an override (an instance's, or a look's patch) onto a part: props merge, `hide` merges, style layers merge by layer and `when` layers are appended. Words set by it are the owner's. */
+export function applyOverride(w: Node, o: Override) {
+  if (o.props) w.props = { ...w.props, ...structuredClone(o.props) }
+  // Words the owner set on a use are the owner's, whatever the master's text was.
+  if (
+    o.props &&
+    ('runs' in o.props || 'label' in o.props || 'summary' in o.props) &&
+    w.props
+  )
+    w.props = touched(w.props)
+  if (o.hide) w.hide = { ...w.hide, ...o.hide }
+  if (o.style) {
+    const style = (w.style ??= {}) as Record<string, object>
+    for (const [layer, decl] of Object.entries(structuredClone(o.style)))
+      style[layer] =
+        layer === 'when'
+          ? ([
+              ...((style[layer] as unknown as unknown[]) ?? []),
+              ...(decl as unknown as unknown[]),
+            ] as never)
+          : { ...style[layer], ...decl }
+  }
 }
