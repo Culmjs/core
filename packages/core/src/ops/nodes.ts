@@ -310,7 +310,12 @@ export const setProps: OpFn<'setProps'> = (doc, _registry, op) =>
       return bad('name must be a string.', { nodeId: n.id, path: 'name' })
     const unsafe = checkSafe(o, n.id, ['props'])
     if (unsafe) return unsafe
-    const props = merge(touched({ ...n.props }), o.props) as Node['props']
+    // Only words the owner writes make a sample or a block's own wording theirs (the rule `bind.ts` and `applySetting` follow): a rename or another setting leaves the marks, and the live page as it was.
+    const words = ['runs', 'label', 'summary'].some(k =>
+      Object.hasOwn(o.props as object, k),
+    )
+    const was = { ...n.props }
+    const props = merge(words ? touched(was) : was, o.props) as Node['props']
     const named = typeof o.name === 'string' ? { ...n, name: o.name } : n
     return Object.keys(props!).length
       ? { ...named, props }

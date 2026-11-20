@@ -367,7 +367,7 @@ test('move refuses an unsafe slot key', () =>
   }))
 
 // ---- setProps
-test('setProps writes, deletes with null, renames, and clears the sample mark', () => {
+test('setProps writes, deletes with null and renames; a call that writes no words leaves the sample mark', () => {
   const r = ok(
     run('setProps', base(), {
       id: 't',
@@ -381,11 +381,57 @@ test('setProps writes, deletes with null, renames, and clears the sample mark', 
     level: 'h2',
     extra: 1,
     runs: [{ text: 'Old' }],
-    sample: false,
+    sample: true,
   })
   assert.deepEqual(r.changed, [ref('t')])
   const r2 = ok(run('setProps', r.doc, { id: 't', props: { extra: null } }))
   assert.equal('extra' in nodeOf(r2.doc, 't').props!, false)
+})
+const live = (doc: SiteDocument) => {
+  const page = compilePage(doc, 'home', { registry: reg, mode: 'live' })
+  assert.ok(page.ok)
+  return page.html
+}
+test('a rename or another setting keeps a sample a sample, and the live page still leaves it out; writing the words clears it', () => {
+  const doc = base()
+  assert.ok(!live(doc).includes('Old'))
+  for (const o of [
+    { props: {}, name: 'Heading' },
+    { props: { level: 'h2' } },
+  ]) {
+    const r = ok(run('setProps', doc, { id: 't', ...o }))
+    assert.equal(nodeOf(r.doc, 't').props!.sample, true, JSON.stringify(o))
+    assert.ok(!live(r.doc).includes('Old'), JSON.stringify(o))
+  }
+  const w = ok(
+    run('setProps', doc, { id: 't', props: { runs: [{ text: 'Mine' }] } }),
+  )
+  assert.equal(nodeOf(w.doc, 't').props!.sample, false)
+  assert.ok(live(w.doc).includes('Mine'))
+  // the chrome mark goes the same way: only with the words
+  const chrome = base()
+  nodeOf(chrome, 't').props = { runs: [{ text: 'Old' }], chrome: true }
+  const kept = ok(run('setProps', chrome, { id: 't', props: {}, name: 'X' }))
+  assert.equal(nodeOf(kept.doc, 't').props!.chrome, true)
+  const gone = ok(
+    run('setProps', chrome, { id: 't', props: { runs: [{ text: 'Z' }] } }),
+  )
+  assert.equal('chrome' in nodeOf(gone.doc, 't').props!, false)
+})
+test("a button's label or a details summary is words too: writing one clears the sample mark", () => {
+  const doc = siteWith([
+    {
+      id: 'bt',
+      kind: 'button',
+      name: 'bt',
+      slot: {},
+      props: { label: 'Click', sample: true },
+    },
+  ])
+  const keep = ok(run('setProps', doc, { id: 'bt', props: {}, name: 'Go' }))
+  assert.equal(nodeOf(keep.doc, 'bt').props!.sample, true)
+  const w = ok(run('setProps', doc, { id: 'bt', props: { label: 'Buy' } }))
+  assert.equal(nodeOf(w.doc, 'bt').props!.sample, false)
 })
 test('setProps refuses props that are not an object', () => {
   for (const props of [undefined, null, 'x', [], 3])

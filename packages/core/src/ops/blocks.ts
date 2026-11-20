@@ -188,7 +188,7 @@ export const updateBlock: OpFn<'updateBlock'> = (doc, registry, op) => {
         text: `The setting "${key}" was reset; the new version does not accept ${JSON.stringify(value)}.`,
       })
   }
-  // The place of the block stays: its slot, placement, visibility; `replace` keeps the position among siblings.
+  // The place of the block stays: its slot, placement, visibility, show conditions, lock and name; `replace` keeps the position among siblings.
   // A `required` mark is a person's, not the look's: it stays on every node that is in both subtrees, unless the new look sets its own.
   const marks = new Map<string, boolean>()
   walk(old, w => {
@@ -202,7 +202,14 @@ export const updateBlock: OpFn<'updateBlock'> = (doc, registry, op) => {
     ...(n.children ? { children: n.children.map(mark) } : {}),
   })
   const placed: Node = { ...mark(fresh), slot: old.slot }
-  for (const k of ['placement', 'hide'] as const)
+  for (const k of [
+    'placement',
+    'hide',
+    'showIf',
+    'showIfAny',
+    'locked',
+    'name',
+  ] as const)
     if (old[k] !== undefined) (placed as Fields)[k] = old[k]
 
   const next = new Map<string, string>()

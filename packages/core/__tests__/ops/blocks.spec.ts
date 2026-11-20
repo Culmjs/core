@@ -485,3 +485,29 @@ test('setBlockSetting is refused when a setting function drops a required part',
   // a setting that keeps every part is still accepted
   ok(setting(marked, 'b1', 'heading', 'Hello'))
 })
+
+test("updateBlock keeps the block root's show conditions, lock and name, none of them a difference for the reset note", () => {
+  const keys: [string, unknown][] = [
+    ['showIf', { from: 'site', field: 'title' }],
+    [
+      'showIfAny',
+      [
+        { from: 'site', field: 'title' },
+        { from: 'site', field: 'name' },
+      ],
+    ],
+    ['locked', true],
+    ['name', 'My own name'],
+  ]
+  for (const [key, value] of keys) {
+    const doc = withBlock()
+    ;(subtree(doc, 'b1') as unknown as Record<string, unknown>)[key] = value
+    assert.deepEqual(validateSite(doc, reg), [], key)
+    const r = ok(update(doc, 'b1', demoV2Registry()))
+    const b = subtree(r.doc!, 'b1') as unknown as Record<string, unknown>
+    assert.deepEqual(b[key], value, `${key} kept`)
+    const reset = r.notes!.filter(n => n.kind === 'reset').flatMap(n => n.ids)
+    assert.ok(!reset.includes('b1'), `${key} is not a difference: ${reset}`)
+    assert.deepEqual(validateSite(r.doc!, demoV2Registry()), [], key)
+  }
+})
