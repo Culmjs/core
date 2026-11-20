@@ -6,6 +6,7 @@ import { plan } from '../../src/ops/plan.ts'
 import type { ChangeRequest } from '../../src/ops/types.ts'
 import { defaultSiteStyles } from '../../src/style/index.ts'
 import { validateSite } from '../../src/validate/index.ts'
+import { droppedRequired } from '../../src/validate/required.ts'
 import type { SettingFn } from '../../src/registry/index.ts'
 import { STAMP, kitRegistry, node, siteWith, text, twoPages } from '../kit.ts'
 
@@ -1034,4 +1035,32 @@ test("updateBlock keeps a person's required: false on a form although the new lo
   assert.ok(r.ok, JSON.stringify(!r.ok && r.problems))
   const f = r.doc.pages[0].root.children!.find(c => c.id === 'fk')!.children![0]
   assert.equal(f.required, false)
+})
+
+// ---- sixth pass ----
+
+test('the refusal message fits the node: words for a text, content that is not a placeholder for a box', () => {
+  const box = firstProblem(
+    plan(boxWithSample(), reg, req([{ op: 'remove', tree: T, id: 'o' }])),
+  )
+  assert.equal(box.nodeId, 'rb')
+  assert.doesNotMatch(box.message, /its words/)
+  assert.match(box.message, /content that is not a placeholder/)
+  assert.match(box.message, /sample text/)
+  const doc = mkDoc(markRegistry(1))
+  const txt = firstProblem(
+    plan(doc, markRegistry(2), req([{ op: 'updateBlock', tree: T, id: 'mk' }])),
+  )
+  assert.match(txt.message, /its words/)
+})
+
+test('droppedRequired returns no finding, and does not throw, for a malformed after', () => {
+  for (const after of [
+    null,
+    {},
+    { pages: 3 },
+    { ...start(), pages: [{ id: 'p', root: null }] },
+    { ...start(), components: null },
+  ])
+    assert.equal(droppedRequired(start(), after as never, reg), undefined)
 })

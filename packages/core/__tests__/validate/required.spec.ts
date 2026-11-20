@@ -1690,3 +1690,20 @@ test('fifth round, minor 2: Hangul fillers, the Braille blank, combining marks a
   for (const s of ['Hello', 'مرحبا', 'سلام', '你好', '🙂', '7', 'ㅤa'])
     assert.deepEqual(one(s), [], s)
 })
+
+test('sixth pass: U+1D159, a musical null notehead, is not content', () => {
+  const one = (s: string) =>
+    validateSite(
+      put(
+        n({
+          ...text0('t'),
+          required: true,
+          props: { level: 'p', runs: [{ text: s }] },
+        }),
+      ),
+      reg,
+    ).map(x => x.path)
+  assert.deepEqual(one('\u{1D159}'), ['props.runs'])
+  assert.deepEqual(one('\u{1D159}ㅤ'), ['props.runs'])
+  assert.deepEqual(one('\u{1D15F}'), [])
+})

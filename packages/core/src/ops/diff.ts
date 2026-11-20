@@ -2,6 +2,7 @@ import { canonicalJson } from '../document/hash.ts'
 import type { Node, Problem, SiteDocument } from '../document/index.ts'
 import { paged } from './cap.ts'
 import { refuse, why, type NodeRef, type TreeRef } from './types.ts'
+import { DEPTH_GUARD } from '../document/kinds.ts'
 
 export type SiteDiff = {
   ok: true
@@ -30,8 +31,6 @@ type Row = {
 }
 /** At most this many paths in one `changed` row; the rest are counted in `more`. */
 const MAX_PATHS = 20
-/** How deep a tree is compared node by node; what lies below is one leaf: its `children` differ or they do not. Keeps the recursion off the stack limit. */
-const DEPTH_GUARD = 64
 type Entry = {
   node: Node
   parent: string | null
@@ -59,6 +58,7 @@ function index(root: Node | undefined): Map<string, Entry> {
   const go = (n: unknown, parent: string | null, i: number, depth: number) => {
     if (!isObj(n) || typeof n.id !== 'string') return
     const kids = arr(n.children)
+    // compared node by node down to the shared depth guard; below it, one leaf: its `children` differ or they do not (keeps the recursion off the stack limit)
     const cut = depth >= DEPTH_GUARD && kids.length > 0
     if (!out.has(n.id))
       out.set(n.id, {

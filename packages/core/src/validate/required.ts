@@ -29,8 +29,14 @@ const policy = (
   ...p,
 })
 
-/** A character a reader sees: a letter, a number, punctuation or a symbol, less the Hangul fillers and the Braille blank, which are letters or symbols that draw nothing. Combining marks alone, format, control and private-use characters do not count. */
-const VISIBLE = /(?![\u115F\u1160\u3164\uFFA0\u2800])[\p{L}\p{N}\p{P}\p{S}]/u
+/**
+ * Known characters that the letter, number, punctuation and symbol classes include but that draw nothing: the Hangul fillers
+ * (U+115F, U+1160, U+3164, U+FFA0), the Braille blank (U+2800) and the musical null notehead (U+1D159). A list of the ones
+ * known, not a claim that there are no others.
+ */
+const INVISIBLE = '\u115F\u1160\u3164\uFFA0\u2800\u{1D159}'
+/** A character a reader sees: a letter, a number, punctuation or a symbol, other than `INVISIBLE`. Combining marks alone, format, control and private-use characters do not count. */
+const VISIBLE = new RegExp(`(?![${INVISIBLE}])[\\p{L}\\p{N}\\p{P}\\p{S}]`, 'u')
 
 /** A run counts as content when it has a binding or a character a reader sees. */
 const runHas = (r: unknown) =>
@@ -258,7 +264,7 @@ export function checkShown(doc: SiteDocument, registry: Registry): Problem[] {
 
 /** The required nodes of each uncut tree, and those of them the live page keeps (`dropSamples`), as `<tree>|<unrolled id>`. */
 function liveRequired(doc: SiteDocument, registry: Registry) {
-  const required = new Map<string, Loc>()
+  const required = new Map<string, { l: Loc; text: boolean }>()
   const kept = new Set<string>()
   for (const v of views(doc, registry)) {
     // a cut tree is refused by `checkShown` when it holds required content
@@ -267,7 +273,10 @@ function liveRequired(doc: SiteDocument, registry: Registry) {
     walkWithAncestors(v.tree, (n, up) => {
       if (!v.required(n, up)) return
       mine.add(n.id)
-      required.set(`${v.where}|${n.id}`, v.locate(n.id))
+      required.set(`${v.where}|${n.id}`, {
+        l: v.locate(n.id),
+        text: n.kind === 'text',
+      })
     })
     walkWithAncestors(dropSamples(v.tree), n => {
       if (mine.has(n.id)) kept.add(`${v.where}|${n.id}`)
@@ -287,19 +296,23 @@ export function droppedRequired(
   registry: Registry,
 ): Problem | undefined {
   let was: Set<string>
+  let now: ReturnType<typeof liveRequired>
   try {
     was = liveRequired(before, registry).kept
+    now = liveRequired(after, registry)
   } catch {
-    // a document that cannot be unrolled showed nothing that could be lost
+    // a document that cannot be unrolled is not the expected shape: validation reports it, and there is nothing to compare
     return undefined
   }
-  const now = liveRequired(after, registry)
   for (const k of was)
     if (now.required.has(k) && !now.kept.has(k)) {
-      const l = now.required.get(k)!
+      const { l, text } = now.required.get(k)!
+      const id = k.slice(k.indexOf('|') + 1)
       return policy(
         'required',
-        `"${k.slice(k.indexOf('|') + 1)}" must stay on the live page, but after this change the page would leave it out as sample text (its block would hold nothing a person wrote). Write its words again with setText in the same batch, or through a block setting that reads them; a form or field can be opted out with setRequired false.`,
+        text
+          ? `"${id}" must stay on the live page, but after this change the page would leave it out as sample text. Write its words again with setText in the same batch, or through a block setting that reads them.`
+          : `"${id}" must stay on the live page, but after this change it would hold only sample text, which the live page leaves out with it. Give it content that is not a placeholder in the same batch (write one of the sample texts in it with setText), or, for a form or field, opt it out with setRequired false.`,
         place(l),
       )
     }
