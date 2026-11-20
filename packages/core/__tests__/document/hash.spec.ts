@@ -73,6 +73,24 @@ test('toJSON is honoured', () =>
     '{"d":"1970-01-01T00:00:00.000Z"}',
   ))
 
+test('a toJSON that returns its own object is written once, as JSON.stringify writes it; one that returns a structure holding itself throws, as a cycle does', () => {
+  const self = {
+    a: 1,
+    toJSON() {
+      return this
+    },
+  }
+  assert.equal(canonicalJson(self), JSON.stringify(self))
+  assert.equal(canonicalJson(self), '{"a":1}')
+  const loop = {
+    a: 1,
+    toJSON() {
+      return { b: this }
+    },
+  }
+  assert.throws(() => canonicalJson(loop))
+})
+
 test('sha256 of "abc"', async () =>
   assert.equal(
     await sha256('abc'),
