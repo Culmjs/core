@@ -798,3 +798,56 @@ test('makeComponent refuses, through the validity guard, a result that would not
   )
   assert.deepEqual(doc, before)
 })
+
+test('detach of an instance whose unroll would be cut at the node limit is refused, and writes no cut copy', () => {
+  // `big` holds 1,200 nodes; `twin` holds two uses of it, which unroll to more than MAX_NODES (2,000)
+  const doc = siteWith([inst('i', 'twin')])
+  doc.components = [
+    {
+      id: 'big',
+      name: 'Big',
+      root: node(
+        'broot',
+        'column',
+        Array.from({ length: 1199 }, (_, k) => text(`x${k}`, `w${k}`)),
+      ),
+      props: [],
+      variants: [],
+    },
+    {
+      id: 'twin',
+      name: 'Twin',
+      root: node('troot', 'column', [inst('a', 'big'), inst('b', 'big')]),
+      props: [],
+      variants: [],
+    },
+  ]
+  const before = JSON.stringify(doc)
+  const r = run('detach', doc, { id: 'i' })
+  invalid(r, { nodeId: 'i', path: 'id' }, 'RESOURCE_LIMIT_EXCEEDED')
+  assert.equal(JSON.stringify(doc), before)
+  // below the limit the same operation works
+  doc.components[1].root.children!.pop()
+  ok(run('detach', doc, { id: 'i' }))
+})
+
+test('removeComponent names at most ten uses and counts the rest, so the message stays short', () => {
+  const doc = withCard(
+    ...Array.from({ length: 40 }, (_, k) => inst(`use${k}`, 'card')),
+  )
+  const r = run('removeComponent', doc, { component: 'card' })
+  invalid(r, { nodeId: 'use0', path: 'component' })
+  assert.ok(!r.ok)
+  const m = r.problems[0].message
+  assert.match(
+    m,
+    /still used by use0, use1, use2, use3, use4, use5, use6, use7, use8, use9 and 30 more\./,
+  )
+  assert.ok(!m.includes('use10,'))
+  assert.ok(m.length < 200, String(m.length))
+  // ten or fewer are all named
+  const few = withCard(inst('a', 'card'), inst('b', 'card'))
+  const f = run('removeComponent', few, { component: 'card' })
+  assert.ok(!f.ok)
+  assert.match(f.problems[0].message, /still used by a, b\.$/)
+})

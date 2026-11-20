@@ -29,33 +29,53 @@ export const bad = (message: string, more: Parameters<typeof refuse>[2] = {}) =>
 export const isRefusal = (v: unknown): v is Refusal =>
   isObj(v) && v.ok === false && 'problems' in v
 
-/** The path of the first key from `UNSAFE_FIELDS` anywhere in `v` (or of a value nested too deep to check), else undefined. */
-function unsafePath(v: unknown, path: string, depth = 0): string | undefined {
+/** The path of the first key from `UNSAFE_FIELDS` anywhere in `v`, or of a value nested too deep to check (`deep`), else undefined. */
+function unsafePath(
+  v: unknown,
+  path: string,
+  depth = 0,
+): { path: string; deep: boolean } | undefined {
   if (typeof v !== 'object' || v === null) return undefined
-  if (depth > 32) return path
+  if (depth > 32) return { path, deep: true }
   for (const [k, x] of Object.entries(v)) {
     const p = `${path}.${k}`
-    if (UNSAFE_FIELDS.includes(k)) return p
+    if (UNSAFE_FIELDS.includes(k)) return { path: p, deep: false }
     const hit = unsafePath(x, p, depth + 1)
     if (hit) return hit
   }
   return undefined
 }
 
-/** A refusal when any of the named fields of the operation holds an unsafe key. */
+/** A refusal when any of the named fields of the operation holds an unsafe key, or is nested too deep to check. */
 export function checkSafe(o: Fields, id: string | undefined, keys: string[]) {
   for (const k of keys) {
     const hit = unsafePath(o[k], k)
     if (hit)
-      return bad(`"${hit}" is not an allowed key.`, { nodeId: id, path: hit })
+      return bad(
+        hit.deep
+          ? `"${hit.path}" is nested too deep.`
+          : `"${hit.path}" is not an allowed key.`,
+        { nodeId: id, path: hit.path },
+      )
   }
   return undefined
 }
 
+/** The root of the tree an operation names, or the refusal. */
+const treeRoot = (doc: SiteDocument, o: Fields): Node | Refusal =>
+  rootOf(doc, o.tree as TreeRef) ?? bad('No such tree.', { path: 'tree' })
+
+/** The refusal for an index outside 0 to the number of children, about `nodeId`. */
+const badIndex = (nodeId: string) =>
+  bad('The index must be a whole number from 0 to the number of children.', {
+    nodeId,
+    path: 'index',
+  })
+
 /** The tree and the node of an operation, or the refusal. Everything on `o` is untrusted. */
 export function at(doc: SiteDocument, o: Fields): Target | Refusal {
-  const root = rootOf(doc, o.tree as TreeRef)
-  if (!root) return bad('No such tree.', { path: 'tree' })
+  const root = treeRoot(doc, o)
+  if (isRefusal(root)) return root
   if (typeof o.id !== 'string')
     return bad('The id must be a string.', { path: 'id' })
   const node = find(root, o.id)
@@ -123,8 +143,8 @@ export function usedIds(doc: SiteDocument, tree: TreeRef, root: Node) {
 
 export const add: OpFn<'add'> = (doc, registry, op) => {
   const o = op as unknown as Fields
-  const root = rootOf(doc, o.tree as TreeRef)
-  if (!root) return bad('No such tree.', { path: 'tree' })
+  const root = treeRoot(doc, o)
+  if (isRefusal(root)) return root
   const parent = typeof o.parent === 'string' ? find(root, o.parent) : undefined
   if (!parent)
     return bad(`No parent "${String(o.parent)}".`, {
@@ -132,13 +152,7 @@ export const add: OpFn<'add'> = (doc, registry, op) => {
       path: 'parent',
     })
   if (!indexOk(o.index, parent.children?.length ?? 0))
-    return bad(
-      'The index must be a whole number from 0 to the number of children.',
-      {
-        nodeId: parent.id,
-        path: 'index',
-      },
-    )
+    return badIndex(parent.id)
   if (!isObj(o.node))
     return bad('The node must be an object.', { path: 'node' })
   const unsafe = checkSafe(o, undefined, ['node'])
@@ -164,23 +178,31 @@ export const add: OpFn<'add'> = (doc, registry, op) => {
       return
     }
     if (!isObj(n) || typeof n.kind !== 'string') {
-      problem = bad('A node needs a kind.', { path: 'node' })
+      problem = bad('A node needs a kind.', { path: at })
       return
     }
     if (n.children !== undefined && !Array.isArray(n.children)) {
-      problem = bad('children must be a list.', { path: 'node' })
+      problem = bad('children must be a list.', { path: `${at}.children` })
+      return
+    }
+    if (n.name !== undefined && typeof n.name !== 'string') {
+      problem = bad('name must be a string.', { path: `${at}.name` })
+      return
+    }
+    if (n.slot !== undefined && !isObj(n.slot)) {
+      problem = bad('slot must be an object.', { path: `${at}.slot` })
       return
     }
     if (n.id === undefined) missing++
     else if (typeof n.id !== 'string' || !ID_RE.test(n.id))
       problem = bad(`"${String(n.id)}" is not a valid id.`, {
         nodeId: String(n.id),
-        path: 'node.id',
+        path: `${at}.id`,
       })
     else if (used.has(n.id) || given.has(n.id))
       problem = bad(`The id "${n.id}" is already used.`, {
         nodeId: n.id,
-        path: 'node.id',
+        path: `${at}.id`,
       })
     else given.add(n.id)
     ;((n.children as unknown[] | undefined) ?? []).forEach((c, i) =>
@@ -290,14 +312,7 @@ export const move: OpFn<'move'> = (doc, _registry, op) => {
       path: 'parent',
     })
   const siblings = parent.children?.filter(c => c.id !== id).length ?? 0
-  if (!indexOk(o.index, siblings))
-    return bad(
-      'The index must be a whole number from 0 to the number of children.',
-      {
-        nodeId: id,
-        path: 'index',
-      },
-    )
+  if (!indexOk(o.index, siblings)) return badIndex(id)
   if (o.slot !== undefined && !isObj(o.slot))
     return bad('The slot must be an object.', { nodeId: id, path: 'slot' })
   const unsafe = checkSafe(o, id, ['slot'])

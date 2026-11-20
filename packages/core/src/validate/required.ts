@@ -312,7 +312,7 @@ export function droppedRequired(
         'required',
         text
           ? `"${id}" must stay on the live page, but after this change the page would leave it out as sample text. Write its words again with setText in the same batch, or through a block setting that reads them.`
-          : `"${id}" must stay on the live page, but after this change it would hold only sample text, which the live page leaves out with it. Give it content that is not a placeholder in the same batch (write one of the sample texts in it with setText), or, for a form or field, opt it out with setRequired false.`,
+          : `"${id}" must stay on the live page, but after this change it would hold only sample text, which the live page leaves out with it. Give it content that is not a placeholder in the same batch (write one of the sample texts in it with setText). For a form or field, a person can also opt it out with setRequired false.`,
         place(l),
       )
     }

@@ -70,3 +70,16 @@ test('a tree object with both keys or another key is no tree', () => {
     assert.equal(withRoot(d, t, node('r', 'box')), d)
   }
 })
+
+test('with two pages (or components) of one id, withRoot replaces the one rootOf reads, and only that one', () => {
+  const d = doc()
+  d.pages.push({ ...d.pages[0], slug: '/again', root: node('again', 'box') })
+  d.components.push({ ...d.components[0], root: node('c2', 'box') })
+  const root = node('new', 'box')
+  const next = withRoot(d, { page: 'home' }, root)
+  assert.equal(next.pages[0].root, root)
+  assert.equal(next.pages[1], d.pages[1])
+  const comp = withRoot(d, { component: 'card' }, root)
+  assert.equal(comp.components[0].root, root)
+  assert.equal(comp.components[1], d.components[1])
+})

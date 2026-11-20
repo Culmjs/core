@@ -32,17 +32,20 @@ test('an id used in the footer or on another page is not given to a page tree', 
   assert.deepEqual(nextIds(doc, 'header', 1), ['n5'])
 })
 
-test('a component tree has its own id space', () => {
+test('a component tree has its own id space: neither space sees the other', () => {
   const doc = siteWith([node('n1', 'box'), node('n2', 'box')])
   doc.components.push({
     id: 'card',
     name: 'Card',
-    root: node('c', 'box', [node('n2', 'box')]),
+    root: node('c', 'box', [node('n2', 'box'), node('n3', 'box')]),
     props: [],
     variants: [],
   })
-  assert.deepEqual(nextIds(doc, { component: 'card' }, 2), ['n1', 'n3'])
+  // the component skips its own n2 and n3, not the page's n1 and n2 ...
+  assert.deepEqual(nextIds(doc, { component: 'card' }, 2), ['n1', 'n4'])
+  // ... and the page skips its own n1 and n2, not the component's n3
   assert.deepEqual(nextIds(doc, { page: 'home' }, 1), ['n3'])
+  assert.deepEqual(nextIds(doc, 'footer', 1), ['n3'])
 })
 
 test('only an exact n-id counts as used', () => {

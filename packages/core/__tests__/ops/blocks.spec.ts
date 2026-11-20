@@ -12,7 +12,7 @@ import * as nodeOps from '../../src/ops/nodes.ts'
 import { rootOf } from '../../src/ops/trees.ts'
 import type { Op, OpResult } from '../../src/ops/types.ts'
 import { DEMO, DEMO_PLUGIN } from '../kit.ts'
-import { createRegistry } from '../../src/registry/index.ts'
+import { createRegistry, type Plugin } from '../../src/registry/index.ts'
 import { validateSite } from '../../src/validate/index.ts'
 import {
   bigPage,
@@ -139,18 +139,18 @@ test('insertBlock refusals: UNKNOWN_BLOCK for the block and for the look (allowe
   })
   for (const index of [-1, 2, 0.5, '0', null])
     refused(ins(doc, { index }), 'INVALID_OPERATION', { path: 'index' })
-  // wrong or missing fields
-  for (const more of [
-    { block: 3 },
-    { look: undefined },
-    { settings: 3 },
-    { settings: [] },
-    { id: 3 },
-    { id: 'A.b' },
-    { id: 'x'.repeat(21) },
-    { id: 't' },
-  ])
-    assert.equal(ins(doc, more).ok, false, JSON.stringify(more))
+  // wrong or missing fields: each is refused as INVALID_OPERATION, with the field it is about
+  for (const [more, path] of [
+    [{ block: 3 }, 'block'],
+    [{ look: undefined }, 'look'],
+    [{ settings: 3 }, 'settings'],
+    [{ settings: [] }, 'settings'],
+    [{ id: 3 }, 'id'],
+    [{ id: 'A.b' }, 'id'],
+    [{ id: 'x'.repeat(21) }, 'id'],
+    [{ id: 't' }, 'id'],
+  ] as [object, string][])
+    refused(ins(doc, more), 'INVALID_OPERATION', { path })
   refused(ins(doc, { id: 't' }), 'INVALID_OPERATION', { path: 'id' })
   // setting refusals, from applySetting
   refused(ins(doc, { id: 'b1', settings: { nope: 1 } }), 'INVALID_NODE', {
@@ -195,6 +195,16 @@ test('setBlockSetting on a node that is not a block root is refused', () => {
     path: 'key',
   })
   refused(setting(doc, 'b1', 'heading', 3), 'INVALID_NODE', { path: 'heading' })
+  // a value that is missing is a fault of the operation, not of the node
+  const noValue = { op: 'setBlockSetting', tree: T, id: 'b1', key: 'heading' }
+  refused(setBlockSetting(doc, reg, noValue as never), 'INVALID_OPERATION', {
+    nodeId: 'b1',
+    path: 'value',
+  })
+  refused(setting(doc, 'b1', 'heading', undefined), 'INVALID_OPERATION', {
+    nodeId: 'b1',
+    path: 'value',
+  })
   refused(
     setting(doc, 'b1', 'heading', JSON.parse('{"__proto__": 1}')),
     'INVALID_OPERATION',
@@ -329,10 +339,10 @@ test('the kit plug-in registers: a page with a badge and a stamp validates; four
   ])
 })
 
-test('a page holding a badge and a stamp compiles and the badge label is in the HTML', () => {
+test('a page holding a badge and a stamp compiles; the badge draws its tip (a plug-in kind writes its tag and attributes only) and the stamp its title', () => {
   const r = kitRegistry()
   const badge = node('bd', 'badge')
-  badge.props = { label: 'Fresh', tip: 'Fresh' }
+  badge.props = { label: 'Shown nowhere', tip: 'Fresh tip' }
   const doc = ok(
     ins(
       siteWith([badge]),
@@ -342,8 +352,8 @@ test('a page holding a badge and a stamp compiles and the badge label is in the 
   ).doc!
   const out = compilePage(doc, 'home', { registry: r })
   assert.ok(out.ok, JSON.stringify(!out.ok && out.problems))
-  assert.ok(out.html.includes('Fresh'))
-  assert.ok(out.html.includes('<span'))
+  assert.match(out.html, /<span [^>]*data-tip="Fresh tip"[^>]*><\/span>/)
+  assert.ok(!out.html.includes('Shown nowhere'), 'the label is not drawn')
   assert.ok(out.html.includes('Hello stamp'))
 })
 
@@ -356,6 +366,14 @@ test('bigPage(2000) holds exactly 2000 nodes and validates', () => {
     assert.deepEqual(validateSite(doc, reg), [], String(n))
   }
   assert.equal(MAX_NODES, 2000)
+  // every text says a different thing, so a test that counts words can tell a lost node from a repeated one
+  const words: string[] = []
+  walk(bigPage(2000).pages[0].root, w => {
+    if (w.kind === 'text')
+      words.push((w.props!.runs as { text: string }[])[0].text)
+  })
+  assert.ok(words.length > 1000)
+  assert.equal(new Set(words).size, words.length)
 })
 
 test('updateBlock reports an edit on the block root, and not when there is none', () => {
@@ -511,3 +529,113 @@ test("updateBlock keeps the block root's show conditions, lock and name, none of
     assert.deepEqual(validateSite(r.doc!, demoV2Registry()), [], key)
   }
 })
+
+const deepFreeze = <T>(v: T): T => {
+  if (typeof v === 'object' && v !== null && !Object.isFrozen(v)) {
+    Object.freeze(v)
+    for (const x of Object.values(v)) deepFreeze(x)
+  }
+  return v
+}
+
+test('the block operations leave a frozen input document alone, whether they succeed or refuse', () => {
+  const doc = deepFreeze(withBlock())
+  const before = JSON.stringify(doc)
+  ok(ins(doc, { id: 'b2', settings: { heading: 'Two' } }))
+  refused(ins(doc, { id: 'b1' }), 'INVALID_OPERATION')
+  ok(setting(doc, 'b1', 'heading', 'Hello'))
+  refused(setting(doc, 'b1', 'heading', 3), 'INVALID_NODE')
+  ok(update(doc, 'b1', demoV2Registry()))
+  refused(update(doc, 't'), 'INVALID_OPERATION')
+  assert.equal(JSON.stringify(doc), before)
+})
+
+test('updateBlock keeps the slot, the placement and the hiding of the block root', () => {
+  const doc = withBlock()
+  const b = subtree(doc, 'b1')
+  b.slot = { grow: 3 }
+  b.placement = { mode: 'front' }
+  b.hide = { tablet: true }
+  assert.deepEqual(validateSite(doc, reg), [])
+  const r = ok(update(doc, 'b1', demoV2Registry()))
+  const kept = subtree(r.doc!, 'b1')
+  assert.deepEqual(kept.slot, { grow: 3 })
+  assert.deepEqual(kept.placement, { mode: 'front' })
+  assert.deepEqual(kept.hide, { tablet: true })
+  const reset = r.notes!.filter(n => n.kind === 'reset').flatMap(n => n.ids)
+  assert.ok(!reset.includes('b1'), `the root is not a difference: ${reset}`)
+})
+
+test('updateBlock: a required: false mark is not carried onto a node that is no longer a form or a field; the batch stays valid and the node is named in a reset note', () => {
+  const plugin = (version: number, kind: Node['kind']): Plugin => ({
+    name: 'kc',
+    version,
+    api: [1],
+    runs: ['build' as const],
+    trust: 'declarative' as const,
+    blocks: [
+      {
+        id: 'kc',
+        version,
+        name: 'KC',
+        category: 'utility',
+        settings: [],
+        looks: [
+          {
+            id: 'default',
+            name: 'Default',
+            tree: {
+              id: 'root',
+              kind: 'form' as const,
+              name: 'KC',
+              slot: {},
+              props: { formId: 'kc' },
+              children: [
+                {
+                  id: 'f',
+                  kind,
+                  name: 'F',
+                  slot: {},
+                  props:
+                    kind === 'field'
+                      ? { name: 'email', label: 'E' }
+                      : { level: 'p', runs: [{ text: 'x' }] },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  })
+  const regOf = (version: number, kind: Node['kind']) => {
+    const r = createRegistry()
+    r.use(plugin(version, kind))
+    return r
+  }
+  const v1 = regOf(1, 'field')
+  const v2 = regOf(2, 'text')
+  const doc = ok(
+    ins(
+      siteWith([]),
+      { block: 'kc', id: 'k1', parent: homeRoot(siteWith([])) },
+      v1,
+    ),
+  ).doc!
+  nodeOpsSetRequired(doc, 'k1.f', false)
+  assert.deepEqual(validateSite(doc, v1), [])
+  const r = ok(update(doc, 'k1', v2))
+  assert.equal(subtree(r.doc!, 'k1.f').kind, 'text')
+  assert.equal(subtree(r.doc!, 'k1.f').required, undefined)
+  assert.deepEqual(validateSite(r.doc!, v2), [])
+  const reset = r.notes!.filter(n => n.kind === 'reset').flatMap(n => n.ids)
+  assert.ok(reset.includes('k1.f'), String(reset))
+  // a mark that still fits (a field that stays a field) is carried, as before
+  const same = ok(update(doc, 'k1', regOf(3, 'field')))
+  assert.equal(subtree(same.doc!, 'k1.f').required, false)
+})
+
+/** Writes `required` on a node of the home page, in place (test set-up only). */
+function nodeOpsSetRequired(doc: SiteDocument, id: string, required: boolean) {
+  subtree(doc, id).required = required
+}

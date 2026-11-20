@@ -37,19 +37,14 @@ function checkTypes(
   return undefined
 }
 
+// A refusal about a page names it by `path: 'page'` and carries no `nodeId`: a page id is not a node id.
 const pageOf = (doc: SiteDocument, o: Fields) =>
   doc.pages.find(p => p.id === o.page)
 
 /** The page of the operation, or the refusal. */
 function target(doc: SiteDocument, o: Fields) {
   const page = typeof o.page === 'string' ? pageOf(doc, o) : undefined
-  return (
-    page ??
-    bad(`No page "${String(o.page)}".`, {
-      path: 'page',
-      nodeId: typeof o.page === 'string' ? o.page : undefined,
-    })
-  )
+  return page ?? bad(`No page "${String(o.page)}".`, { path: 'page' })
 }
 
 const PAGE_FIELDS = {
@@ -79,10 +74,7 @@ export const addPage: OpFn<'addPage'> = (doc, _registry, op) => {
       path: 'page',
     })
   else if (pageOf(doc, o))
-    return bad(`The page id "${id}" is already used.`, {
-      path: 'page',
-      nodeId: id,
-    })
+    return bad(`The page id "${id}" is already used.`, { path: 'page' })
   const index = o.index === undefined ? doc.pages.length : o.index
   if (!indexOk(index, doc.pages.length))
     return bad(
@@ -127,9 +119,7 @@ export const setPage: OpFn<'setPage'> = (doc, _registry, op) => {
   if (isRefusal(page)) return page
   const given = Object.keys(PAGE_FIELDS).filter(k => o[k] !== undefined)
   if (!given.length)
-    return bad(`Give at least one of ${Object.keys(PAGE_FIELDS).join(', ')}.`, {
-      nodeId: page.id,
-    })
+    return bad(`Give at least one of ${Object.keys(PAGE_FIELDS).join(', ')}.`)
   const wrong = checkTypes(o, PAGE_FIELDS)
   if (wrong) return wrong
   const next = { ...page }
@@ -137,6 +127,7 @@ export const setPage: OpFn<'setPage'> = (doc, _registry, op) => {
   return done({ ...doc, pages: doc.pages.map(p => (p === page ? next : p)) })
 }
 
+/** `index` is the place among the pages once this one is out of the list: 0 to the number of pages less one. */
 export const movePage: OpFn<'movePage'> = (doc, _registry, op) => {
   const o = op as unknown as Fields
   const page = target(doc, o)
@@ -144,7 +135,7 @@ export const movePage: OpFn<'movePage'> = (doc, _registry, op) => {
   if (!indexOk(o.index, doc.pages.length - 1))
     return bad(
       'The index must be a whole number from 0 to the number of pages less one.',
-      { path: 'index', nodeId: page.id },
+      { path: 'index' },
     )
   const pages = doc.pages.filter(p => p !== page)
   pages.splice(o.index, 0, page)
@@ -191,7 +182,8 @@ export const setSiteStyles: OpFn<'setSiteStyles'> = (doc, _registry, op) => {
   const unsafe = checkSafe(o, undefined, ['styles'])
   if (unsafe) return unsafe
   const entries = Object.entries(o.styles)
-  if (!entries.length) return bad('Give at least one key of styles.')
+  if (!entries.length)
+    return bad('Give at least one key of styles.', { path: 'styles' })
   for (const [k, v] of entries) {
     if (!STYLE_KEYS.includes(k))
       return bad(`"${k}" is not a key of the site styles.`, {

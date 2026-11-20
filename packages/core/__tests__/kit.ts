@@ -1,5 +1,11 @@
-import { emptySite, find } from '../src/document/index.ts'
-import type { Look, Node, Run, SiteDocument } from '../src/document/index.ts'
+import { emptySite, find, walk } from '../src/document/index.ts'
+import type {
+  KindSpec,
+  Look,
+  Node,
+  Run,
+  SiteDocument,
+} from '../src/document/index.ts'
 import { createRegistry } from '../src/registry/index.ts'
 import type {
   BlockDef,
@@ -8,8 +14,6 @@ import type {
   Registry,
   SettingFn,
 } from '../src/registry/index.ts'
-import { walk } from '../src/document/index.ts'
-import type { KindSpec } from '../src/document/index.ts'
 
 export const LOOK: Look = {
   id: 'plain',
@@ -283,7 +287,7 @@ const MAX_BADGES = {
   },
 }
 
-export const stampTree = (): Node => ({
+const stampTree = (): Node => ({
   id: 'root',
   kind: 'column',
   name: 'Stamp',
@@ -330,7 +334,7 @@ export const STAMP: BlockDef = {
   ],
 }
 
-export const SHOUT: SettingFn = {
+const SHOUT: SettingFn = {
   read: root =>
     (find(root, `${root.id}.title`)?.props?.runs as Run[] | undefined)?.[0]
       .text,

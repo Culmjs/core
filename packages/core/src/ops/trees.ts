@@ -21,7 +21,12 @@ export function rootOf(doc: SiteDocument, tree: TreeRef): Node | undefined {
   return undefined
 }
 
-/** A new document with one root replaced; the rest is shared. An unknown tree returns the document unchanged. */
+const replaceFirst = <T>(list: T[], is: (x: T) => boolean, to: (x: T) => T) => {
+  const i = list.findIndex(is)
+  return i < 0 ? list.slice() : list.map((x, j) => (j === i ? to(x) : x))
+}
+
+/** A new document with one root replaced (the first of two pages or components that share an id, the one `rootOf` reads); the rest is shared. An unknown tree returns the document unchanged. */
 export function withRoot(
   doc: SiteDocument,
   tree: TreeRef,
@@ -33,13 +38,19 @@ export function withRoot(
   if ('page' in tree)
     return {
       ...doc,
-      pages: doc.pages.map(p => (p.id === tree.page ? { ...p, root } : p)),
+      pages: replaceFirst(
+        doc.pages,
+        p => p.id === tree.page,
+        p => ({ ...p, root }),
+      ),
     }
   if ('component' in tree)
     return {
       ...doc,
-      components: doc.components.map(c =>
-        c.id === tree.component ? { ...c, root } : c,
+      components: replaceFirst(
+        doc.components,
+        c => c.id === tree.component,
+        c => ({ ...c, root }),
       ),
     }
   return doc

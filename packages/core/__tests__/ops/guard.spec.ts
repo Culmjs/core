@@ -1047,11 +1047,27 @@ test('the refusal message fits the node: words for a text, content that is not a
   assert.doesNotMatch(box.message, /its words/)
   assert.match(box.message, /content that is not a placeholder/)
   assert.match(box.message, /sample text/)
+  // the way out through the batch comes first; lifting the mark is a person's step, and only for a form or field
+  assert.match(
+    box.message,
+    /with setText\)\. For a form or field, a person can also opt it out with setRequired false\.$/,
+  )
   const doc = mkDoc(markRegistry(1))
   const txt = firstProblem(
     plan(doc, markRegistry(2), req([{ op: 'updateBlock', tree: T, id: 'mk' }])),
   )
   assert.match(txt.message, /its words/)
+})
+
+test('droppedRequired returns no finding, and does not throw, for a malformed before', () => {
+  for (const before of [
+    null,
+    {},
+    { pages: 3 },
+    { ...start(), pages: [{ id: 'p', root: null }] },
+    { ...start(), components: null },
+  ])
+    assert.equal(droppedRequired(before as never, start(), reg), undefined)
 })
 
 test('droppedRequired returns no finding, and does not throw, for a malformed after', () => {

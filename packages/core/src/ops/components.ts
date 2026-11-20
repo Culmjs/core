@@ -1,8 +1,10 @@
 import { ID_RE } from '../document/kinds.ts'
 import { isObj } from '../document/rules.ts'
 import { replace, retarget, targetOf, walk } from '../document/tree.ts'
+import { MAX_NODES } from '../document/index.ts'
 import type { Component, Node, SiteDocument } from '../document/index.ts'
-import { unrollOne } from '../data/bind.ts'
+import { stylesOf } from '../style/siteStyles.ts'
+import { unrollInstances } from '../validate/unroll.ts'
 import { MAX_COMPONENTS, validateSite } from '../validate/validate.ts'
 import { nextIds } from './ids.ts'
 import { MARKS, at, bad, checkSafe, isRefusal, merge, ref } from './nodes.ts'
@@ -251,7 +253,20 @@ export const detach: OpFn<'detach'> = (doc, registry, op) => {
     return bad(`"${n.id}" is not a component use.`, { nodeId: n.id })
   // Only the component's own tree is unrolled: what a person put in the slot is theirs and goes back as it was.
   const { children: slotted, ...bare } = n
-  const unrolled = unrollOne(doc, registry, bare as Node)
+  // The same unroll as compile's, with its budget in view: a copy cut at MAX_NODES would silently lose nested content.
+  const budget = { n: 0, over: false }
+  const unrolled = unrollInstances(
+    bare as Node,
+    doc.components,
+    { fonts: doc.fonts, styles: stylesOf(doc), kinds: registry.kinds() },
+    budget,
+  )
+  if (budget.over)
+    return refuse(
+      'RESOURCE_LIMIT_EXCEEDED',
+      `"${n.id}" holds more than ${MAX_NODES} elements once its components are filled in, so it cannot be detached whole.`,
+      { nodeId: n.id, path: 'id' },
+    )
   if (unrolled.kind === 'instance')
     return refuse(
       'UNKNOWN_COMPONENT',
@@ -331,10 +346,10 @@ export const removeComponent: OpFn<'removeComponent'> = (doc, _r, op) => {
       if (w.kind === 'instance' && w.component === cid) uses.push(w.id)
     })
   if (uses.length)
-    return bad(`The component "${cid}" is still used by ${uses.join(', ')}.`, {
-      nodeId: uses[0],
-      path: 'component',
-    })
+    return bad(
+      `The component "${cid}" is still used by ${uses.slice(0, 10).join(', ')}${uses.length > 10 ? ` and ${uses.length - 10} more` : ''}.`,
+      { nodeId: uses[0], path: 'component' },
+    )
   return {
     ok: true,
     doc: { ...doc, components: doc.components.filter(c => c.id !== cid) },

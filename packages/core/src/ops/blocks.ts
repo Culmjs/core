@@ -114,6 +114,8 @@ export const setBlockSetting: OpFn<'setBlockSetting'> = (doc, registry, op) => {
   if (isRefusal(t)) return t
   if (typeof o.key !== 'string')
     return bad('key must be a string.', { nodeId: t.node.id, path: 'key' })
+  if (o.value === undefined)
+    return bad('value is missing.', { nodeId: t.node.id, path: 'value' })
   const unsafe = checkSafe(o, t.node.id, ['value'])
   if (unsafe) return unsafe
   const r = applySetting(registry, t.node, o.key, o.value as never)
@@ -190,13 +192,17 @@ export const updateBlock: OpFn<'updateBlock'> = (doc, registry, op) => {
   }
   // The place of the block stays: its slot, placement, visibility, show conditions, lock and name; `replace` keeps the position among siblings.
   // A `required` mark is a person's, not the look's: on every node that is in both subtrees, an explicit mark (true or false) wins over the new look's.
+  // A `false` is carried only to a node that is still a form or a field (validation refuses it on any other kind, and the person never wrote it there); the node is then listed in the reset note, as any difference is.
   const marks = new Map<string, boolean>()
   walk(old, w => {
     if (w.required !== undefined) marks.set(w.id, w.required)
   })
   const mark = (n: Node): Node => ({
     ...n,
-    ...(marks.has(n.id) ? { required: marks.get(n.id) } : {}),
+    ...(marks.has(n.id) &&
+    (marks.get(n.id) || n.kind === 'form' || n.kind === 'field')
+      ? { required: marks.get(n.id) }
+      : {}),
     ...(n.children ? { children: n.children.map(mark) } : {}),
   })
   const placed: Node = { ...mark(fresh), slot: old.slot }
@@ -220,7 +226,7 @@ export const updateBlock: OpFn<'updateBlock'> = (doc, registry, op) => {
     notes.push({
       kind: 'reset',
       ids: reset,
-      text: 'These parts were changed outside a setting or are not in the new version; they are reset.',
+      text: 'These parts differ from the new version and are reset: they were changed outside a setting, hold a value the new version does not accept, are not in the new version, or carried a mark that no longer fits.',
     })
 
   const result = withRoot(doc, t.tree, replace(t.root, id, placed))

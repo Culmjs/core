@@ -158,16 +158,111 @@ test('add refuses two nodes of the subtree with one id', () =>
     { nodeId: 'x' },
   ))
 test('add refuses a node that is not an object', () => {
-  for (const n of [
-    undefined,
-    null,
-    'box',
-    3,
-    [],
-    { kind: 3 },
-    { kind: 'box', children: 'no' },
-  ])
+  for (const n of [undefined, null, 'box', 3, [], { kind: 3 }])
     invalid(add({ node: n }), { path: 'node' })
+  invalid(add({ node: { kind: 'box', children: 'no' } }), {
+    path: 'node.children',
+  })
+})
+test('add names the nested node a refusal is about: the path leads to it', () => {
+  const kid = (extra: object) => ({
+    kind: 'box',
+    children: [{ kind: 'box' }, { kind: 'box' }, { kind: 'box', ...extra }],
+  })
+  invalid(add({ node: kid({ id: 'c' }) }), {
+    nodeId: 'c',
+    path: 'node.children.2.id',
+  })
+  invalid(add({ node: kid({ id: 'Bad Id' }) }), {
+    nodeId: 'Bad Id',
+    path: 'node.children.2.id',
+  })
+  invalid(add({ node: kid({ kind: 3 }) }), { path: 'node.children.2' })
+  invalid(add({ node: kid({ children: 'no' }) }), {
+    path: 'node.children.2.children',
+  })
+  invalid(add({ node: kid({ name: 3 }) }), { path: 'node.children.2.name' })
+  invalid(add({ node: kid({ props: { sample: true } }) }), {
+    path: 'node.children.2.props.sample',
+  })
+  // the top node keeps its short paths
+  invalid(add({ node: { kind: 'box', id: 'c' } }), { path: 'node.id' })
+})
+test('add refuses a name or a slot of the wrong type on a given node, and says where', () => {
+  for (const [field, value] of [
+    ['name', 3],
+    ['name', null],
+    ['name', {}],
+    ['slot', 'x'],
+    ['slot', null],
+    ['slot', []],
+    ['slot', 3],
+  ] as const) {
+    invalid(add({ node: { kind: 'box', [field]: value } }), {
+      path: `node.${field}`,
+    })
+    invalid(
+      add({
+        node: { kind: 'box', children: [{ kind: 'box', [field]: value }] },
+      }),
+      {
+        path: `node.children.0.${field}`,
+      },
+    )
+  }
+})
+test('add: a node nested too deep to check is refused as too deep, not as an unsafe key', () => {
+  let deep: Record<string, unknown> = { x: 1 }
+  for (let i = 0; i < 40; i++) deep = { a: deep }
+  const r = add({ node: { kind: 'box', props: deep } })
+  invalid(r)
+  assert.ok(!r.ok)
+  assert.match(r.problems[0].message, /too deep/)
+  assert.doesNotMatch(r.problems[0].message, /allowed key/)
+  assert.match(r.problems[0].path ?? '', /^node\.props\.a\./)
+})
+test('add: the page, header and footer share one id space and a component has its own', () => {
+  const doc = base()
+  doc.footer = node('foot', 'column', [node('n1', 'box')])
+  doc.components.push({
+    id: 'k',
+    name: 'K',
+    root: node('kroot', 'column', [node('kid', 'box')]),
+    props: [],
+    variants: [],
+  })
+  // an id of the footer is used for a page node, and for a header node
+  invalid(add({ node: { kind: 'box', id: 'foot' } }, doc), {
+    nodeId: 'foot',
+  })
+  invalid(
+    add(
+      {
+        tree: 'header',
+        parent: doc.header.id,
+        index: 0,
+        node: { kind: 'box', id: 'n1' },
+      },
+      doc,
+    ),
+    {
+      nodeId: 'n1',
+    },
+  )
+  // generated ids skip the footer's n1
+  const made = ok(add({ node: { kind: 'box' } }, doc))
+  assert.deepEqual(made.created, [ref('n2')])
+  // an id of the page is free in a component, and the component's is free on the page
+  const inComp = (id: string) =>
+    run('add', doc, {
+      tree: { component: 'k' },
+      parent: 'kroot',
+      index: 0,
+      node: { kind: 'box', id },
+    })
+  ok(inComp('c'))
+  invalid(inComp('kid'), { nodeId: 'kid' })
+  ok(add({ node: { kind: 'box', id: 'kid' } }, doc))
 })
 test('add refuses an unsafe key anywhere in the node', () => {
   const n = JSON.parse('{"kind":"box","props":{"__proto__":{"x":1}}}')

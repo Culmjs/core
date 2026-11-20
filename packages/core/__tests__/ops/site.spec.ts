@@ -320,3 +320,79 @@ test('no site operation changes its input', () => {
   deepFreeze(styled)
   ok(run('setSiteStyles', styled, { styles: { textRange: null } }))
 })
+
+// ---- the shape of a refusal about a page: a page id is not a node id
+const noNodeId = (r: OpResult) => {
+  assert.ok(!r.ok)
+  assert.equal(r.problems[0].nodeId, undefined, JSON.stringify(r.problems[0]))
+}
+test('a refusal about a page names it by path "page" and carries no nodeId', () => {
+  const t = { title: 'X', slug: '/x' }
+  for (const [name, op, path] of [
+    ['addPage', { ...t, page: 'about' }, 'page'],
+    ['addPage', { ...t, page: 'Bad' }, 'page'],
+    ['removePage', { page: 'zz' }, 'page'],
+    ['removePage', {}, 'page'],
+    ['setPage', { page: 'zz', title: 'T' }, 'page'],
+    ['movePage', { page: 'zz', index: 0 }, 'page'],
+    ['movePage', { page: 'about', index: 5 }, 'index'],
+  ] as const) {
+    const r = run(name, base(), op)
+    invalid(r, { path })
+    noNodeId(r)
+  }
+  const last = run('removePage', siteWith([]), { page: 'home' })
+  invalid(last, { path: 'page' })
+  noNodeId(last)
+})
+
+test('refusals with no field to point at say so: setPage with no field, setSite {}', () => {
+  for (const r of [
+    run('setPage', base(), { page: 'about' }),
+    run('setSite', base(), {}),
+  ]) {
+    invalid(r)
+    noNodeId(r)
+    assert.ok(!r.ok)
+    assert.equal(r.problems[0].path, undefined)
+  }
+})
+
+test('setSiteStyles with no key points at styles; an unsafe key in languages is named in full', () => {
+  const r = run('setSiteStyles', base(), { styles: {} })
+  invalid(r, { path: 'styles' })
+  noNodeId(r)
+  const u = run('setSite', base(), {
+    languages: [JSON.parse('{"__proto__":1}')],
+  })
+  invalid(u, { path: 'languages.0.__proto__' })
+  noNodeId(u)
+})
+
+test('removePage is refused when the page holds the last use of a component with a required node, and accepted while another page uses it', () => {
+  const use = (id: string) => ({
+    id,
+    kind: 'instance' as const,
+    name: id,
+    slot: {},
+    component: 'card',
+  })
+  const d = twoPages([node('b', 'box')], [use('u1')])
+  d.components = [
+    {
+      id: 'card',
+      name: 'Card',
+      root: node('croot', 'box', [{ ...node('req', 'box'), required: true }]),
+      props: [],
+      variants: [],
+    },
+  ]
+  assert.deepEqual(validateSite(d, reg), [])
+  const r = run('removePage', d, { page: 'about' })
+  refused(r, 'POLICY_VIOLATION', { rule: 'required', nodeId: 'req' })
+  assert.ok(!r.ok)
+  assert.match(r.problems[0].message, /component "card"/)
+  // a second use on the home page keeps it
+  d.pages[0].root.children!.push(use('u2'))
+  ok(run('removePage', d, { page: 'about' }))
+})
