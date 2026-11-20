@@ -211,6 +211,8 @@ npm test
 | `npm run check:terms`                     | Fails when a product-specific term appears in the core    |
 | `npm run gen:scripts`                     | Regenerates the minified page scripts                     |
 
+On a machine that has the private packages, run `npm run parity:setup` once (and again after a clean `npm ci`) before `npm run parity`: it installs the four packages the parity harness needs without adding them to any tracked dependency list.
+
 The core is layered: `scripts`, `document`, `style`, `layout`, `registry`, `validate`, `data`, `compile`. A layer never imports from a later one.
 
 ## Brand
