@@ -1,0 +1,17 @@
+{
+  "name": "@culmjs/core",
+  "version": "0.0.0",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./document": "./src/document/index.ts",
+    "./style": "./src/style/index.ts",
+    "./layout": "./src/layout/index.ts",
+    "./scripts": "./src/scripts/index.ts",
+    "./registry": "./src/registry/index.ts",
+    "./validate": "./src/validate/index.ts",
+    "./data": "./src/data/index.ts",
+    "./compile": "./src/compile/index.ts"
+  }
+}

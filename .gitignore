@@ -1,0 +1,9 @@
+node_modules
+*.tsbuildinfo
+.eslintcache
+# kept on the machine, not published
+packages-private/
+REFERENCE.md
+docs/spikes/
+docs/stage-1-exit.md
+.superpowers

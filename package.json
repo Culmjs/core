@@ -1,0 +1,29 @@
+{
+  "name": "culm",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --import tsx --test --test-concurrency=1 'scripts/__tests__/*.spec.ts' 'packages/*/__tests__/**/*.spec.ts'",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write --cache .",
+    "format-check": "prettier --check --cache .",
+    "lint": "eslint",
+    "gen:scripts": "node --import tsx scripts/gen-scripts.ts",
+    "check:layers": "node --import tsx scripts/check-layers.ts",
+    "check:terms": "node --import tsx scripts/check-terms.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "eslint": "^9",
+    "prettier": "^3",
+    "tsx": "4.23.15",
+    "typescript": "^5",
+    "typescript-eslint": "^8"
+  }
+}
