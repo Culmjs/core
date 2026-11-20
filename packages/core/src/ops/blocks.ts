@@ -34,7 +34,8 @@ const idsOf = (n: Node) => {
 }
 
 /** A node without its children, as text: two nodes with the same text have the same fields. */
-const flat = (n: Node) => JSON.stringify({ ...n, children: undefined })
+const flat = (n: Node) =>
+  JSON.stringify({ ...n, children: undefined, origin: undefined })
 
 export const insertBlock: OpFn<'insertBlock'> = (doc, registry, op) => {
   const o = op as unknown as Fields
@@ -178,13 +179,25 @@ export const updateBlock: OpFn<'updateBlock'> = (doc, registry, op) => {
     if (r.ok) fresh = r.root
     else
       notes.push({
-        kind: 'info',
+        kind: 'reset',
         ids: [id],
-        text: `The setting "${key}" was reset: ${r.problems[0].message}`,
+        text: `The setting "${key}" was reset; the new version does not accept ${JSON.stringify(value)}.`,
       })
   }
   // The place of the block stays: its slot, placement, visibility; `replace` keeps the position among siblings.
-  const placed: Node = { ...fresh, slot: old.slot }
+  // A `required` mark is a person's, not the look's: it stays on every node that is in both subtrees, unless the new look sets its own.
+  const marks = new Map<string, boolean>()
+  walk(old, w => {
+    if (w.required !== undefined) marks.set(w.id, w.required)
+  })
+  const mark = (n: Node): Node => ({
+    ...n,
+    ...(n.required === undefined && marks.has(n.id)
+      ? { required: marks.get(n.id) }
+      : {}),
+    ...(n.children ? { children: n.children.map(mark) } : {}),
+  })
+  const placed: Node = { ...mark(fresh), slot: old.slot }
   for (const k of ['placement', 'hide'] as const)
     if (old[k] !== undefined) (placed as Fields)[k] = old[k]
 
@@ -192,7 +205,7 @@ export const updateBlock: OpFn<'updateBlock'> = (doc, registry, op) => {
   walk(placed, w => next.set(w.id, flat(w)))
   const reset: string[] = []
   walk(old, w => {
-    if (w.id !== id && next.get(w.id) !== flat(w)) reset.push(w.id)
+    if (next.get(w.id) !== flat(w)) reset.push(w.id)
   })
   if (reset.length)
     notes.push({

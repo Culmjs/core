@@ -11,6 +11,7 @@ import {
 import * as nodeOps from '../../src/ops/nodes.ts'
 import { rootOf } from '../../src/ops/trees.ts'
 import type { Op, OpResult } from '../../src/ops/types.ts'
+import { DEMO, DEMO_PLUGIN } from '../kit.ts'
 import { createRegistry } from '../../src/registry/index.ts'
 import { validateSite } from '../../src/validate/index.ts'
 import {
@@ -355,4 +356,97 @@ test('bigPage(2000) holds exactly 2000 nodes and validates', () => {
     assert.deepEqual(validateSite(doc, reg), [], String(n))
   }
   assert.equal(MAX_NODES, 2000)
+})
+
+test('updateBlock reports an edit on the block root, and not when there is none', () => {
+  const styled = ok(
+    nodeOps.setStyle(withBlock(), reg, {
+      op: 'setStyle',
+      tree: T,
+      id: 'b1',
+      layer: 'base',
+      decl: { gap: 7 },
+    }),
+  ).doc!
+  const r = ok(update(styled, 'b1', demoV2Registry()))
+  const reset = r.notes!.find(n => n.kind === 'reset')!
+  assert.deepEqual(reset.ids, ['b1', 'b1.note'])
+  assert.equal(subtree(r.doc!, 'b1').style, undefined)
+  const plain = ok(update(withBlock(), 'b1', demoV2Registry()))
+  assert.ok(!plain.notes!.some(n => n.ids.includes('b1')))
+})
+
+test('updateBlock keeps a required mark on a node that stays, and still refuses to lose one', () => {
+  const mark = (doc: SiteDocument, id: string) =>
+    ok(
+      nodeOps.setRequired(doc, reg, {
+        op: 'setRequired',
+        tree: T,
+        id,
+        required: true,
+      }),
+    ).doc!
+  const t = ok(update(mark(withBlock(), 'b1.title'), 'b1', demoV2Registry()))
+  assert.equal(subtree(t.doc!, 'b1.title').required, true)
+  const r = ok(update(mark(withBlock(), 'b1'), 'b1', demoV2Registry()))
+  assert.equal(subtree(r.doc!, 'b1').required, true)
+  assert.ok(
+    !r.notes!.some(n => n.ids.includes('b1')),
+    'the mark is not a difference',
+  )
+  refused(
+    update(mark(withBlock(), 'b1.note'), 'b1', demoV2Registry()),
+    'POLICY_VIOLATION',
+    {
+      rule: 'required',
+    },
+  )
+})
+
+test('updateBlock reports a setting value the new version rejects in a reset note', () => {
+  const withSize = (version: number, options: string[]) => {
+    const r = createRegistry()
+    r.use({
+      ...DEMO_PLUGIN,
+      version,
+      settingFns: undefined,
+      blocks: [
+        {
+          ...DEMO,
+          version,
+          settings: [
+            {
+              key: 'size',
+              label: 'Size',
+              type: 'select',
+              options: options.map(v => ({ label: v, value: v })),
+              actions: [{ do: 'set', path: 'title.props.level' }],
+            },
+          ],
+        },
+      ],
+    })
+    return r
+  }
+  const v1 = withSize(1, ['h1', 'h2'])
+  const doc = ok(
+    ins(siteWith(), { id: 'b1', settings: { size: 'h1' } }, v1),
+  ).doc!
+  const r = ok(update(doc, 'b1', withSize(2, ['h2'])))
+  const note = r.notes!.find(
+    n => n.kind === 'reset' && n.text.includes('size'),
+  )!
+  assert.deepEqual(note.ids, ['b1'])
+  assert.match(note.text, /h1/)
+})
+
+test('insertBlock of a block with an insert function uses the tree that function returns', () => {
+  const r = kitRegistry()
+  const doc = ok(ins(siteWith(), { block: 'stamp', id: 's1' }, r)).doc!
+  assert.deepEqual(find(subtree(doc, 's1'), 's1.title')!.props!.runs, [
+    { text: 'Stamped' },
+  ])
+  assert.deepEqual(r.block('stamp')!.looks[0].tree.children![0].props!.runs, [
+    { text: 'Stamp' },
+  ])
 })

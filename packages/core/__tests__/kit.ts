@@ -313,7 +313,12 @@ export const STAMP: BlockDef = {
   name: 'Stamp',
   category: 'utility',
   looks: [{ id: 'default', name: 'Default', tree: stampTree() }],
-  onInsert: () => stampTree(),
+  // Differs from the look's tree in the title, so a test can tell the function ran.
+  onInsert: () => {
+    const t = stampTree()
+    t.children![0].props = { runs: [{ text: 'Stamped' }], sample: true }
+    return t
+  },
   settings: [
     {
       key: 'title',
