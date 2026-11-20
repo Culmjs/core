@@ -762,3 +762,215 @@ test('CT1: the same cut page with no required content stays valid', () => {
   assert.ok(r.ok, JSON.stringify(!r.ok && r.problems))
   assert.deepEqual(validateSite(r.doc, reg), [])
 })
+
+// ---- fifth round, I1 and minor 1: no operation leaves a required node dropped as a sample ----
+
+/** A block `ck` whose look leaves the required title unmarked beside an untouched sample `s`; its setting `c` writes `chrome` on the title, by a declared action or by `fn`. */
+const chromeRegistry = (fn?: SettingFn) => {
+  const r = kitRegistry()
+  r.use({
+    name: 'chromekit',
+    version: 1,
+    api: [1],
+    runs: ['build'],
+    trust: 'declarative',
+    blocks: [
+      {
+        ...STAMP,
+        id: 'ck',
+        onInsert: undefined,
+        looks: [
+          {
+            id: 'default',
+            name: 'Default',
+            tree: node('root', 'column', [
+              text('title', 'Title', { required: true }),
+              {
+                ...text('s', 'Write here'),
+                props: { runs: [{ text: 'Write here' }], sample: true },
+              },
+            ]),
+          },
+        ],
+        settings: [
+          fn
+            ? { key: 'c', label: 'C', type: 'switch', fn: 'chromefn' }
+            : {
+                key: 'c',
+                label: 'C',
+                type: 'switch',
+                actions: [{ do: 'set', path: 'title.props.chrome' }],
+              },
+        ],
+      },
+    ],
+    ...(fn ? { settingFns: { chromefn: fn } } : {}),
+  })
+  return r
+}
+const ckDoc = (r: ReturnType<typeof kitRegistry>) => {
+  const p = plan(
+    start(),
+    r,
+    req([
+      {
+        op: 'insertBlock',
+        tree: T,
+        parent: 'homeroot',
+        index: 0,
+        block: 'ck',
+        look: 'default',
+        id: 'ck',
+      },
+      { op: 'setText', tree: T, id: 'ck.title', text: 'Mine' },
+    ]),
+  )
+  assert.ok(p.ok, JSON.stringify(!p.ok && p.problems))
+  return p.doc
+}
+const chromeOn = {
+  op: 'setBlockSetting',
+  tree: T,
+  id: 'ck',
+  key: 'c',
+  value: true,
+}
+
+test('I1 refused: a declared action that writes chrome on a required title the owner wrote', () => {
+  const r = chromeRegistry()
+  const p = firstProblem(plan(ckDoc(r), r, req([chromeOn])))
+  assert.deepEqual(
+    [p.code, p.rule, p.nodeId],
+    ['POLICY_VIOLATION', 'required', 'ck.title'],
+  )
+})
+
+test('I1 refused: a setting function that writes chrome on a required title the owner wrote', () => {
+  const r = chromeRegistry({
+    read: () => false,
+    apply(root) {
+      const out: Node = JSON.parse(JSON.stringify(root))
+      out.children![0].props = { ...out.children![0].props, chrome: true }
+      return out
+    },
+  })
+  const p = firstProblem(plan(ckDoc(r), r, req([chromeOn])))
+  assert.deepEqual(
+    [p.code, p.rule, p.nodeId],
+    ['POLICY_VIOLATION', 'required', 'ck.title'],
+  )
+})
+
+test('minor 1 refused: add of a subtree that carries a sample or chrome mark, with the path to it', () => {
+  const addNode = (nodeValue: object) =>
+    firstProblem(
+      plan(
+        start(),
+        reg,
+        req([
+          { op: 'add', tree: T, parent: 'wrap', index: 0, node: nodeValue },
+        ]),
+      ),
+    )
+  let p = addNode({
+    kind: 'text',
+    props: { runs: [{ text: 'x' }], sample: true },
+  })
+  assert.deepEqual([p.code, p.path], ['INVALID_OPERATION', 'node.props.sample'])
+  p = addNode({
+    kind: 'box',
+    children: [
+      { kind: 'divider' },
+      { kind: 'text', props: { runs: [{ text: 'x' }], chrome: false } },
+    ],
+  })
+  assert.deepEqual(
+    [p.code, p.path],
+    ['INVALID_OPERATION', 'node.children.1.props.chrome'],
+  )
+})
+
+/** A page with a required box `rb` that holds the owner's text `o` and an untouched sample `s`. */
+const boxWithSample = (): SiteDocument => {
+  const d = start()
+  d.pages[0].root.children!.push({
+    ...node('rb', 'box', [
+      text('o', 'Mine'),
+      {
+        ...text('s', 'Write here'),
+        props: { runs: [{ text: 'Write here' }], sample: true },
+      },
+    ]),
+    required: true,
+  })
+  return d
+}
+
+test('refused: remove, move or hide of the last owner text of a required box that holds a sample (the live page would drop the box)', () => {
+  assert.deepEqual(validateSite(boxWithSample(), reg), [])
+  for (const op of [
+    { op: 'remove', tree: T, id: 'o' },
+    { op: 'move', tree: T, id: 'o', parent: 'homeroot', index: 0 },
+    hide('o', 'desktop'),
+  ]) {
+    const ops =
+      op.op === 'setHidden'
+        ? [op, hide('o', 'tablet'), hide('o', 'phone')]
+        : [op]
+    const p = firstProblem(plan(boxWithSample(), reg, req(ops)))
+    assert.deepEqual(
+      [p.code, p.rule, p.nodeId],
+      ['POLICY_VIOLATION', 'required', 'rb'],
+      op.op,
+    )
+  }
+  // one layout hidden: the box still shows elsewhere
+  assert.ok(plan(boxWithSample(), reg, req([hide('o', 'phone')])).ok)
+})
+
+test('the way out of a refused updateBlock: write the words again in the same batch; the message says so', () => {
+  const doc = mkDoc(markRegistry(1))
+  const r = plan(
+    doc,
+    markRegistry(2),
+    req([{ op: 'updateBlock', tree: T, id: 'mk' }]),
+  )
+  const p = firstProblem(r)
+  assert.match(p.message, /setText/)
+  assert.match(p.message, /setting/)
+  const again = plan(
+    doc,
+    markRegistry(2),
+    req([
+      { op: 'updateBlock', tree: T, id: 'mk' },
+      { op: 'setText', tree: T, id: 'mk.title', text: 'Mine' },
+    ]),
+  )
+  assert.ok(again.ok, JSON.stringify(!again.ok && again.problems))
+})
+
+test('a required part of a block (a page node with a dotted id) is reported at its own id', () => {
+  const p = firstProblem(
+    plan(
+      start(),
+      reg,
+      req([
+        {
+          op: 'insertBlock',
+          tree: T,
+          parent: 'homeroot',
+          index: 0,
+          block: 'stamp',
+          look: 'default',
+          id: 'st',
+        },
+        { op: 'setText', tree: T, id: 'st.title', text: 'Mine' },
+        hide('st.title', 'phone'),
+      ]),
+    ),
+  )
+  assert.deepEqual(
+    [p.rule, p.nodeId, p.path],
+    ['required', 'st.title', 'hide.phone'],
+  )
+})

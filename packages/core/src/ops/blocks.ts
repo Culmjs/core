@@ -16,8 +16,6 @@ import {
   indexOk,
   isRefusal,
   lostRequired,
-  madeSample,
-  sampleRefusal,
   ref,
   requiredRefusal,
   usedIds,
@@ -133,8 +131,6 @@ export const setBlockSetting: OpFn<'setBlockSetting'> = (doc, registry, op) => {
   const result = withRoot(doc, t.tree, replace(t.root, t.node.id, r.root))
   const lost = lostRequired(doc, result)
   if (lost) return requiredRefusal(lost)
-  const sampled = madeSample(doc, result)
-  if (sampled) return sampleRefusal(sampled)
   return {
     ok: true,
     doc: result,
@@ -232,8 +228,6 @@ export const updateBlock: OpFn<'updateBlock'> = (doc, registry, op) => {
   const result = withRoot(doc, t.tree, replace(t.root, id, placed))
   const lost = lostRequired(doc, result)
   if (lost) return requiredRefusal(lost)
-  const sampled = madeSample(doc, result)
-  if (sampled) return sampleRefusal(sampled)
   const before = new Set(idsOf(old))
   return {
     ok: true,

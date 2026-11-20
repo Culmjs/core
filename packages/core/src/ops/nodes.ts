@@ -150,8 +150,19 @@ export const add: OpFn<'add'> = (doc, registry, op) => {
   const given = new Set<string>()
   let missing = 0
   let problem: Refusal | undefined
-  const check = (n: unknown): void => {
+  const check = (n: unknown, at = 'node'): void => {
     if (problem) return
+    const mark =
+      isObj(n) && isObj(n.props)
+        ? MARKS.find(k => Object.hasOwn(n.props as object, k))
+        : undefined
+    if (mark) {
+      problem = bad(
+        `The ${mark} mark cannot be set by an operation; only inserting a block writes it.`,
+        { path: `${at}.props.${mark}` },
+      )
+      return
+    }
     if (!isObj(n) || typeof n.kind !== 'string') {
       problem = bad('A node needs a kind.', { path: 'node' })
       return
@@ -172,7 +183,9 @@ export const add: OpFn<'add'> = (doc, registry, op) => {
         path: 'node.id',
       })
     else given.add(n.id)
-    for (const c of (n.children as unknown[] | undefined) ?? []) check(c)
+    ;((n.children as unknown[] | undefined) ?? []).forEach((c, i) =>
+      check(c, `${at}.children.${i}`),
+    )
   }
   check(o.node)
   if (problem) return problem
@@ -233,30 +246,6 @@ export const requiredRefusal = (lost: NodeRef) =>
     'POLICY_VIOLATION',
     `"${lost.id}" must stay in the site${typeof lost.tree === 'object' && 'component' in lost.tree ? ` (in component "${lost.tree.component}")` : ''}.`,
     { nodeId: lost.id, rule: 'required' },
-  )
-
-const sampleAt = (doc: SiteDocument, r: NodeRef) => {
-  const root = rootOf(doc, r.tree)
-  const n = root && find(root, r.id)
-  return n ? n.props?.sample === true : undefined
-}
-
-/** A node that was in the site, not a sample, and after the change is required and a sample: the live page would leave it out. */
-export function madeSample(
-  before: SiteDocument,
-  after: SiteDocument,
-): NodeRef | undefined {
-  return requiredRefs(after).find(
-    r => sampleAt(after, r) === true && sampleAt(before, r) === false,
-  )
-}
-
-/** The refusal for a change that would turn required text back into sample text. */
-export const sampleRefusal = (r: NodeRef) =>
-  refuse(
-    'POLICY_VIOLATION',
-    `"${r.id}" must stay on the page, but this change would make it sample text again, which the live page leaves out.`,
-    { nodeId: r.id, rule: 'required' },
   )
 
 /** Provenance marks: only inserting a block writes them. */

@@ -4,6 +4,7 @@ import { isObj } from '../document/rules.ts'
 import { walk } from '../document/tree.ts'
 import type { Registry } from '../registry/index.ts'
 import { validateSite } from '../validate/index.ts'
+import { droppedRequired } from '../validate/required.ts'
 import * as blocks from './blocks.ts'
 import * as components from './components.ts'
 import { affected, diffAll } from './diff.ts'
@@ -224,6 +225,18 @@ export function plan(
             ? { ...p, op: last.get(p.nodeId) }
             : p,
         ),
+      }
+
+    // Checked once per batch: what the live page leaves out as samples depends on the whole tree, and the end state is what is published.
+    const dropped = droppedRequired(doc, work, registry)
+    if (dropped)
+      return {
+        ok: false,
+        problems: [
+          dropped.nodeId !== undefined && last.has(dropped.nodeId)
+            ? { ...dropped, op: last.get(dropped.nodeId) }
+            : dropped,
+        ],
       }
 
     // What the batch made and changed is what the diff reports, so the two cannot disagree.
