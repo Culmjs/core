@@ -924,3 +924,167 @@ test('H1: when too many ways reach a part to judge them all, the refusal is RESO
   assert.match(hit.message, /c1/)
   assert.match(hit.message, /title/)
 })
+
+// ---- second fix round, H2: a required instance, or content in its slot, hidden from inside the component ----
+
+/** A component `c1` whose root `croot` holds a slot host `body`; a required instance `i1` of it, holding a required text `rt` in its slot. */
+const hosted = (inst: object = {}, props: object[] = [], withText = true) => {
+  const d = put(
+    n({
+      id: 'i1',
+      kind: 'instance',
+      name: 'i1',
+      slot: fs(),
+      component: 'c1',
+      required: true,
+      ...(withText
+        ? {
+            children: [
+              n({
+                id: 'rt',
+                kind: 'text',
+                name: 'rt',
+                slot: {},
+                required: true,
+                props: { level: 'p', runs: [{ text: 'In the slot' }] },
+              }),
+            ],
+          }
+        : {}),
+      ...inst,
+    }),
+  )
+  return {
+    ...d,
+    components: [
+      {
+        id: 'c1',
+        name: 'c1',
+        root: n({
+          id: 'croot',
+          kind: 'box',
+          name: 'croot',
+          slot: {},
+          children: [
+            n({
+              id: 'body',
+              kind: 'box',
+              name: 'body',
+              slot: {},
+              children: [],
+            }),
+          ],
+        }),
+        props: [
+          { key: 'content', label: 'Content', type: 'slot', part: 'body' },
+          ...props,
+        ],
+        variants: [],
+      },
+    ],
+  }
+}
+const showing = (part: string, extra: object = {}) => ({
+  key: 'show',
+  label: 'Show',
+  type: 'toggle',
+  part,
+  field: 'hidden',
+  ...extra,
+})
+
+test('H2: a required instance hidden through its component root is refused, with the instance and where it is written', () => {
+  assert.deepEqual(
+    probs(
+      hosted(
+        { overrides: { croot: { style: { base: { hidden: true } } } } },
+        [],
+        false,
+      ),
+    ),
+    [['required', 'i1', 'overrides.croot.style.base.hidden']],
+  )
+  assert.deepEqual(
+    probs(
+      hosted({ overrides: { croot: { hide: { phone: true } } } }, [], false),
+    ),
+    [['required', 'i1', 'overrides.croot.hide.phone']],
+  )
+  assert.deepEqual(
+    probs(
+      hosted(
+        { set: { show: false } },
+        [showing('croot', { default: true })],
+        false,
+      ),
+    ),
+    [['required', 'i1', 'set.show']],
+  )
+  // the visible twins
+  assert.deepEqual(
+    probs(hosted({}, [showing('croot', { default: true })], false)),
+    [],
+  )
+  assert.deepEqual(
+    probs(
+      hosted(
+        { set: { show: true } },
+        [showing('croot', { default: false })],
+        false,
+      ),
+    ),
+    [],
+  )
+  assert.deepEqual(
+    probs(
+      hosted(
+        { overrides: { croot: { style: { base: { color: 'brand' } } } } },
+        [],
+        false,
+      ),
+    ),
+    [],
+  )
+})
+
+test('H2: content in an instance slot is refused when the slot host, or a part above it, is hidden by the use', () => {
+  // i1 is required too, so a hidden root is reported for the instance and for its content
+  const refused = (d: object, path: string, times = 1) =>
+    assert.deepEqual(
+      probs(d),
+      Array.from({ length: times }, () => ['required', 'i1', path]),
+      path,
+    )
+  refused(
+    hosted({ overrides: { body: { hide: { phone: true } } } }),
+    'overrides.body.hide.phone',
+  )
+  refused(
+    hosted({ overrides: { body: { style: { base: { hidden: true } } } } }),
+    'overrides.body.style.base.hidden',
+  )
+  refused(
+    hosted({ overrides: { croot: { hide: { desktop: true } } } }),
+    'overrides.croot.hide.desktop',
+    2,
+  )
+  refused(
+    hosted({ set: { show: false } }, [showing('body', { default: true })]),
+    'set.show',
+  )
+  // the visible twins
+  assert.deepEqual(probs(hosted()), [])
+  assert.deepEqual(probs(hosted({}, [showing('body', { default: true })])), [])
+  assert.deepEqual(
+    probs(
+      hosted({ set: { show: true } }, [showing('body', { default: false })]),
+    ),
+    [],
+  )
+  assert.deepEqual(
+    probs(
+      hosted({ overrides: { body: { style: { base: { color: 'brand' } } } } }),
+    ),
+    [],
+  )
+})

@@ -360,6 +360,59 @@ export function checkRequired(doc: SiteDocument): Problem[] {
         outer,
       }))
     })
+    // A required instance, or content in an instance's slot, is hidden by what the use does to the component's root or to the
+    // slot host and the parts above it. Judged as the page shows them, for every way the instance is reached.
+    const inside = (n: Node, up: readonly Node[]) => {
+      for (const a of [n, ...[...up].reverse()]) {
+        const comp =
+          a.kind === 'instance' && typeof a.component === 'string'
+            ? ix.components.get(a.component)
+            : undefined
+        const u = comp && ix.uses.get(comp.id)?.find(x => x.path.at(-1) === a)
+        if (!comp || !u) continue
+        // the parts that carry the page node: the root for the instance itself, the slot host and its ancestors for slot content
+        const carriers: Node[][] = []
+        if (a === n) carriers.push([comp.root])
+        else
+          for (const p of Array.isArray(comp.props) ? comp.props : [])
+            if (isObj(p) && p.type === 'slot' && typeof p.part === 'string')
+              walkWithAncestors(comp.root, (x, above) => {
+                if (x.id === p.part) carriers.push([...above, x])
+              })
+        if (!carriers.length) continue
+        const c = outerChains(ix, u)
+        if (c.over) add(tooMany(comp.id, n.id, 'required'))
+        const use = useOf(comp, a, mines(comp))
+        for (const outer of c.chains)
+          for (const chain of carriers)
+            for (const part of chain) {
+              const st = stagesOf(part, use, outer)
+              const i = st.findIndex(x => reasonOf(x.node))
+              if (i < 0 || !reasonOf(st[st.length - 1].node)) continue
+              const r = reasonOf(st[i].node)!
+              const place =
+                i === 0
+                  ? { nodeId: a.id }
+                  : placeOf(
+                      st[i],
+                      st[i - 1].node,
+                      comp,
+                      part.id,
+                      pathOf(r) ?? '',
+                    )
+              if (place)
+                add(
+                  policy(
+                    'required',
+                    a === n
+                      ? `The block "${n.id}" must stay on the page, but this use hides the root of the component "${comp.id}".`
+                      : `The block "${n.id}" sits in the slot of "${a.id}", but this use hides "${part.id}" of the component "${comp.id}".`,
+                    place,
+                  ),
+                )
+            }
+      }
+    }
     walkWithAncestors(root, (n, up) => {
       let form: Node | undefined
       for (let i = up.length - 1; i >= 0 && !form; i--)
@@ -400,6 +453,7 @@ export function checkRequired(doc: SiteDocument): Problem[] {
                 ),
               )
           }
+      inside(n, up)
       if (n.kind !== 'text') return
       if (!owner) {
         if (!hasContent(n))
