@@ -1088,3 +1088,45 @@ test('H2: content in an instance slot is refused when the slot host, or a part a
     [],
   )
 })
+
+// ---- second fix round, F1 and M-c: only a look in use hides; a part shown by its use is visible ----
+
+const hidingLook = [
+  { when: { look: 'b' }, patch: { title: { hide: { phone: true } } } },
+]
+test('F1: a look that hides a required part is fine while no use selects it', () => {
+  assert.deepEqual(probs(shownDoc([look], hidingLook, {})), [])
+  assert.deepEqual(
+    probs(shownDoc([look], hidingLook, { set: { look: 'a' } })),
+    [],
+  )
+})
+
+test('F1: the same look selected by one of two uses is refused', () => {
+  const d = shownDoc([look], hidingLook, { set: { look: 'b' } })
+  d.pages[0].root.children!.push(
+    n({ id: 'i2', kind: 'instance', name: 'i2', slot: fs(), component: 'c1' }),
+  )
+  const p = probs(d)
+  assert.equal(p.length, 1)
+  assert.equal(p[0][0], 'required')
+})
+
+test('M-c: a master part hidden for good is shown by a use that turns it on, and refused for a use that does not', () => {
+  const hiddenMaster = { style: { base: { hidden: true } } }
+  const tog = toggle({ default: false })
+  // shown for the use that sets the toggle on
+  assert.deepEqual(
+    probs(shownDoc([tog], [], { set: { show: true } }, hiddenMaster)),
+    [],
+  )
+  // not turned on: still hidden
+  assert.equal(probs(shownDoc([tog], [], {}, hiddenMaster))[0]?.[0], 'required')
+  assert.equal(probs(shownDoc([], [], {}, hiddenMaster))[0]?.[0], 'required')
+  // two uses: only the one that does not turn it on is refused
+  const d = shownDoc([tog], [], { set: { show: true } }, hiddenMaster)
+  d.pages[0].root.children!.push(
+    n({ id: 'i2', kind: 'instance', name: 'i2', slot: fs(), component: 'c1' }),
+  )
+  assert.equal(probs(d).length, 1)
+})

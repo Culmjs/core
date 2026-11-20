@@ -215,6 +215,41 @@ test('a version 1 form hidden on phone carries required: false after migration',
   assert.equal(parts[1].required, false)
 })
 
+test('a version 1 form hidden by a look: required: false only when a use selects the look', () => {
+  const make = (set?: object) => {
+    const d = siteWith([
+      {
+        ...node('inst', 'instance'),
+        component: 'c',
+        ...(set ? { set } : {}),
+      } as never,
+    ])
+    d.schemaVersion = 1
+    d.components = [
+      {
+        id: 'c',
+        name: 'c',
+        props: [
+          { key: 'look', label: 'Look', type: 'choice', options: ['a', 'b'] },
+        ],
+        root: node('cr', 'column', [node('cf', 'form')]),
+        variants: [
+          { when: { look: 'b' }, patch: { cf: { hide: { phone: true } } } },
+        ],
+      },
+    ]
+    return d as unknown as Record<string, unknown>
+  }
+  const formOf = (d: Record<string, unknown>) => {
+    const r = migrate(d)
+    assert.ok(r.ok)
+    return r.doc.components[0].root.children![0]
+  }
+  assert.equal(formOf(make({ look: 'b' })).required, false)
+  assert.equal('required' in formOf(make()), false)
+  assert.equal('required' in formOf(make({ look: 'a' })), false)
+})
+
 test('a version 1 form that is not hidden gets no required field', () => {
   const d = siteWith([node('f', 'form')])
   d.schemaVersion = 1

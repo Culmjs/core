@@ -143,6 +143,39 @@ const own = (nodes: readonly Node[]): HiddenWhy | undefined => {
   return undefined
 }
 
+/** The variants of `comp` that apply to the use `inst`: every entry of a variant's `when` equals the value the use gives that property (its `set`, else its default; a choice takes only one of its options). Same rule as `unrollInstances`. */
+export function looksOf(comp: Component, inst: Node): number[] {
+  const obj = (v: unknown) =>
+    isObj(v) || Array.isArray(v) ? (v as Record<string, unknown>) : {}
+  const set = obj(inst.set)
+  const values: Record<string, unknown> = {}
+  for (const p of arr(comp.props)) {
+    if (!isObj(p)) continue
+    const given = Object.hasOwn(set, p.key as string)
+      ? set[p.key as string]
+      : undefined
+    const options = p.options as unknown
+    values[p.key as string] =
+      p.type === 'choice'
+        ? typeof given === 'string' &&
+          Array.isArray(options) &&
+          options.includes(given)
+          ? given
+          : (p.default ?? (Array.isArray(options) ? options[0] : undefined))
+        : (given ?? p.default)
+  }
+  const looks: number[] = []
+  arr(comp.variants).forEach((v, i) => {
+    if (
+      isObj(v) &&
+      isObj(v.when) &&
+      Object.entries(v.when).every(([k, val]) => values[k] === val)
+    )
+      looks.push(i)
+  })
+  return looks
+}
+
 /**
  * Whether a part of component `cid`, or the nodes in `chain` (the part, its ancestors, and the instances above it), is hidden
  * by a variant patch of the component or by an instance of it: the instance itself, its ancestors, or one of its overrides.
@@ -152,6 +185,7 @@ function through(
   cid: string,
   chain: ReadonlySet<Node>,
   stack: ReadonlySet<string>,
+  onlyUse = false,
 ): HiddenWhy | undefined {
   const comp = ix.components.get(cid)
   if (!comp || stack.has(cid)) return undefined
@@ -160,20 +194,26 @@ function through(
     const node = partOf(ix, comp, key)
     return node && chain.has(node) && isObj(o) ? reasonOf(o) : undefined
   }
-  for (const v of arr(comp.variants))
-    for (const [k, o] of Object.entries(
-      isObj(v) && isObj(v.patch) ? v.patch : {},
-    )) {
-      const r = patch(o, k)
-      if (r) return { by: cid, ...r, how: 'variant' }
-    }
   for (const use of ix.uses.get(cid) ?? []) {
     const inst = use.path[use.path.length - 1]
-    for (const [k, o] of Object.entries(
-      isObj(inst.overrides) ? inst.overrides : {},
-    )) {
-      const r = patch(o, k)
-      if (r) return { by: inst.id, ...r, how: 'override' }
+    if (!onlyUse) {
+      // a look hides only for a use that selects it
+      const all = arr(comp.variants)
+      for (const i of looksOf(comp, inst))
+        for (const [k, o] of Object.entries(
+          isObj(all[i]) && isObj((all[i] as { patch?: unknown }).patch)
+            ? (all[i] as { patch: object }).patch
+            : {},
+        )) {
+          const r = patch(o, k)
+          if (r) return { by: cid, ...r, how: 'variant' }
+        }
+      for (const [k, o] of Object.entries(
+        isObj(inst.overrides) ? inst.overrides : {},
+      )) {
+        const r = patch(o, k)
+        if (r) return { by: inst.id, ...r, how: 'override' }
+      }
     }
     const r = own(use.path)
     if (r) return r
@@ -183,6 +223,7 @@ function through(
         use.tree.component,
         new Set([...chain, ...use.path]),
         next,
+        onlyUse,
       )
       if (r2) return r2
     }
@@ -201,6 +242,17 @@ export function hiddenAt(
   return through(ix, tree.component, new Set(path), new Set())
 }
 export { indexOf as hiddenIndex }
+
+/** What hides a part of a component through the uses that hold it: a use, or an ancestor of one, that is hidden. Not the part's own tree, and not what a use's overrides, properties or looks do to the part (the caller judges those per use). */
+export function hiddenViaUse(
+  ix: Index,
+  tree: TreeAt,
+  path: readonly Node[],
+): HiddenWhy | undefined {
+  return typeof tree === 'object' && 'component' in tree
+    ? through(ix, tree.component, new Set(path), new Set(), true)
+    : undefined
+}
 
 /** An instance further out that can override a part of a nested component: `via` is the ids of the instances between it and the part (`<inner>.<part>` is the key of its override). */
 export type Outer = { inst: Node; via: string }
@@ -240,7 +292,7 @@ function carriers(ix: Index): Set<string> {
 
 /**
  * The instances further out that can change a part of the instance at the end of `use.path`, innermost first, one chain for each
- * different set of them. Only an instance whose `overrides` has a key under the path to the part (`<via>.`) is recorded, so
+ * different set of them. Only an instance whose `overrides` has the key of the nested instance itself (`<via>`, its root) or one under it (`<via>.`) is recorded, so
  * uses that carry no such override are the same chain as the shorter one, however many there are. A use directly in a page,
  * the header or the footer has one chain, empty. `over` is true when the bounds were hit and some chains are missing: the
  * caller must treat that as "not all uses could be checked".
@@ -266,7 +318,7 @@ export function outerChains(
   }
   const gives = (inst: Node, via: string) =>
     isObj(inst.overrides) &&
-    Object.keys(inst.overrides).some(k => k.startsWith(`${via}.`))
+    Object.keys(inst.overrides).some(k => k === via || k.startsWith(`${via}.`))
   const up = (
     tree: TreeAt,
     via: string,

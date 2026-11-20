@@ -1,6 +1,8 @@
 import {
   hiddenAt,
   hiddenIndex,
+  hiddenViaUse,
+  looksOf,
   isRequired,
   nodeSizes,
   outerChains,
@@ -83,30 +85,11 @@ type Use = {
   looks: number[]
 }
 const useOf = (comp: Component, inst: Node, mines = minesOf(comp)): Use => {
-  const obj = (v: unknown) =>
-    isObj(v) || Array.isArray(v) ? (v as Record<string, unknown>) : {}
-  const set = obj(inst.set)
-  const values: Record<string, unknown> = {}
-  for (const p of Array.isArray(comp.props) ? comp.props : []) {
-    if (!isObj(p)) continue
-    const given = Object.hasOwn(set, p.key) ? set[p.key] : undefined
-    values[p.key] =
-      p.type === 'choice'
-        ? typeof given === 'string' && p.options?.includes(given)
-          ? given
-          : (p.default ?? p.options?.[0])
-        : (given ?? p.default)
-  }
-  const looks: number[] = []
-  ;(Array.isArray(comp.variants) ? comp.variants : []).forEach((v, i) => {
-    if (
-      isObj(v) &&
-      isObj(v.when) &&
-      Object.entries(v.when).every(([k, val]) => values[k] === val)
-    )
-      looks.push(i)
-  })
-  return { comp, inst, mines, set, looks }
+  const set =
+    isObj(inst.set) || Array.isArray(inst.set)
+      ? (inst.set as Record<string, unknown>)
+      : {}
+  return { comp, inst, mines, set, looks: looksOf(comp, inst) }
 }
 
 /** Where a change to the part came from, in the order `unrollInstances` applies them. */
@@ -243,7 +226,9 @@ function stagesOf(part: Node, use: Use, outer: readonly Outer[] = []): Stage[] {
     if (isObj(o)) push({ by: 'override', key, inst }, patched(node, o))
   }
   given(use.inst, part.id)
-  for (const o of outer) given(o.inst, `${o.via}.${part.id}`)
+  // The root of a nested use is the nested instance itself: an outer instance names it by the instance's id alone.
+  for (const o of outer)
+    given(o.inst, part.id === use.comp.root.id ? o.via : `${o.via}.${part.id}`)
   return out
 }
 
@@ -419,7 +404,11 @@ export function checkRequired(doc: SiteDocument): Problem[] {
         if (up[i].kind === 'form') form = up[i]
       if (!isRequired(n, form)) return
       if (over) add(tooMany(cid!, n.id, 'required'))
-      const why = hiddenAt(ix, tree, [...up, n])
+      // In a component the part's own hiding is judged per use below (a toggle can show a part its master hides);
+      // here only a use, or an ancestor of one, that is itself hidden.
+      const why = owner
+        ? hiddenViaUse(ix, tree, [...up, n])
+        : hiddenAt(ix, tree, [...up, n])
       if (why) {
         const path = pathOf(why)
         add(
@@ -435,15 +424,13 @@ export function checkRequired(doc: SiteDocument): Problem[] {
           for (const a of [...up, n]) {
             const st = stagesOf(a, v.use, v.outer)
             const i = st.findIndex(s => reasonOf(s.node))
-            if (i < 1 || !reasonOf(st[st.length - 1].node)) continue
+            if (i < 0 || !reasonOf(st[st.length - 1].node)) continue
             const r = reasonOf(st[i].node)!
-            const place = placeOf(
-              st[i],
-              st[i - 1].node,
-              owner,
-              a.id,
-              pathOf(r) ?? '',
-            )
+            // hidden in the component's own tree, and not shown again by this use: the node carries it
+            const place =
+              i === 0
+                ? { nodeId: n.id, ...(pathOf(r) ? { path: pathOf(r) } : {}) }
+                : placeOf(st[i], st[i - 1].node, owner, a.id, pathOf(r) ?? '')
             if (place)
               add(
                 policy(

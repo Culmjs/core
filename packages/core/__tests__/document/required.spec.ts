@@ -172,6 +172,44 @@ test('a component variant patch that sets hide or hidden on the part', () => {
     },
   )
 })
+const lookProp = {
+  key: 'look',
+  label: 'Look',
+  type: 'choice' as const,
+  options: ['a', 'b'],
+}
+test('a look hides a part only for a use that selects it', () => {
+  const hide = { hide: { phone: true as const } }
+  const mk = (...uses: Node[]) => {
+    const c = comp(
+      'c',
+      [text('p', 'x')],
+      [{ when: { look: 'b' }, patch: { p: hide } }],
+    )
+    c.props = [lookProp]
+    return withComps(uses, [c])
+  }
+  // nobody selects b: the first option is a, and a set value that is not an option falls back to it
+  assert.equal(inC(mk(inst('i', 'c')), 'c', 'p'), undefined)
+  assert.equal(
+    inC(mk(inst('i', 'c', { set: { look: 'zzz' } })), 'c', 'p'),
+    undefined,
+  )
+  // a use selects b, alone or beside a use that does not
+  const want = { by: 'c', how: 'variant', where: 'phone' }
+  assert.deepEqual(
+    inC(mk(inst('i', 'c', { set: { look: 'b' } })), 'c', 'p'),
+    want,
+  )
+  assert.deepEqual(
+    inC(mk(inst('i', 'c'), inst('j', 'c', { set: { look: 'b' } })), 'c', 'p'),
+    want,
+  )
+  // a default of b selects it for every use that sets nothing
+  const d = mk(inst('i', 'c'))
+  d.components[0].props = [{ ...lookProp, default: 'b' }]
+  assert.deepEqual(inC(d, 'c', 'p'), want)
+})
 test('hidden: false and an empty hide give undefined', () => {
   const n = text('a', 'x', {
     hide: {},
