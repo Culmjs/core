@@ -658,6 +658,15 @@ export function checkNode(c: Ctx, t: TCtx, e: Entry) {
   }
   if (typeof w.name !== 'string' || w.name.length > 100)
     say('Its name must be text of at most 100 characters.', 'name')
+  if (w.required !== undefined) {
+    if (typeof w.required !== 'boolean')
+      say('Its required mark must be true or false.', 'required')
+    else if (!w.required && w.kind !== 'form' && w.kind !== 'field')
+      say(
+        'Only a form or a field can be marked not required; on any other kind the mark has no effect.',
+        'required',
+      )
+  }
   const refs = refsFor(e.items)
   if (w.kind === 'instance') {
     const ib = instanceBad(c, e, refs)

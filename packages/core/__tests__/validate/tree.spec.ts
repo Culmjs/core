@@ -1247,3 +1247,34 @@ test('a menu cannot list languages: language alternates are not carried', () => 
   assert.deepEqual(codes(menu('footer')), [])
   assert.notDeepEqual(codes(menu('languages')), [])
 })
+
+test('required: "yes" is INVALID_NODE', () => {
+  assert.ok(
+    codes(put(text('t', { required: 'yes' } as never))).includes(
+      'INVALID_NODE',
+    ),
+  )
+})
+
+test('required: false on a text is INVALID_NODE; on a form and on a field it is accepted', () => {
+  assert.ok(codes(put(text('t', { required: false }))).includes('INVALID_NODE'))
+  const form = n({
+    id: 'f',
+    kind: 'form',
+    name: 'f',
+    slot: fs(),
+    required: false,
+    props: { formId: 'f' },
+    children: [
+      n({
+        id: 'a',
+        kind: 'field',
+        name: 'a',
+        slot: {},
+        required: false,
+        props: { name: 'email', label: 'A' },
+      }),
+    ],
+  })
+  assert.equal(codes(put(form)).includes('INVALID_NODE'), false)
+})

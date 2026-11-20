@@ -88,7 +88,10 @@ export function checkSiteStyles(v: unknown): {
   if (
     !isObj(v) ||
     Object.keys(v).some(
-      k => !['colors', 'text', 'space', 'shadows', 'motion'].includes(k),
+      k =>
+        !['colors', 'text', 'space', 'shadows', 'motion', 'textRange'].includes(
+          k,
+        ),
     )
   )
     return {
@@ -98,6 +101,22 @@ export function checkSiteStyles(v: unknown): {
     }
   if (v.motion !== undefined && v.motion !== 'off')
     problems.push('styles.motion must be off, or left out for smooth')
+  const r = v.textRange
+  const range =
+    r === undefined
+      ? undefined
+      : isObj(r) &&
+          Object.keys(r).length === 2 &&
+          Number.isInteger(r.min) &&
+          Number.isInteger(r.max) &&
+          (r.min as number) >= 1 &&
+          (r.max as number) <= 400 &&
+          (r.min as number) <= (r.max as number)
+        ? { min: r.min as number, max: r.max as number }
+        : (problems.push(
+            'styles.textRange needs a whole min and max, from 1 to 400, with min not above max',
+          ),
+          undefined)
   const list = (key: 'colors' | 'text' | 'shadows') => {
     const items = v[key]
     if (!Array.isArray(items) || items.length > MAX_EACH) {
@@ -223,6 +242,7 @@ export function checkSiteStyles(v: unknown): {
           space,
           shadows,
           ...(v.motion === 'off' ? { motion: 'off' as const } : {}),
+          ...(range ? { textRange: range } : {}),
         },
         problems,
       }

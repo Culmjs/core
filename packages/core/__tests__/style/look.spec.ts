@@ -636,3 +636,26 @@ test('a site colour that is not a hex value is never written', () => {
   assert.doesNotMatch(css, /evil/)
   assert.match(css, /--s-c-b:#112233/)
 })
+
+test('checkSiteStyles copies textRange through', () => {
+  const r = checkSiteStyles({ ...styles(), textRange: { min: 11, max: 96 } })
+  assert.deepEqual(r.problems, [])
+  assert.deepEqual(r.styles?.textRange, { min: 11, max: 96 })
+})
+
+for (const bad of [
+  { min: 0, max: 96 },
+  { min: 11, max: 401 },
+  { min: 11.5, max: 96 },
+  { min: 97, max: 96 },
+])
+  test(`textRange ${JSON.stringify(bad)} is refused`, () => {
+    assert.equal(
+      checkSiteStyles({ ...styles(), textRange: bad }).problems.length,
+      1,
+    )
+  })
+
+test('defaultSiteStyles sets no textRange', () => {
+  assert.equal('textRange' in defaultSiteStyles(look), false)
+})

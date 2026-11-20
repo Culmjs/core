@@ -15,6 +15,7 @@ import { type Registry } from '../registry/index.ts'
 import { FONTS, checkLook, checkSiteStyles } from '../style/index.ts'
 import { isFontRef } from '../style/fonts.ts'
 import { fieldsOf, isStr, oneOf } from './common.ts'
+import { checkRequired, checkTextRange } from './required.ts'
 import { checkTrees } from './tree.ts'
 
 export const TOP_KEYS = fieldsOf<SiteDocument>({
@@ -272,6 +273,11 @@ export function checkDocument(
   // A document that is not a site is not handed to the rules.
   if (out.length) return
   checkTrees(doc as unknown as SiteDocument, registry, out)
+  // The two checks below assume a well-formed tree.
+  if (!out.length) {
+    out.push(...checkRequired(doc as unknown as SiteDocument))
+    out.push(...checkTextRange(doc as unknown as SiteDocument))
+  }
   runRules(doc as unknown as SiteDocument, registry, out)
 }
 
