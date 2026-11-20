@@ -498,6 +498,107 @@ test('leaving selects out of a ready insert keeps it small and accepted by plan'
   ok(plan(emptySite('Ada', LOOK), reg, request([one.insert])))
 })
 
+test('in the list view the ready insert holds only settings whose keys the row shows; the detail view insert is complete', () => {
+  const reg = createRegistry()
+  reg.use(plugin('four', { blocks: [selects('four', 400, 3)] }))
+  const row = ok(catalogue(reg, { what: 'blocks' })).rows[0]
+  const shown = new Set(row.settings.map((s: { key: string }) => s.key))
+  assert.ok(shown.size < 400, `${shown.size} shown`)
+  assert.ok(row.moreSettings > 0)
+  const given = Object.keys(row.insert.settings ?? {})
+  assert.ok(given.length > 0, 'some settings are still given')
+  for (const k of given) assert.ok(shown.has(k), `${k} is not shown in the row`)
+  ok(plan(emptySite('Ada', LOOK), reg, request([row.insert])))
+  // the detail view shows every setting as a row, and its insert is not cut to the compact row
+  const rows = detailRows(reg as never, 'blocks', 'four')
+  assert.equal(rows.length, 400)
+  const detail = ok(catalogue(reg, { what: 'blocks', id: 'four' })).insert
+  const all = Object.keys(detail.settings)
+  assert.ok(all.length > given.length, `${all.length} against ${given.length}`)
+  assert.ok(all.every(k => rows.some(r => r.key === k)))
+  ok(plan(emptySite('Ada', LOOK), reg, request([detail])))
+  // a block whose row shows everything keeps its whole insert in both views
+  reg.use(plugin('small', { blocks: [selects('small', 5, 2)] }))
+  const small = ok(catalogue(reg, { what: 'blocks' })).rows.find(
+    (r: { block: string }) => r.block === 'small',
+  )
+  assert.deepEqual(
+    small.insert.settings,
+    ok(catalogue(reg, { what: 'blocks', id: 'small' })).insert.settings,
+  )
+})
+
+test('a ready insert is never a marker: a page or root id of the caller too long to be valid falls back to home, and a look that cannot be stated whole leaves the insert out', () => {
+  const reg = kitRegistry()
+  const huge = 'p'.repeat(100000)
+  const site = {
+    doc: {
+      pages: [{ id: huge, root: { id: huge, kind: 'column', children: [] } }],
+    },
+    revision: 1,
+  } as never
+  for (const what of ['blocks'] as const) {
+    const rows = ok(catalogue(reg, { what, site })).rows
+    for (const r of rows) {
+      assert.ok(size(r) <= 4000, `${size(r)}`)
+      assert.equal(
+        r.insert.op,
+        'insertBlock',
+        JSON.stringify(r.insert).slice(0, 80),
+      )
+      assert.deepEqual(r.insert.tree, { page: 'home' })
+      assert.equal(r.insert.parent, 'homeroot')
+    }
+    const d = ok(catalogue(reg, { what, id: 'stamp', site }))
+    assert.equal(d.insert.op, 'insertBlock')
+  }
+  // a look id over 80 characters is cut in `looks`, so an insert that named it whole would not match what the row shows
+  const longLook = 'l'.repeat(200)
+  const lr = createRegistry()
+  lr.use(
+    plugin('looky', {
+      blocks: [
+        {
+          ...selects('looky', 1, 2),
+          looks: [
+            { id: longLook, name: 'L', tree: selects('x', 0, 0).looks[0].tree },
+          ],
+        },
+      ],
+    }),
+  )
+  const row = ok(catalogue(lr, { what: 'blocks' })).rows[0]
+  assert.equal(size(row.looks[0]), 80)
+  assert.equal('insert' in row, false)
+  const detail = ok(catalogue(lr, { what: 'blocks', id: 'looky' }))
+  assert.equal('insert' in detail, false)
+})
+
+test("the ready insert gives the first settings in the block's order, skips one that cannot be stated, and has no settings when none is needed", () => {
+  const reg = createRegistry()
+  const b = selects('sixty', 60, 2, (i, j) =>
+    i === 3 ? 'z'.repeat(200) : `${'k'.repeat(40)}${i}x${j}`,
+  )
+  reg.use(plugin('sixty', { blocks: [b] }))
+  const row = ok(catalogue(reg, { what: 'blocks' })).rows[0]
+  const keys = Object.keys(row.insert.settings)
+  // the first n settings but sel3, each with its first option
+  assert.deepEqual(
+    keys,
+    [0, 1, 2, ...Array.from({ length: keys.length - 3 }, (_, k) => k + 4)].map(
+      i => `sel${i}`,
+    ),
+  )
+  for (const k of keys)
+    assert.equal(row.insert.settings[k], `${'k'.repeat(40)}${k.slice(3)}x0`)
+  // nothing to give: no settings key at all, and the insert still plans
+  const bare = createRegistry()
+  bare.use(plugin('bare', { blocks: [selects('bare', 0, 0)] }))
+  const r = ok(catalogue(bare, { what: 'blocks' })).rows[0]
+  assert.equal('settings' in r.insert, false)
+  ok(plan(emptySite('Ada', LOOK), bare, request([r.insert])))
+})
+
 test('the setStyle layer text lists every layer name and the when form', () => {
   const op = OPERATIONS.find(o => o.op === 'setStyle')!
   const t = op.fields.find(f => f.name === 'layer')!.type

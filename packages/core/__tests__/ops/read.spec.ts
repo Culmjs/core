@@ -735,3 +735,73 @@ test('previews of escape characters stay within the cap, and the largest row is 
   assert.ok(size(row) < 1000, `row ${size(row)}`)
   assert.ok(size(ok(search(head(doc), { kind: 'text' })).rows[0]) < 1000)
 })
+
+test('in an invalid document an id of 100,000 characters is cut in every row, so no reply is refused and paging reaches every row', () => {
+  const huge = 'I'.repeat(100000)
+  const doc = siteWith([
+    text('t1', 'one'),
+    node(huge, 'column', [text('t2', 'two')]),
+    text('t3', 'three'),
+  ])
+  doc.pages.push({
+    ...clone(doc.pages[0]),
+    id: huge,
+    slug: '/huge',
+    root: node('aroot', 'column'),
+  })
+  doc.components.push({
+    id: huge,
+    name: 'C',
+    root: node('croot', 'column'),
+    props: [],
+    variants: [],
+  })
+  const drain = (f: (cursor?: string) => unknown) => {
+    const rows: Record<string, unknown>[] = []
+    let cursor: string | undefined
+    do {
+      const r = ok(f(cursor))
+      assert.ok(size(r) <= READ_CAP, `${size(r)}`)
+      rows.push(...r.rows)
+      cursor = r.cursor
+    } while (cursor)
+    return rows
+  }
+  const outline = drain(c =>
+    pageOutline(head(doc), page, c ? { cursor: c } : {}),
+  )
+  assert.equal(outline.length, 5)
+  assert.ok(outline.every(r => (r.id as string).length <= 200))
+  assert.ok(
+    outline.every(r => r.parent === null || (r.parent as string).length <= 200),
+  )
+  assert.deepEqual(
+    outline.map(r => (r.id as string).slice(0, 2)),
+    ['ho', 't1', 'II', 't2', 't3'],
+  )
+  const found = drain(c =>
+    search(head(doc), { kind: 'column', ...(c ? { cursor: c } : {}) }),
+  )
+  assert.ok(found.length >= 2)
+  assert.ok(found.every(r => (r.id as string).length <= 200))
+  const sites = drain(c => siteOutline(head(doc), c ? { cursor: c } : {}))
+  assert.ok(sites.every(r => ((r.page ?? r.component) as string).length <= 200))
+  assert.equal(sites.length, 3)
+})
+
+test('a run whose text is not a string keeps it, cut like any other field', () => {
+  const odd = withRuns('o', [
+    { text: 5 },
+    { text: { a: 'x'.repeat(5000) } },
+    { text: 'fine' },
+  ])
+  const r = ok(readNode(head(siteWith([odd])), page, 'o'))
+  const runs = r.node.props.runs
+  assert.equal(runs[0].text, 5)
+  assert.equal(typeof runs[1].text, 'object')
+  assert.ok(
+    r.cutFields.includes('props.runs.1.text.a'),
+    JSON.stringify(r.cutFields),
+  )
+  assert.equal(runs[2].text, 'fine')
+})

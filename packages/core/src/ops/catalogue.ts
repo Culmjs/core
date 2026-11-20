@@ -1,9 +1,9 @@
 import { KINDS } from '../document/index.ts'
 import { STATES } from '../document/layers.ts'
-import { STYLE_GROUPS } from '../document/kinds.ts'
+import { ID_RE, STYLE_GROUPS } from '../document/kinds.ts'
 import type { KindSpec, PropField, Problem } from '../document/index.ts'
 import type { BlockDef, DataSource, Registry } from '../registry/index.ts'
-import { paged } from './cap.ts'
+import { paged, tagOf } from './cap.ts'
 import { OP_NAMES } from './plan.ts'
 import { capped, cut, len, marker } from './read.ts'
 import { refuse } from './types.ts'
@@ -255,7 +255,10 @@ function kindView(kind: string, spec: KindSpec): Entryview {
 
 // ---- blocks
 
-/** Where a ready insert goes: the first page of the given site, else the pages `emptySite` makes. */
+/**
+ * Where a ready insert goes: the first page of the given site, else the pages `emptySite` makes. An id that is not a valid id (a
+ * caller's document is not trusted, and one very long id would make the insert too big to state) falls back to the same default.
+ */
 function target(site: Head | undefined): {
   tree: { page: string }
   parent: string
@@ -263,8 +266,10 @@ function target(site: Head | undefined): {
   const p: unknown = arr(site?.doc?.pages)[0]
   return isObj(p) &&
     typeof p.id === 'string' &&
+    ID_RE.test(p.id) &&
     isObj(p.root) &&
-    typeof p.root.id === 'string'
+    typeof p.root.id === 'string' &&
+    ID_RE.test(p.root.id)
     ? { tree: { page: p.id }, parent: p.root.id }
     : { tree: { page: 'home' }, parent: 'homeroot' }
 }
@@ -295,23 +300,53 @@ function needed(settings: unknown): Record<string, string | number> {
   return out
 }
 
+/**
+ * A compact row whose ready insert names only settings the row shows. The row may have dropped settings to fit its limit; an insert
+ * that gave one of them a value would send an agent to a setting it was not shown. A setting left out of an insert keeps the look's own
+ * content, which is always accepted. (The detail view lists every setting, and its insert is complete.)
+ */
+function onlyShown(row: Row): Row {
+  const ins = row.insert
+  if (!isObj(ins) || !isObj(ins.settings)) return row
+  const shown = new Set(
+    Array.isArray(row.settings)
+      ? row.settings.flatMap(s =>
+          isObj(s) && typeof s.key === 'string' ? [s.key] : [],
+        )
+      : [],
+  )
+  const { settings, ...rest } = ins
+  const kept = Object.fromEntries(
+    Object.entries(settings as Row).filter(([k]) => shown.has(k)),
+  )
+  return {
+    ...row,
+    insert: Object.keys(kept).length ? { ...rest, settings: kept } : rest,
+  }
+}
+
 function blockView(b: BlockDef, site: Head | undefined): Entryview {
   const first = arr(b.looks)[0]
   const settingsNeeded = needed(b.settings)
-  const insert = isObj(first)
-    ? {
-        insert: {
-          op: 'insertBlock',
-          ...target(site),
-          index: 0,
-          block: b.id,
-          look: first.id as string,
-          ...(Object.keys(settingsNeeded).length
-            ? { settings: settingsNeeded }
-            : {}),
-        } satisfies Op,
-      }
-    : {}
+  // The insert names the block and the look whole, so it is left out when either is longer than the row can show (a registry is not trusted).
+  const insert =
+    isObj(first) &&
+    typeof first.id === 'string' &&
+    len(first.id) <= SHORT &&
+    len(b.id) <= TEXT
+      ? {
+          insert: {
+            op: 'insertBlock',
+            ...target(site),
+            index: 0,
+            block: b.id,
+            look: first.id as string,
+            ...(Object.keys(settingsNeeded).length
+              ? { settings: settingsNeeded }
+              : {}),
+          } satisfies Op,
+        }
+      : {}
   const defs = arr(b.settings).filter(isObj)
   const head = (guide: number) => ({
     block: str(b.id),
@@ -322,8 +357,8 @@ function blockView(b: BlockDef, site: Head | undefined): Entryview {
   })
   return {
     name: b.id,
-    list: () =>
-      squeeze(
+    list: () => {
+      const row = squeeze(
         {
           ...head(GUIDE_LIST),
           looks: listed(b.looks, LOOKS_LIST, l =>
@@ -337,7 +372,9 @@ function blockView(b: BlockDef, site: Head | undefined): Entryview {
         },
         ROW,
         ['settings'],
-      ),
+      )
+      return onlyShown(row)
+    },
     detail: () => {
       const looks = listed(b.looks, LISTED, l =>
         isObj(l)
@@ -832,7 +869,13 @@ export function catalogue(
       }
       const { header, rows } = hit.detail()
       return capped(
-        paged(rows, 0, query.cursor, wrap(header)) as Reply | Refusal,
+        paged(
+          rows,
+          0,
+          query.cursor,
+          tagOf('catalogue', query.what, query.id),
+          wrap(header),
+        ) as Reply | Refusal,
       )
     }
     return capped(
@@ -840,6 +883,7 @@ export function catalogue(
         views.map(v => v.list()),
         0,
         query.cursor,
+        tagOf('catalogue', query.what, null),
         wrap(query.what === 'operations' ? {} : { detail: DETAIL }),
       ) as Reply | Refusal,
     )

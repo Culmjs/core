@@ -47,12 +47,12 @@ test('added, removed, moved and changed, each in its own list', () => {
   assert.deepEqual(t.removed, ['t3'])
   assert.deepEqual(t.moved, [])
   assert.deepEqual(t.changed, [{ id: 't1', paths: ['props.runs'] }])
+  // reversed siblings: all but one longest ordered run (here a single node) are moved, nothing else is listed
   const c = clone(a)
   homeRoot(c).reverse()
-  assert.deepEqual(
-    treeOf(ok(diffSites(a, c)), { page: 'home' })!.moved.length > 0,
-    true,
-  )
+  const tc = treeOf(ok(diffSites(a, c)), { page: 'home' })!
+  assert.deepEqual([tc.added, tc.removed, tc.changed], [[], [], []])
+  assert.deepEqual(tc.moved, ['t2', 't1']) // in the order of the new tree; t3 stays
 })
 
 test('a changed node lists the paths of the fields that differ', () => {
@@ -141,8 +141,13 @@ test('a changed header affects every page that is on', () => {
   const d = ok(diffSites(a, b))
   assert.deepEqual(d.pages, ['home', 'about'])
   assert.deepEqual(treeOf(d, 'header')!.added, ['h'])
-  b.footer.children = [text('f', 'hi')]
-  assert.deepEqual(ok(diffSites(a, b)).pages, ['home', 'about'])
+  // the footer alone, with the header unchanged
+  const c = clone(a)
+  c.footer.children = [text('f', 'hi')]
+  const e = ok(diffSites(a, c))
+  assert.deepEqual(e.pages, ['home', 'about'])
+  assert.deepEqual(treeOf(e, 'footer')!.added, ['f'])
+  assert.equal(treeOf(e, 'header'), undefined)
 })
 
 test('a changed component affects exactly the pages that hold an instance of it, also through a nested component', () => {
@@ -160,7 +165,9 @@ test('a changed component affects exactly the pages that hold an instance of it,
   ]
   const d = ok(diffSites(a, b))
   assert.deepEqual(d.pages, ['home'])
-  assert.deepEqual(treeOf(d, { component: 'inner' })!.changed[0].id, 'it')
+  assert.deepEqual(treeOf(d, { component: 'inner' })!.changed, [
+    { id: 'it', paths: ['props.runs'] },
+  ])
   // a field of the component itself
   const c = clone(a)
   c.components[2].name = 'Renamed'
@@ -170,7 +177,39 @@ test('a changed component affects exactly the pages that hold an instance of it,
   // a component added or removed
   const f = clone(a)
   f.components.pop()
-  assert.deepEqual(ok(diffSites(a, f)).site, ['components.other'])
+  const gone = ok(diffSites(a, f))
+  assert.deepEqual(gone.site, ['components.other'])
+  assert.deepEqual(gone.pages, ['third']) // the page that still holds an instance of it
+})
+
+test('a changed component used only in the header or the footer affects every page that is on; one held by an off page affects that page', () => {
+  const base = twoPages([text('t', 'x')], [text('u', 'y')])
+  base.pages.push({
+    ...clone(base.pages[1]),
+    id: 'off',
+    slug: '/off',
+    on: false,
+  })
+  base.pages[2].root.children = [instance('io', 'offc')]
+  base.header.children = [instance('ih', 'hc')]
+  base.footer.children = [instance('if', 'fc')]
+  base.components = [
+    comp('hc', [text('ht', 'h')]),
+    comp('fc', [text('ft', 'f')]),
+    comp('offc', [text('ot', 'o')]),
+  ]
+  const edit = (i: number) => {
+    const b = clone(base)
+    ;(b.components[i].root.children![0].props as { runs: unknown }).runs = [
+      { text: 'new' },
+    ]
+    return ok(diffSites(base, b))
+  }
+  // in the header (or footer) only: every page that is on, not the off page
+  assert.deepEqual(edit(0).pages, ['home', 'about'])
+  assert.deepEqual(edit(1).pages, ['home', 'about'])
+  // on the off page only: that page, whether or not it is on, and no other
+  assert.deepEqual(edit(2).pages, ['off'])
 })
 
 test('a changed look or site styles affects every page', () => {
@@ -259,13 +298,13 @@ test('paged takes rows while the reply fits, always makes progress, and refuses 
     cut,
     cursor,
   })
-  const first = paged(rows, 7, undefined, wrap) as ReturnType<typeof wrap>
+  const first = paged(rows, 7, undefined, 'tg', wrap) as ReturnType<typeof wrap>
   assert.equal(first.cut, true)
   assert.ok(JSON.stringify(first).length <= READ_CAP)
-  const more = wrap(rows.slice(0, first.r.length + 1), true, 'x:1')
+  const more = wrap(rows.slice(0, first.r.length + 1), true, 'x:1:tg')
   assert.ok(JSON.stringify(more).length > READ_CAP - 20) // not cut early
-  assert.equal(first.cursor, `7:${first.r.length}`)
-  const rest = paged(rows, 7, `7:${rows.length}`, wrap) as ReturnType<
+  assert.equal(first.cursor, `7:${first.r.length}:tg`)
+  const rest = paged(rows, 7, `7:${rows.length}:tg`, 'tg', wrap) as ReturnType<
     typeof wrap
   >
   assert.deepEqual(
@@ -273,17 +312,39 @@ test('paged takes rows while the reply fits, always makes progress, and refuses 
     [[], false, undefined],
   )
   const huge = ['x'.repeat(READ_CAP * 2), 'y']
-  const one = paged(huge, 0, undefined, wrap) as ReturnType<typeof wrap>
-  assert.deepEqual([one.r.length, one.cut, one.cursor], [1, true, '0:1'])
-  const code = (c: string | undefined) =>
-    (paged(rows, 7, c, wrap) as { problems: { code: string; path?: string }[] })
-      .problems[0]
-  assert.equal(code('3:1').code, 'REVISION_CONFLICT')
-  for (const bad of ['7', '7:', 'a:b', '7:-1', '7:1.5', '7:5001', ''])
+  const one = paged(huge, 0, undefined, 'tg', wrap) as ReturnType<typeof wrap>
+  assert.deepEqual([one.r.length, one.cut, one.cursor], [1, true, '0:1:tg'])
+  const code = (c: string | undefined, tag = 'tg') =>
+    (
+      paged(rows, 7, c, tag, wrap) as {
+        problems: { code: string; path?: string; message: string }[]
+      }
+    ).problems[0]
+  assert.equal(code('3:1:tg').code, 'REVISION_CONFLICT')
+  for (const bad of [
+    '7',
+    '7:',
+    '7:1',
+    'a:b:tg',
+    '7:-1:tg',
+    '7:1.5:tg',
+    '7:5001:tg',
+    '7:1:',
+    '7:1:T',
+    '',
+  ])
     assert.deepEqual(
       [code(bad).code, code(bad).path],
       ['INVALID_OPERATION', 'cursor'],
+      bad,
     )
+  // the tag binds the cursor to the read: another tag is refused, before the revision is looked at
+  assert.deepEqual(
+    [code('7:1:tg', 'other').code, code('7:1:tg', 'other').path],
+    ['INVALID_OPERATION', 'cursor'],
+  )
+  assert.match(code('3:1:tg', 'other').message, /another read/)
+  assert.equal(code('3:1:tg', 'other').code, 'INVALID_OPERATION')
 })
 
 // ---- every part of a reply is paged
@@ -440,4 +501,50 @@ test('a throwing getter in a document becomes INVALID_OPERATION, not an exceptio
   const r = diffSites(a, bad)
   assert.equal(r.ok, false)
   if (!r.ok) assert.equal(r.problems[0].code, 'INVALID_OPERATION')
+})
+
+test('a changed row stays small when the document names a field with a very long key: each path is cut to 200 characters', () => {
+  const a = siteWith([text('t1', 'one', { other: {} } as never)])
+  const b = clone(a)
+  const n = homeRoot(b)[0] as unknown as Record<string, unknown>
+  n[`long${'k'.repeat(20000)}`] = 1
+  n.other = { [`inner${'j'.repeat(20000)}`]: 2 }
+  const d = ok(diffSites(a, b))
+  const row = treeOf(d, { page: 'home' })!.changed[0]
+  assert.equal(row.paths.length, 2)
+  for (const p of row.paths) assert.ok(p.length <= 200, String(p.length))
+  assert.ok(row.paths[0].startsWith('long'))
+  assert.ok(row.paths[1].startsWith('other.inner'))
+  assert.ok(JSON.stringify(d).length < 2000)
+})
+
+test('two documents that cannot be written as JSON are different, and the answer does not change between calls', () => {
+  const a = siteWith([text('t1', 'one')])
+  const mk = () => {
+    const b = clone(a)
+    const cyc: Record<string, unknown> = {}
+    cyc.self = cyc
+    ;(homeRoot(b)[0] as unknown as Record<string, unknown>).odd = cyc
+    return b
+  }
+  const x = mk()
+  const first = JSON.stringify(diffAll(a, x).trees)
+  assert.equal(JSON.stringify(diffAll(a, x).trees), first)
+  assert.deepEqual(treeOf(ok(diffSites(a, x)), { page: 'home' })!.changed, [
+    { id: 't1', paths: ['odd'] },
+  ])
+})
+
+test('100,000 siblings, reversed, diff in time that rules out a quadratic comparison', () => {
+  const kids = Array.from({ length: 100000 }, (_, i) => node(`k${i}`, 'box'))
+  const a = siteWith(kids)
+  const b = clone(a)
+  homeRoot(b).reverse()
+  const t0 = Date.now()
+  const all = diffAll(a, b)
+  const ms = Date.now() - t0
+  const t = all.trees.find(x => JSON.stringify(x.tree) === '{"page":"home"}')!
+  assert.equal(t.moved.length, 99999) // all but one ordered run of length 1
+  // linear: well under a second; the quadratic comparison of 10^5 siblings takes tens of seconds
+  assert.ok(ms < 2000, `${ms} ms`)
 })

@@ -9,7 +9,7 @@ import { STATES } from '../document/layers.ts'
 import { isRequired, requiredRefs } from '../document/required.ts'
 import { readSettings } from '../registry/block.ts'
 import type { Registry } from '../registry/index.ts'
-import { READ_CAP, paged } from './cap.ts'
+import { FOREIGN_CURSOR, READ_CAP, paged, tagOf } from './cap.ts'
 import { bad } from './nodes.ts'
 import { rootOf, trees } from './trees.ts'
 import { refuse } from './types.ts'
@@ -66,7 +66,7 @@ export type NodeRead = {
   revision: number
   node: Record<string, unknown>
   settings?: Record<string, PropValue | undefined>
-  /** Dotted paths of the fields that were cut or replaced by `{ cut: <characters> }`. */
+  /** Dotted paths of the fields that were cut or replaced by `{ cut: <characters> }`. A cut field cannot be had in full from a read; a cut `children` is listed by `pageOutline` with `from`. A field that was cut first and then replaced with its parent is listed with the parent. */
   cutFields?: string[]
   moreCut?: number
 } & Page
@@ -200,6 +200,14 @@ function walk(
     if (isNode(c)) walk(c, { ...next, index: next.index++ }, fn)
 }
 
+/** A tree reference for a row: a page or component id longer than ID (only in an invalid document) is cut, so a row stays small. */
+const shortTree = (tree: TreeRef): TreeRef =>
+  typeof tree === 'string'
+    ? tree
+    : 'page' in tree
+      ? { page: cut(tree.page, ID) }
+      : { component: cut(tree.component, ID) }
+
 const count = (root: unknown) => {
   let n = 0
   walk(root, rootCtx, () => void n++)
@@ -238,7 +246,10 @@ function optionsOf(
   return options
 }
 
-/** No read throws: whatever goes wrong inside on input of the wrong shape is a refusal. */
+/**
+ * No read throws: whatever goes wrong inside on input of the wrong shape is a refusal. The refusal has no detail, so a programming
+ * error in a read is hidden by it too; the tests call every read with hostile input to find such errors.
+ */
 function safe<A extends unknown[], R>(f: (...a: A) => R) {
   return (...a: A): R | Refusal => {
     try {
@@ -356,7 +367,7 @@ export const siteOutline = safe(function siteOutline(
       typeof p.id === 'string'
         ? [
             {
-              page: p.id,
+              page: cut(p.id, ID),
               title: cut(str(p.title), LABEL),
               slug: cut(str(p.slug), LABEL),
               on: p.on === true,
@@ -369,7 +380,7 @@ export const siteOutline = safe(function siteOutline(
       typeof c.id === 'string'
         ? [
             {
-              component: c.id,
+              component: cut(c.id, ID),
               name: cut(str(c.name), LABEL),
               uses: used.get(c.id) ?? 0,
             },
@@ -382,6 +393,7 @@ export const siteOutline = safe(function siteOutline(
       rows,
       site.revision,
       o.cursor as string | undefined,
+      tagOf('siteOutline'),
       (page, cutIt, cursor) => ({
         ok: true as const,
         revision: site.revision,
@@ -435,10 +447,10 @@ export const pageOutline = safe(function pageOutline(
         : undefined
     const preview = cut(textOf(n, PREVIEW), PREVIEW)
     rows.push({
-      id: n.id,
+      id: cut(n.id, ID),
       kind: cut(str(n.kind), LABEL),
       name: cut(str(n.name), LABEL),
-      parent: c.parent,
+      parent: c.parent === null ? null : cut(c.parent, ID),
       index: c.index,
       hidden: LAYOUTS.filter(l => isObj(n.hide) && n.hide[l] === true),
       ...(own ? { block: own } : {}),
@@ -453,6 +465,7 @@ export const pageOutline = safe(function pageOutline(
       rows,
       site.revision,
       o.cursor as string | undefined,
+      tagOf('pageOutline', tree, o.from ?? null, o.depth ?? null),
       (page, cutIt, cursor) => ({
         ok: true as const,
         revision: site.revision,
@@ -470,7 +483,8 @@ export const pageOutline = safe(function pageOutline(
  * Nodes that match every given condition, in the order header, footer, pages, components, each in document order. `text` is a
  * case-insensitive substring of the node's whole text or of its name; `kind` is exact; `block` is exact and matches the node's
  * block of origin: the block root (its `origin.block`) and every node below it, down to a nested block root of another block.
- * A row shows the first 80 characters of the text.
+ * A row shows the first 80 characters of the text. In an invalid document an id longer than 200 characters is cut in a row (also the
+ * page or component id of its `tree`), so one such id cannot make a reply too big to return.
  */
 export const search = safe(function search(
   site: Head,
@@ -501,27 +515,41 @@ export const search = safe(function search(
         return
       const preview = cut(full, PREVIEW)
       rows.push({
-        tree,
-        id: n.id,
+        tree: shortTree(tree),
+        id: cut(n.id, ID),
         kind: cut(str(n.kind), LABEL),
         ...(preview ? { text: preview } : {}),
       })
     })
   return capped(
-    paged(rows, site.revision, query.cursor, (page, cutIt, cursor) => ({
-      ok: true as const,
-      revision: site.revision,
-      cut: cutIt,
-      ...(cursor ? { cursor } : {}),
-      rows: page,
-    })) as SearchResult | Refusal,
+    paged(
+      rows,
+      site.revision,
+      query.cursor,
+      tagOf(
+        'search',
+        query.text ?? null,
+        query.kind ?? null,
+        query.block ?? null,
+      ),
+      (page, cutIt, cursor) => ({
+        ok: true as const,
+        revision: site.revision,
+        cut: cutIt,
+        ...(cursor ? { cursor } : {}),
+        rows: page,
+      }),
+    ) as SearchResult | Refusal,
   )
 })
 
 // ---- readNode
 
 type Cuts = string[]
-/** A copy of `v` in which every string longer than FIELD (serialised) is cut; the dotted path of each cut is added to `cuts`. */
+/**
+ * A copy of `v` in which every string longer than FIELD (serialised) is cut; the dotted path of each cut is added to `cuts`.
+ * A value nested deeper than 64 levels is returned as it is, uncut: the size budget of the fixed part replaces a field that is still too big by a marker.
+ */
 function clip(v: unknown, path: string, cuts: Cuts, depth = 0): unknown {
   if (typeof v === 'string') {
     const c = cut(v, FIELD)
@@ -578,16 +606,20 @@ function shrink(
   return { keys, total }
 }
 
-/** `"<revision>:<run>:<char>"`. */
+/** `"<revision>:<run>:<char>:<tag>"`, the tag being `tagOf` of the read's name, the tree and the id of the node. */
 function runCursor(
   cursor: string,
   revision: number,
+  tag: string,
   runs: unknown[],
 ): { run: number; char: number } | Refusal {
-  const m = /^(\d+):(\d+):(\d+)$/.exec(cursor)
+  const m = /^(\d+):(\d+):(\d+):([0-9a-z]+)$/.exec(cursor)
   const [rev, run, char] = m ? [m[1], m[2], m[3]].map(Number) : []
   if (!m || ![rev, run, char].every(Number.isSafeInteger))
-    return bad('Cursor must be "<revision>:<run>:<char>".', { path: 'cursor' })
+    return bad('Cursor must be "<revision>:<run>:<char>:<tag>".', {
+      path: 'cursor',
+    })
+  if (m[4] !== tag) return bad(FOREIGN_CURSOR, { path: 'cursor' })
   if (rev !== revision)
     return refuse(
       'REVISION_CONFLICT',
@@ -608,12 +640,12 @@ function runCursor(
  * Every reply carries the node's other fields, so any page alone is usable, and one page of `props.runs`. The runs are paged: a run
  * is returned whole while it fits; one that does not fit whole is deferred to the next page unless it could not fit a page of its
  * own, and is then cut by characters, the next page continuing it (same fields, the next slice of `text`). The cursor is
- * `"<revision>:<run>:<char>"`.
+ * `"<revision>:<run>:<char>:<tag>"`; the tag binds it to this node, so the cursor of another node is refused.
  *
  * Every bound is a serialised length. A string longer than 2,000 anywhere but a run's `text` is cut and its dotted path listed in
  * `cutFields` (at most 50 paths of at most 80, `moreCut` counts the rest). If the node without its runs (with `settings`) is still
  * over half the cap, its largest fields (a top-level field, one key of `props`, or `settings`) are replaced by `{ cut: <length> }`,
- * largest first, and listed too; `props` as a whole, then the whole node but `id` and `kind`, are the last resorts. A run without
+ * largest first, and listed too; `props` as a whole, then the whole node but `id` and `kind`, are the last resorts. When `props` is replaced, the runs of the reply still come, beside the marker: `props` is then `{ cut, runs }`. A run without
  * its `text` is held to 2,000 the same way (`props.runs.<i>.<field>`), so a page always has room for text. A field that was cut is
  * not available through a read; a cut `children` is recovered with `pageOutline` and `from`.
  */
@@ -651,8 +683,14 @@ export const readNode = safe(function readNode(
       cuts.push(at)
       return marker(v)
     }
-    const { text: t, ...rest } = r
-    const skeleton = clip(rest, at, cuts) as Record<string, unknown>
+    // A `text` that is not a string is no text to page: it stays a field of the skeleton and is cut like one.
+    const { text: t, ...rest } =
+      typeof r.text === 'string' ? r : { ...r, text: undefined }
+    const skeleton = clip(
+      typeof r.text === 'string' ? rest : r,
+      at,
+      cuts,
+    ) as Record<string, unknown>
     const total = len(skeleton)
     if (total > SKELETON) {
       const s = shrink(skeleton, () => false, total, SKELETON)
@@ -780,10 +818,11 @@ export const readNode = safe(function readNode(
     return capped(reply(undefined, false))
   }
 
+  const tag = tagOf('readNode', tree, id)
   let i = 0
   let c = 0
   if (o.cursor !== undefined) {
-    const at = runCursor(o.cursor as string, site.revision, runs)
+    const at = runCursor(o.cursor as string, site.revision, tag, runs)
     if (isRefusal(at)) return at
     ;({ run: i, char: c } = at)
   }
@@ -796,7 +835,7 @@ export const readNode = safe(function readNode(
   // The reply with no runs and the longest cursor is the least room any reply has.
   const room =
     READ_CAP -
-    len(reply([], true, `${site.revision}:${runs.length}:${longest}`))
+    len(reply([], true, `${site.revision}:${runs.length}:${longest}:${tag}`))
   let left = room
   const page: unknown[] = []
   while (i < runs.length) {
@@ -843,6 +882,6 @@ export const readNode = safe(function readNode(
   }
   const more = i < runs.length
   return capped(
-    reply(page, more, more ? `${site.revision}:${i}:${c}` : undefined),
+    reply(page, more, more ? `${site.revision}:${i}:${c}:${tag}` : undefined),
   )
 })

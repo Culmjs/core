@@ -1,6 +1,7 @@
 import { canonicalJson } from '../document/hash.ts'
 import type { Node, Problem, SiteDocument } from '../document/index.ts'
-import { paged } from './cap.ts'
+import { paged, tagOf } from './cap.ts'
+import { cut } from './read.ts'
 import { refuse, why, type NodeRef, type TreeRef } from './types.ts'
 import { DEPTH_GUARD } from '../document/kinds.ts'
 
@@ -21,7 +22,7 @@ export type SiteDiff = {
   cursor?: string
 }
 
-type Row = {
+export type Row = {
   tree: TreeRef
   key: string
   kind: 'added' | 'removed' | 'moved' | 'changed'
@@ -31,6 +32,8 @@ type Row = {
 }
 /** At most this many paths in one `changed` row; the rest are counted in `more`. */
 const MAX_PATHS = 20
+/** A path longer than this (a document with a very long key) is cut, so a row stays small whatever the keys are. */
+const MAX_PATH = 200
 type Entry = {
   node: Node
   parent: string | null
@@ -43,14 +46,19 @@ type Tree = { tree: TreeRef; key: string; root: Node | undefined }
 const isObj = (x: unknown): x is Record<string, unknown> =>
   typeof x === 'object' && x !== null && !Array.isArray(x)
 const arr = (x: unknown): unknown[] => (Array.isArray(x) ? x : [])
-const text = (x: unknown): string => {
+/** The canonical text of a value, or undefined for one that cannot be written as JSON (it is then equal to nothing but itself). */
+const text = (x: unknown): string | undefined => {
   try {
     return canonicalJson(x)
   } catch {
-    return `#${Math.random()}` // not comparable: counts as different
+    return undefined
   }
 }
-const same = (x: unknown, y: unknown) => x === y || text(x) === text(y)
+const same = (x: unknown, y: unknown) => {
+  if (x === y) return true
+  const t = text(x)
+  return t !== undefined && t === text(y)
+}
 
 /** Every node of a tree by id (first one wins) in document order; what is not a node is skipped. */
 function index(root: Node | undefined): Map<string, Entry> {
@@ -119,7 +127,7 @@ function treeRows(t: Tree, a: Tree | undefined, b: Tree | undefined): Row[] {
     id,
     ...(p
       ? {
-          paths: p.slice(0, MAX_PATHS),
+          paths: p.slice(0, MAX_PATHS).map(x => cut(x, MAX_PATH)),
           ...(p.length > MAX_PATHS ? { more: p.length - MAX_PATHS } : {}),
         }
       : {}),
@@ -373,9 +381,35 @@ function group(rows: Row[]): SiteDiff['trees'] {
 }
 
 /**
+ * What tells one pair of documents from another in a cursor: each document's `schemaVersion`, its page count and its node count over
+ * every tree. Cheap on purpose (no hash of the whole document): enough to tell an obviously different pair apart, so it guards against
+ * mix-ups and is not a proof that the pair is the same.
+ */
+function glance(d: unknown): unknown[] {
+  if (!isObj(d)) return [null]
+  let nodes = 0
+  const seen = new Set<unknown>() // a shared or cyclic object is counted once, so this ends for any input
+  const todo: unknown[] = [
+    d.header,
+    d.footer,
+    ...arr(d.pages).map(p => (isObj(p) ? p.root : undefined)),
+    ...arr(d.components).map(c => (isObj(c) ? c.root : undefined)),
+  ]
+  while (todo.length) {
+    const n = todo.pop()
+    if (!isObj(n) || typeof n.id !== 'string' || seen.has(n)) continue
+    seen.add(n)
+    nodes++
+    for (const c of arr(n.children)) todo.push(c)
+  }
+  return [d.schemaVersion ?? null, arr(d.pages).length, nodes]
+}
+
+/**
  * The paged view over `diffAll`. Every part of a reply is paged: the rows are, in order, one per `site` entry, one per affected page id,
  * then the tree rows (one per tree, id and kind of difference). Each reply carries only its slice: `site`, `pages` and `trees` hold the
- * entries of THIS reply (any may be empty) and a caller concatenates them across replies. The cursor's revision is 0.
+ * entries of THIS reply (any may be empty) and a caller concatenates them across replies. The cursor's revision is 0, and its tag is
+ * made from a glance at each document (see `glance`), so a cursor of another pair is refused when the two differ in schema version, page count or node count.
  * Never throws: `options` that is not an object counts as none, and anything that goes wrong is an INVALID_OPERATION.
  */
 export function diffSites(
@@ -392,7 +426,8 @@ export function diffSites(
       ...all.pages.map(p => ({ p })),
       ...all.rows,
     ]
-    return paged(rows, 0, cursor, (page, cut, next): SiteDiff => ({
+    const tag = tagOf('diffSites', glance(a), glance(b))
+    return paged(rows, 0, cursor, tag, (page, cut, next): SiteDiff => ({
       ok: true,
       trees: group(page.filter((r): r is Row => 'key' in r)),
       site: page.flatMap(r => ('s' in r ? [r.s] : [])),
