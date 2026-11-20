@@ -1774,3 +1774,39 @@ test('an instance that stands for a field takes its requirement from the form ar
   assert.deepEqual(refusals(inMaster(undefined)), ['o1'])
   assert.deepEqual(refusals(inMaster(false)), [])
 })
+
+// ---- after the sweep: a math run is content ----
+
+test('a required text whose only run is math is content when the math draws a character; empty or blank math is not', () => {
+  const one = (math: string) =>
+    validateSite(
+      put(
+        n({
+          ...text0('t'),
+          required: true,
+          props: { level: 'p', runs: [{ math }] },
+        }),
+      ),
+      reg,
+    ).map(x => [x.rule, x.nodeId, x.path])
+  for (const m of [
+    '<math><mi>x</mi></math>',
+    '<math><mn>2</mn><mo>+</mo></math>',
+    '<math><mi>&#x3B1;</mi></math>',
+    '<math display="block"><semantics><mrow><mi>x</mi></mrow><annotation encoding="application/x-tex">x</annotation></semantics></math>',
+  ])
+    assert.deepEqual(one(m), [], m)
+  for (const m of [
+    '',
+    '   ',
+    '<math></math>',
+    '<math><mspace width="1em"/></math>',
+    '<math><mi>&#x200B;</mi></math>',
+    '<math><semantics><annotation encoding="application/x-tex">x</annotation></semantics></math>',
+  ])
+    assert.deepEqual(
+      one(m),
+      [['required', 't', 'props.runs']],
+      JSON.stringify(m),
+    )
+})
