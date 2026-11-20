@@ -89,3 +89,14 @@ test('limits', () => {
   assert.equal(MAX_NODES, 2000)
   assert.equal(MAX_DEPTH, 12)
 })
+
+test('KINDS cannot be changed', () => {
+  assert.throws(() => (KINDS.free.parents as string[]).push('x'), TypeError)
+  assert.throws(() => {
+    ;(KINDS.text.props as Record<string, unknown>).x = { type: 'text' }
+  }, TypeError)
+  assert.throws(() => {
+    ;(KINDS as Record<string, unknown>).extra = KINDS.text
+  }, TypeError)
+  assert.ok(Object.isFrozen(KINDS.details.props.marker.options))
+})

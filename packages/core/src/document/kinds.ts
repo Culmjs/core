@@ -604,6 +604,14 @@ for (const k of Object.keys(KINDS) as CoreKind[])
       tip: { type: 'text', maxLength: 120 },
     }
 
+/** Freezes everything reachable from `v`; shared objects are met more than once, functions are left alone. */
+function deepFreeze(v: unknown): void {
+  if (typeof v !== 'object' || v === null || Object.isFrozen(v)) return
+  Object.freeze(v)
+  for (const x of Object.values(v)) deepFreeze(x)
+}
+deepFreeze(KINDS)
+
 /** The spec of a core kind, or of a kind the caller's plug-ins add (`extra`); undefined for any other name. */
 export function kindSpec(
   kind: Kind,
