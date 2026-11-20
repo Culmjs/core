@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { migrate } from '../../src/document/index.ts'
+import { migrate, type Node } from '../../src/document/index.ts'
+import { unrollInstances } from '../../src/data/bind.ts'
 import { validateSite } from '../../src/validate/index.ts'
 import { defaultSiteStyles } from '../../src/style/index.ts'
 import { dv, fs, n, put, reg, text as t0 } from './helpers.ts'
@@ -135,7 +136,12 @@ const empty = n({
     }),
   ],
 })
-const withInstance = (inst: object, prop: object = {}, used = true) => ({
+const withInstance = (
+  inst: object,
+  prop: object = {},
+  used = true,
+  master: Node = empty,
+) => ({
   ...put(
     ...(used
       ? [
@@ -154,7 +160,7 @@ const withInstance = (inst: object, prop: object = {}, used = true) => ({
     {
       id: 'c1',
       name: 'c1',
-      root: empty,
+      root: master,
       props: [
         {
           key: 'title',
@@ -199,4 +205,94 @@ test('a required text filled by a property: a set value, a binding and a default
 
 test('a component nobody uses raises nothing', () => {
   assert.deepEqual(validateSite(withInstance({}, {}, false), reg), [])
+})
+
+const hi = n({
+  ...empty,
+  children: [
+    {
+      ...(empty.children as Node[])[0],
+      props: { level: 'p', runs: [{ text: 'Hi' }] },
+    },
+  ],
+})
+const over = { overrides: { title: { props: { runs: [{ text: 'Over' }] } } } }
+
+test('judged by the runs the page shows: set and default can blank a text, an override and a default can fill one', () => {
+  const one = (d: object) => refused(d).map(x => x[2])
+  assert.deepEqual(validateSite(withInstance(over), reg), [])
+  assert.deepEqual(one(withInstance({ set: { title: '' } }, {}, true, hi)), [
+    'set.title',
+  ])
+  assert.deepEqual(one(withInstance({}, { default: '' }, true, hi)), [
+    'set.title',
+  ])
+  assert.deepEqual(validateSite(withInstance({}, { default: 'D' }), reg), [])
+  assert.deepEqual(
+    validateSite(withInstance({ set: { title: '' }, ...over }), reg),
+    [],
+  )
+  assert.deepEqual(validateSite(withInstance({}, {}, true, hi), reg), [])
+  assert.deepEqual(one(withInstance({})), ['set.title'])
+})
+
+test('a part with no text property is judged at overrides.<part>.props.runs', () => {
+  const d = withInstance({}, {})
+  d.components[0].props = []
+  assert.deepEqual(refused(d), [
+    ['required', 'i1', 'overrides.title.props.runs'],
+  ])
+})
+
+test('a variant patch can supply the text', () => {
+  const d = withInstance({ set: { look: 'b' } })
+  d.components[0].props.push({
+    key: 'look',
+    label: 'L',
+    type: 'choice',
+    options: ['a', 'b'],
+  } as never)
+  ;(d.components[0] as { variants: unknown[] }).variants = [
+    {
+      when: { look: 'b' },
+      patch: { title: { props: { runs: [{ text: 'V' }] } } },
+    },
+  ]
+  assert.deepEqual(validateSite(d, reg), [])
+  d.components[0].variants = [] as never
+  assert.equal(refused(d).length, 1)
+})
+
+test('shownRuns agrees with unrollInstances on whether the unrolled part has text', () => {
+  const cases: [object, object, Node][] = [
+    [{}, {}, empty],
+    [{ set: { title: '' } }, {}, hi],
+    [{}, { default: '' }, hi],
+    [{}, { default: 'D' }, empty],
+    [{ set: { title: '' }, ...over }, {}, empty],
+    [over, {}, empty],
+    [{ bind: { title: { from: 'site', field: 'title' } } }, {}, empty],
+    [{ set: { title: 'S' } }, {}, empty],
+  ]
+  for (const [inst, prop, master] of cases) {
+    const d = withInstance(inst, prop, true, master)
+    const root = unrollInstances(d.pages[0].root, d.components as never, {
+      fonts: [],
+      styles: defaultSiteStyles(d.look),
+    })
+    let shown = false
+    const go = (w: Node) => {
+      if (w.id === 'i1.title')
+        shown = (
+          (w.props?.runs ?? []) as { text?: string; bind?: object }[]
+        ).some(r => r.text || r.bind)
+      w.children?.forEach(go)
+    }
+    go(root)
+    assert.equal(
+      validateSite(d, reg).length === 0,
+      shown,
+      JSON.stringify([inst, prop]),
+    )
+  }
 })

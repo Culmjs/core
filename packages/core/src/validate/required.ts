@@ -8,6 +8,7 @@ import {
   type HiddenWhy,
 } from '../document/required.ts'
 import type {
+  Component,
   ComponentProp,
   Node,
   Problem,
@@ -45,12 +46,62 @@ const hasContent = (n: Node) => {
   return Array.isArray(runs) && runs.some(runHas)
 }
 
-/** Whether an instance gives a property a value, as `expand` applies it: a binding, a non-empty `set`, or (when not set) a non-empty default. */
-const supplies = (inst: Node, p: ComponentProp) => {
-  if (isObj(inst.bind) && isObj(inst.bind[p.key])) return true
-  if (isObj(inst.set) && Object.hasOwn(inst.set, p.key))
-    return typeof inst.set[p.key] === 'string' && inst.set[p.key] !== ''
-  return typeof p.default === 'string' && p.default !== ''
+/**
+ * The runs the page shows for a part of `comp` in one `inst`. The order is the one `unrollInstances` (data/bind.ts) follows;
+ * validate cannot import it, so keep the two in step (a test in required.spec.ts compares them):
+ * master runs, property defaults, matching variants' patches, the instance's `set`, its `bind`, its `overrides`.
+ */
+function shownRuns(part: Node, comp: Component, inst: Node): unknown[] {
+  let runs: unknown[] =
+    isObj(part.props) && Array.isArray(part.props.runs) ? part.props.runs : []
+  const props = (comp.props ?? []).filter(isObj)
+  const mine = props.filter(p => p.field === 'text' && p.part === part.id)
+  const set = isObj(inst.set) ? inst.set : {}
+  const bind = isObj(inst.bind) ? inst.bind : {}
+  const text = (p: ComponentProp, v: unknown) => {
+    if (typeof v !== 'string') return
+    if (p.run === undefined) runs = [{ text: v }]
+    else if (isObj(runs[p.run])) {
+      const r = { ...(runs[p.run] as Record<string, unknown>) }
+      delete r.bind
+      delete r.bindHref
+      runs = runs.map((x, i) => (i === p.run ? { ...r, text: v } : x))
+    }
+  }
+  for (const p of mine) if (p.default !== undefined) text(p, p.default)
+  const values: Record<string, unknown> = {}
+  for (const p of props) {
+    const given = Object.hasOwn(set, p.key) ? set[p.key] : undefined
+    values[p.key] =
+      p.type === 'choice'
+        ? typeof given === 'string' && p.options?.includes(given)
+          ? given
+          : (p.default ?? p.options?.[0])
+        : (given ?? p.default)
+  }
+  const patched = (o: unknown) =>
+    isObj(o) && isObj(o.props) && Array.isArray(o.props.runs)
+      ? (o.props.runs as unknown[])
+      : undefined
+  for (const v of comp.variants ?? [])
+    if (
+      isObj(v) &&
+      isObj(v.when) &&
+      Object.entries(v.when).every(([k, val]) => values[k] === val)
+    )
+      runs = patched(isObj(v.patch) ? v.patch[part.id] : undefined) ?? runs
+  for (const p of mine) if (Object.hasOwn(set, p.key)) text(p, set[p.key])
+  for (const p of mine) {
+    const ref = bind[p.key]
+    if (!isObj(ref)) continue
+    if (p.run === undefined) runs = [{ text: '', bind: ref }]
+    else if (isObj(runs[p.run]))
+      runs = runs.map((x, i) =>
+        i === p.run ? { ...(x as object), text: '', bind: ref } : x,
+      )
+  }
+  const over = isObj(inst.overrides) ? inst.overrides[part.id] : undefined
+  return patched(over) ?? runs
 }
 
 /** A required node that is hidden, and a required text with no content. Assumes a well-formed tree. */
@@ -62,15 +113,9 @@ export function checkRequired(doc: SiteDocument): Problem[] {
       typeof tree === 'object' && 'component' in tree
         ? tree.component
         : undefined
-    const comp = cid !== undefined
     // A component's parts count only when an instance uses it.
     const uses = cid === undefined ? undefined : ix.uses.get(cid)
-    if (comp && !uses) continue
-    const textProps = comp
-      ? (ix.components.get(cid ?? '')?.props ?? []).filter(
-          p => isObj(p) && p.field === 'text' && p.part,
-        )
-      : []
+    if (cid !== undefined && !uses) continue
     walkWithAncestors(root, (n, up) => {
       let form: Node | undefined
       for (let i = up.length - 1; i >= 0 && !form; i--)
@@ -88,8 +133,8 @@ export function checkRequired(doc: SiteDocument): Problem[] {
         )
       }
       if (n.kind !== 'text') return
-      const mine = textProps.filter(p => p.part === n.id)
-      if (!mine.length) {
+      const owner = cid === undefined ? undefined : ix.components.get(cid)
+      if (!owner) {
         if (!hasContent(n))
           out.push(
             policy(
@@ -100,23 +145,26 @@ export function checkRequired(doc: SiteDocument): Problem[] {
           )
         return
       }
-      // A property fills the part (or one run of it): each instance must give it a value unless the master already has one.
-      const runs =
-        isObj(n.props) && Array.isArray(n.props.runs) ? n.props.runs : []
-      for (const p of mine) {
-        const own = p.run === undefined ? hasContent(n) : runHas(runs[p.run])
-        if (own) continue
-        for (const u of uses ?? []) {
-          const inst = u.path[u.path.length - 1]
-          if (!supplies(inst, p))
-            out.push(
-              policy(
-                'required',
-                `The text "${n.id}" of the component "${cid}" must keep some text, and this use gives its property "${p.key}" none.`,
-                { nodeId: inst.id, path: `set.${p.key}` },
-              ),
-            )
-        }
+      // Judged by the text each use of the component shows.
+      const key = (owner.props ?? []).find(
+        p => isObj(p) && p.field === 'text' && p.part === n.id,
+      )?.key
+      for (const u of uses ?? []) {
+        const inst = u.path[u.path.length - 1]
+        if (!shownRuns(n, owner, inst).some(runHas))
+          out.push(
+            policy(
+              'required',
+              `The text "${n.id}" of the component "${cid}" must keep some text, and this use shows none.`,
+              {
+                nodeId: inst.id,
+                path:
+                  key === undefined
+                    ? `overrides.${n.id}.props.runs`
+                    : `set.${key}`,
+              },
+            ),
+          )
       }
     })
   }
