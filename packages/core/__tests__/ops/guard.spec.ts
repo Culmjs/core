@@ -434,7 +434,10 @@ test('refused through plan: a required instance hidden through its component roo
     [overAt('i1', { croot: { style: { base: { hidden: true } } } })],
     'required',
   )
-  must(d, [overAt('i1', { croot: { hide: { phone: true } } })], 'required')
+  // a hide an override gives the component root is dropped by the unroll, so the instance is shown (m1)
+  assert.ok(
+    plan(d, reg, req([overAt('i1', { croot: { hide: { phone: true } } })])).ok,
+  )
   d.components[0].props.push(
     prop('rootshow', 'toggle', 'hidden', {
       part: 'croot',
@@ -494,4 +497,75 @@ test('a look hides a required part only for a use that selects it, and a part it
   assert.ok(validateSite(m, reg).some(p => p.rule === 'required'))
   m.pages[0].root.children![1] = inst('i1', { set: { show: true } })
   assert.deepEqual(validateSite(m, reg), [])
+})
+
+// ---- third fix round: what the outer component does to the nested one, judged on the unrolled tree ----
+
+/** `nestedSite` with a box `obox` around the nested use and a toggle `oshow` on it; three levels put it in `outmost`. */
+const boxed = (levels = 2): SiteDocument => {
+  const d = nestedSite(1, levels)
+  d.components[1] = {
+    ...d.components[1],
+    root: node('oroot', 'column', [node('obox', 'box', [inst('k')])]),
+    props: [
+      prop('oshow', 'toggle', 'hidden', {
+        part: 'obox',
+        default: true,
+      }) as never,
+    ],
+  }
+  return d
+}
+const at = (p: { rule?: string; nodeId?: string; path?: string }[]) =>
+  p.filter(x => x.rule === 'required').map(x => [x.nodeId, x.path])
+
+test('N1 refused through plan: an outer override hides the box around the nested use, or the outer root', () => {
+  for (const [overrides, path] of [
+    [{ obox: { hide: { phone: true } } }, 'parts.obox.hide.phone'],
+    [
+      { obox: { style: { base: { hidden: true } } } },
+      'parts.obox.style.base.hidden',
+    ],
+    [
+      { obox: { style: { dark: { hidden: true } } } },
+      'parts.obox.style.dark.hidden',
+    ],
+    [{ oroot: { style: { base: { hidden: true } } } }, 'style.base.hidden'],
+  ] as const) {
+    assert.deepEqual(validateSite(boxed(), reg), [])
+    const r = plan(boxed(), reg, req([overAt('u0', overrides)]))
+    assert.ok(!r.ok, JSON.stringify(overrides))
+    assert.deepEqual(at(r.problems), [['u0', path]])
+  }
+  assert.ok(
+    plan(
+      boxed(),
+      reg,
+      req([overAt('u0', { obox: { style: { base: { color: 'brand' } } } })]),
+    ).ok,
+  )
+})
+
+test('N1 refused through plan: three levels, the middle nested use or a box inside it', () => {
+  for (const [key, path] of [
+    ['o', 'parts.o.hide.phone'],
+    ['o.obox', 'parts.o.obox.hide.phone'],
+    ['o.k', 'parts.o.k.hide.phone'],
+  ]) {
+    const r = plan(
+      boxed(3),
+      reg,
+      req([overAt('u0', { [key]: { hide: { phone: true } } })]),
+    )
+    assert.ok(!r.ok, key)
+    assert.deepEqual(at(r.problems), [['u0', path]])
+  }
+})
+
+test('N2 refused through plan: the outer toggle on the box around the nested use, off', () => {
+  const off = { op: 'setInstance', tree: T, id: 'u0', set: { oshow: false } }
+  const r = plan(boxed(), reg, req([off]))
+  assert.ok(!r.ok)
+  assert.deepEqual(at(r.problems), [['u0', 'parts.obox.style.base.hidden']])
+  assert.ok(plan(boxed(), reg, req([{ ...off, set: { oshow: true } }])).ok)
 })

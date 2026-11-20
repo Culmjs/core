@@ -144,7 +144,7 @@ const own = (nodes: readonly Node[]): HiddenWhy | undefined => {
 }
 
 /** The variants of `comp` that apply to the use `inst`: every entry of a variant's `when` equals the value the use gives that property (its `set`, else its default; a choice takes only one of its options). Same rule as `unrollInstances`. */
-export function looksOf(comp: Component, inst: Node): number[] {
+function looksOf(comp: Component, inst: Node): number[] {
   const obj = (v: unknown) =>
     isObj(v) || Array.isArray(v) ? (v as Record<string, unknown>) : {}
   const set = obj(inst.set)
@@ -185,7 +185,6 @@ function through(
   cid: string,
   chain: ReadonlySet<Node>,
   stack: ReadonlySet<string>,
-  onlyUse = false,
 ): HiddenWhy | undefined {
   const comp = ix.components.get(cid)
   if (!comp || stack.has(cid)) return undefined
@@ -196,24 +195,22 @@ function through(
   }
   for (const use of ix.uses.get(cid) ?? []) {
     const inst = use.path[use.path.length - 1]
-    if (!onlyUse) {
-      // a look hides only for a use that selects it
-      const all = arr(comp.variants)
-      for (const i of looksOf(comp, inst))
-        for (const [k, o] of Object.entries(
-          isObj(all[i]) && isObj((all[i] as { patch?: unknown }).patch)
-            ? (all[i] as { patch: object }).patch
-            : {},
-        )) {
-          const r = patch(o, k)
-          if (r) return { by: cid, ...r, how: 'variant' }
-        }
+    // a look hides only for a use that selects it
+    const all = arr(comp.variants)
+    for (const i of looksOf(comp, inst))
       for (const [k, o] of Object.entries(
-        isObj(inst.overrides) ? inst.overrides : {},
+        isObj(all[i]) && isObj((all[i] as { patch?: unknown }).patch)
+          ? (all[i] as { patch: object }).patch
+          : {},
       )) {
         const r = patch(o, k)
-        if (r) return { by: inst.id, ...r, how: 'override' }
+        if (r) return { by: cid, ...r, how: 'variant' }
       }
+    for (const [k, o] of Object.entries(
+      isObj(inst.overrides) ? inst.overrides : {},
+    )) {
+      const r = patch(o, k)
+      if (r) return { by: inst.id, ...r, how: 'override' }
     }
     const r = own(use.path)
     if (r) return r
@@ -223,7 +220,6 @@ function through(
         use.tree.component,
         new Set([...chain, ...use.path]),
         next,
-        onlyUse,
       )
       if (r2) return r2
     }
@@ -242,112 +238,6 @@ export function hiddenAt(
   return through(ix, tree.component, new Set(path), new Set())
 }
 export { indexOf as hiddenIndex }
-
-/** What hides a part of a component through the uses that hold it: a use, or an ancestor of one, that is hidden. Not the part's own tree, and not what a use's overrides, properties or looks do to the part (the caller judges those per use). */
-export function hiddenViaUse(
-  ix: Index,
-  tree: TreeAt,
-  path: readonly Node[],
-): HiddenWhy | undefined {
-  return typeof tree === 'object' && 'component' in tree
-    ? through(ix, tree.component, new Set(path), new Set(), true)
-    : undefined
-}
-
-/** An instance further out that can override a part of a nested component: `via` is the ids of the instances between it and the part (`<inner>.<part>` is the key of its override). */
-export type Outer = { inst: Node; via: string }
-/** How many different sets of outer overrides one use may have, and how many steps the walk may take, before the rest cannot be judged. */
-const MAX_CHAINS = 256
-const MAX_VISITS = 20000
-
-const hasOverrides = (n: Node) =>
-  isObj(n.overrides) && Object.keys(n.overrides).length > 0
-// The components an instance with overrides reaches, directly or through the components above it; worked out once per index.
-const carries = new WeakMap<Index, Set<string>>()
-function carriers(ix: Index): Set<string> {
-  let set = carries.get(ix)
-  if (set) return set
-  set = new Set<string>()
-  const above = (u: Use) =>
-    typeof u.tree === 'object' && 'component' in u.tree
-      ? u.tree.component
-      : undefined
-  for (let grew = true; grew;) {
-    grew = false
-    for (const [cid, list] of ix.uses)
-      if (
-        !set.has(cid) &&
-        list.some(
-          u =>
-            hasOverrides(u.path[u.path.length - 1]) || set!.has(above(u) ?? ''),
-        )
-      ) {
-        set.add(cid)
-        grew = true
-      }
-  }
-  carries.set(ix, set)
-  return set
-}
-
-/**
- * The instances further out that can change a part of the instance at the end of `use.path`, innermost first, one chain for each
- * different set of them. Only an instance whose `overrides` has the key of the nested instance itself (`<via>`, its root) or one under it (`<via>.`) is recorded, so
- * uses that carry no such override are the same chain as the shorter one, however many there are. A use directly in a page,
- * the header or the footer has one chain, empty. `over` is true when the bounds were hit and some chains are missing: the
- * caller must treat that as "not all uses could be checked".
- */
-export function outerChains(
-  ix: Index,
-  use: Use,
-): { chains: Outer[][]; over: boolean } {
-  const found = new Map<string, Outer[]>()
-  const seen = new Map<Node, number>()
-  let visits = 0
-  let over = false
-  const add = (acc: Outer[]) => {
-    const key = acc
-      .map(o => {
-        if (!seen.has(o.inst)) seen.set(o.inst, seen.size)
-        return `${seen.get(o.inst)}:${o.via}`
-      })
-      .join(',')
-    if (found.has(key)) return
-    if (found.size >= MAX_CHAINS) over = true
-    else found.set(key, acc)
-  }
-  const gives = (inst: Node, via: string) =>
-    isObj(inst.overrides) &&
-    Object.keys(inst.overrides).some(k => k === via || k.startsWith(`${via}.`))
-  const up = (
-    tree: TreeAt,
-    via: string,
-    acc: Outer[],
-    stack: ReadonlySet<string>,
-  ) => {
-    if (over) return
-    if (++visits > MAX_VISITS) {
-      over = true
-      return
-    }
-    if (typeof tree !== 'object' || !('component' in tree)) return add(acc)
-    const cid = tree.component
-    if (stack.has(cid)) return
-    if (!carriers(ix).has(cid)) return add(acc)
-    const next = new Set(stack).add(cid)
-    for (const v of ix.uses.get(cid) ?? []) {
-      const inst = v.path[v.path.length - 1]
-      up(
-        v.tree,
-        `${inst.id}.${via}`,
-        gives(inst, via) ? [...acc, { inst, via }] : acc,
-        next,
-      )
-    }
-  }
-  up(use.tree, use.path[use.path.length - 1].id, [], new Set())
-  return { chains: [...found.values()], over }
-}
 
 /**
  * Why a node is hidden, or nothing. It is hidden by `hide` or `hidden: true` on it or an ancestor; and, inside a component,
@@ -376,51 +266,35 @@ export function hiddenBy(
 
 const num = (v: unknown): v is number => typeof v === 'number'
 
-/** The `size` of a declaration, and the `min` of its `fluidSize`; `at` is the path of the declaration, `real` the same path as it is written in the node (they differ for a `when` layer). */
+/** The `size` of a declaration, and the `min` of its `fluidSize`; `at` is the path of the declaration. */
 function* sizesOf(
   d: unknown,
   at: string,
-  real = at,
-): Iterable<{ size: number; path: string; real: string }> {
+): Iterable<{ size: number; path: string }> {
   if (!isObj(d)) return
-  if (num(d.size))
-    yield { size: d.size, path: `${at}.size`, real: `${real}.size` }
+  if (num(d.size)) yield { size: d.size, path: `${at}.size` }
   const min = isObj(d.fluidSize) ? d.fluidSize.min : undefined
-  if (num(min))
-    yield {
-      size: min,
-      path: `${at}.fluidSize.min`,
-      real: `${real}.fluidSize.min`,
-    }
+  if (num(min)) yield { size: min, path: `${at}.fluidSize.min` }
 }
 
 /** The `size` and `fluidSize.min` of a node's style layers (including `when`) and of the styles of its runs; `path` is relative to the node. */
-export function* nodeSizes(
-  n: Node,
-): Iterable<{ size: number; path: string; real: string }> {
+export function* nodeSizes(n: Node): Iterable<{ size: number; path: string }> {
   const style: Record<string, unknown> = isObj(n.style) ? n.style : {}
-  const decls: [string, string, unknown][] = [
-    ...STATES.map(
-      k => [`style.${k}`, `style.${k}`, style[k]] as [string, string, unknown],
-    ),
+  const decls: [string, unknown][] = [
+    ...STATES.map(k => [`style.${k}`, style[k]] as [string, unknown]),
     ...arr(style.when).map(
       (w, i) =>
-        [
-          `style.when.${i}`,
-          `style.when.${i}.decl`,
-          isObj(w) ? w.decl : undefined,
-        ] as [string, string, unknown],
+        [`style.when.${i}`, isObj(w) ? w.decl : undefined] as [string, unknown],
     ),
     ...arr(isObj(n.props) ? n.props.runs : undefined).map(
       (r, i) =>
-        [
-          `props.runs.${i}.style`,
-          `props.runs.${i}.style`,
-          isObj(r) ? r.style : undefined,
-        ] as [string, string, unknown],
+        [`props.runs.${i}.style`, isObj(r) ? r.style : undefined] as [
+          string,
+          unknown,
+        ],
     ),
   ]
-  for (const [at, real, d] of decls) yield* sizesOf(d, at, real)
+  for (const [at, d] of decls) yield* sizesOf(d, at)
 }
 
 /**

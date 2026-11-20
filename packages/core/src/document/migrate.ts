@@ -21,7 +21,13 @@ export type MigrationResult =
   | { ok: true; doc: SiteDocument; from: number }
   | { ok: false; problem: Problem }
 
-/** 1 to 2: a form or field that version 1 hides gets `required: false`, so the document stays valid under the `required` rule. A malformed part is skipped, and validation reports it. */
+/**
+ * 1 to 2: a form or field that version 1 hides gets `required: false`, so the document stays valid under the `required` rule.
+ * A malformed part is skipped, and validation reports it. This layer cannot call the unroll validation judges on, so it keeps
+ * its own, simpler notion of hidden (`hiddenAt`: in its own tree, through a use, an override or a look in use). Where that
+ * notion is wider than the unrolled tree it only exempts a form or field that was visible, which loosens. It does not follow a
+ * toggle property: a form hidden only through one stays required, and validation of the migrated document names it.
+ */
 const toVersion2: MigrationStep = {
   from: 1,
   migrate(input) {
