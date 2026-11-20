@@ -1506,7 +1506,7 @@ test('the text range is judged on the unrolled tree: a component nobody uses is 
   )
 })
 
-test('a tree the unroll cuts at the node limit adds no problem for the cut (stage 1 keeps it valid); what was built is judged', () => {
+test('a tree the unroll cuts at the node limit: one problem when it holds required content, none when it does not, and the built part is not listed', () => {
   // 20 uses of the next level at each of 4 levels: far past MAX_NODES once unrolled
   const d = siteWith([ninst('u0', 'w0')])
   d.components = [0, 1, 2, 3].map(i => ({
@@ -1530,17 +1530,14 @@ test('a tree the unroll cuts at the node limit adds no problem for the cut (stag
     state,
   )
   assert.equal(state.over, true)
-  // every copy of the leaf that was built is hidden, and each is named
-  const p = req3(d)
-  assert.deepEqual(p[0], ['required', 'u0', 'parts.v0.v0.v0.leaf.hide.phone'])
-  assert.ok(
-    p.every(
-      x =>
-        x[1] === 'u0' &&
-        /^parts\.v\d+\.v\d+\.v\d+\.leaf\.hide\.phone$/.test(x[2]!),
-    ),
-  )
-  // shown, the cut tree is valid
-  delete (d.components[3] as { root: Node }).root.children![0].hide
+  // one problem for the page, not one per built copy, hidden or not
+  const cut = [['RESOURCE_LIMIT_EXCEEDED', 'required', 'pages.home']]
+  const shape = () => validateSite(d, reg).map(x => [x.code, x.rule, x.path])
+  assert.deepEqual(shape(), cut)
+  const leaf = (d.components[3] as { root: Node }).root.children![0]
+  delete leaf.hide
+  assert.deepEqual(shape(), cut)
+  // with no required content the cut page stays valid
+  delete leaf.required
   okSite(d)
 })

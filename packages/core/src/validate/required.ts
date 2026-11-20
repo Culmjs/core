@@ -79,13 +79,46 @@ export function checkShown(doc: SiteDocument, registry: Registry): Problem[] {
     kinds: registry.kinds(),
   }
   const byId = new Map<string, Component>(doc.components.map(c => [c.id, c]))
-  for (const root of [...doc.pages.map(p => p.root), doc.header, doc.footer]) {
+  /** Whether a tree holds required content: a required node, or an instance (at any depth) of a component that holds some. */
+  const memo = new Map<string, boolean>()
+  const holds = (root: Node, stack: readonly string[] = []): boolean => {
+    let found = false
+    walkWithAncestors(root, (n, up) => {
+      if (found) return
+      const form = [...up].reverse().find(a => a.kind === 'form')
+      if (isRequired(n, form)) found = true
+      else if (n.kind === 'instance' && typeof n.component === 'string') {
+        const c = byId.get(n.component)
+        if (!c || stack.includes(c.id)) return
+        if (!memo.has(c.id)) memo.set(c.id, holds(c.root, [...stack, c.id]))
+        found = memo.get(c.id)!
+      }
+    })
+    return found
+  }
+  const roots: [string, Node][] = [
+    ...doc.pages.map(p => [`pages.${p.id}`, p.root] as [string, Node]),
+    ['header', doc.header],
+    ['footer', doc.footer],
+  ]
+  for (const [where, root] of roots) {
     // The instances of this tree by id: an unrolled instance root keeps the instance's id, but not its `required` mark.
     const own = new Map<string, Node>()
     walkWithAncestors(root, x => void own.set(x.id, x))
-    // Past `MAX_NODES` the unroll stops adding (`over`). Stage 1 keeps such a document valid and compile reports the cut page
-    // (`cutProblems`), so no problem is added for the cut; what was built is still judged, and nothing past the cut is.
-    const tree = unrollInstances(root, doc.components, env)
+    const state = { n: 0, over: false }
+    const tree = unrollInstances(root, doc.components, env, state)
+    // Past `MAX_NODES` the unroll stops adding, and compile builds the page cut. A cut tree is not judged as if it were whole:
+    // one problem when it holds required content, which the cut may leave out; none otherwise (stage 1 keeps it valid).
+    if (state.over) {
+      if (!holds(root)) continue
+      add(required, {
+        code: 'RESOURCE_LIMIT_EXCEEDED',
+        message: `The ${where === 'header' || where === 'footer' ? where : 'page'} is cut at the element limit once its components are filled in, and it holds required content that may be cut.`,
+        rule: 'required',
+        path: where,
+      })
+      continue
+    }
     /** The instance's own `required: true`, for the root of an unrolled instance at any depth. */
     const marked = (id: string) => {
       const [top, ...rest] = id.split('.')

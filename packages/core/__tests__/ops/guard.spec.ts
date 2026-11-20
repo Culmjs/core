@@ -717,3 +717,54 @@ test('S1 refused: updateBlock that resets a required text the owner wrote back t
     ['POLICY_VIOLATION', 'required', 'mk.title'],
   )
 })
+
+// ---- fourth round, CT1: a page cut at the element limit that holds required content ----
+
+/** 79 uses of `w` (25 parts each), then `u1`, a use of `card` (its title is required); `req` false drops every required mark. */
+const crowded = (required = true): SiteDocument => {
+  const d = siteWith([
+    ...Array.from({ length: 79 }, (_, i) => inst(`w${i}`, { component: 'w' })),
+    inst('u1'),
+  ])
+  const c = card()
+  if (!required) delete c.root.children![0].required
+  d.components = [
+    c as never,
+    {
+      id: 'w',
+      name: 'W',
+      root: node(
+        'wroot',
+        'column',
+        Array.from({ length: 24 }, (_, k) => text(`wt${k}`, 'x')),
+      ),
+      props: [],
+      variants: [],
+    },
+  ]
+  return d
+}
+const addW = {
+  op: 'add',
+  tree: T,
+  parent: 'homeroot',
+  index: 0,
+  node: { id: 'wx', kind: 'instance', component: 'w' },
+}
+
+test('CT1 refused through plan: an add that pushes a page with required content past the element limit', () => {
+  assert.deepEqual(validateSite(crowded(), reg), [])
+  const r = plan(crowded(), reg, req([addW]))
+  assert.ok(!r.ok, 'expected a refusal')
+  assert.deepEqual(
+    r.problems.map(p => [p.code, p.rule, p.path]),
+    [['RESOURCE_LIMIT_EXCEEDED', 'required', 'pages.home']],
+  )
+  assert.match(r.problems[0].message, /required/)
+})
+
+test('CT1: the same cut page with no required content stays valid', () => {
+  const r = plan(crowded(false), reg, req([addW]))
+  assert.ok(r.ok, JSON.stringify(!r.ok && r.problems))
+  assert.deepEqual(validateSite(r.doc, reg), [])
+})
