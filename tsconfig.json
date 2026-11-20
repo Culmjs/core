@@ -10,7 +10,8 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "customConditions": ["source"]
   },
   "include": ["packages/*/src", "packages/*/__tests__", "scripts"]
 }

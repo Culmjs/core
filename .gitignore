@@ -7,3 +7,5 @@ REFERENCE.md
 docs/spikes/
 docs/stage-1-exit.md
 .superpowers
+dist
+.pack

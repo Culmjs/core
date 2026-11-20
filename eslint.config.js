@@ -1,7 +1,15 @@
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['node_modules', '.superpowers', 'packages-private'] },
+  {
+    ignores: [
+      'node_modules',
+      '.superpowers',
+      'packages-private',
+      '**/dist',
+      '.pack',
+    ],
+  },
   ...tseslint.configs.recommended,
   {
     rules: {
