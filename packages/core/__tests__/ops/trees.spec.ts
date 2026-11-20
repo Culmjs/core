@@ -58,3 +58,15 @@ test('trees lists header, footer, pages, then components', () => {
     ['header', 'footer', { page: 'home' }, { component: 'card' }],
   )
 })
+
+test('a tree object with both keys or another key is no tree', () => {
+  const d = doc()
+  for (const t of [
+    { page: 'home', component: 'card' },
+    { page: 'home', x: 1 },
+    { x: 1 },
+  ] as unknown as TreeRef[]) {
+    assert.equal(rootOf(d, t), undefined)
+    assert.equal(withRoot(d, t, node('r', 'box')), d)
+  }
+})

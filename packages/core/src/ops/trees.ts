@@ -1,11 +1,20 @@
 import type { Node, SiteDocument } from '../document/index.ts'
 import type { TreeRef } from './types.ts'
 
+/** An object with exactly one key, `page` or `component`. */
+const oneKey = (
+  tree: unknown,
+): tree is { page: string } | { component: string } => {
+  if (typeof tree !== 'object' || tree === null) return false
+  const k = Object.keys(tree)
+  return k.length === 1 && (k[0] === 'page' || k[0] === 'component')
+}
+
 /** The root of a tree; undefined for an unknown page or component and for anything that is not one of the four forms. */
 export function rootOf(doc: SiteDocument, tree: TreeRef): Node | undefined {
   if (tree === 'header') return doc.header
   if (tree === 'footer') return doc.footer
-  if (typeof tree !== 'object' || tree === null) return undefined
+  if (!oneKey(tree)) return undefined
   if ('page' in tree) return doc.pages.find(p => p.id === tree.page)?.root
   if ('component' in tree)
     return doc.components.find(c => c.id === tree.component)?.root
@@ -20,7 +29,7 @@ export function withRoot(
 ): SiteDocument {
   if (tree === 'header') return { ...doc, header: root }
   if (tree === 'footer') return { ...doc, footer: root }
-  if (typeof tree !== 'object' || tree === null) return doc
+  if (!oneKey(tree)) return doc
   if ('page' in tree)
     return {
       ...doc,

@@ -246,6 +246,56 @@ test('remove refuses a field whose form is not released, allows it when released
   ok(run('remove', doc, { id: 'fld' }))
 })
 
+const withCard = (uses: number, reqInside = true): SiteDocument => {
+  const doc = siteWith(
+    Array.from({ length: uses }, (_, k) => ({
+      ...node(`i${k}`, 'instance'),
+      component: 'card',
+    })),
+  )
+  doc.components.push({
+    id: 'card',
+    name: 'Card',
+    root: node('croot', 'column', [
+      { ...node('creq', 'box'), ...(reqInside ? { required: true } : {}) },
+    ]),
+    props: [],
+    variants: [],
+  } as unknown as Component)
+  return doc
+}
+test('remove refuses the last instance of a component that holds a required node', () =>
+  refused(run('remove', withCard(1), { id: 'i0' }), 'POLICY_VIOLATION', {
+    rule: 'required',
+    nodeId: 'creq',
+  }))
+test('remove accepts one of two instances', () => {
+  ok(run('remove', withCard(2), { id: 'i0' }))
+})
+test('remove refuses a subtree that contains that last instance', () => {
+  const doc = withCard(1)
+  const root = doc.pages[0].root
+  root.children = [node('wrap', 'box', root.children)]
+  refused(run('remove', doc, { id: 'wrap' }), 'POLICY_VIOLATION', {
+    rule: 'required',
+    nodeId: 'creq',
+  })
+})
+test('remove accepts a required node inside a component nobody uses', () => {
+  const doc = withCard(0)
+  ok(run('remove', doc, { tree: { component: 'card' }, id: 'creq' }))
+})
+test('add refuses a tree with both page and component', () =>
+  invalid(
+    run('add', withCard(1), {
+      tree: { page: 'home', component: 'card' },
+      parent: 'croot',
+      index: 0,
+      node: { kind: 'box', id: 'i0' },
+    }),
+    { path: 'tree' },
+  ))
+
 // ---- move
 const mv = (op: object, doc = base()) =>
   run('move', doc, { id: 'c', parent: 'e', index: 0, ...op })
@@ -611,47 +661,77 @@ test('unsafe keys are refused and Object.prototype is unchanged', () => {
   invalid(run('bindData', base(), { id: 'c', bind: bad }))
   assert.equal(({} as Record<string, unknown>).x, undefined)
 })
+const deepFreeze = <T>(v: T): T => {
+  if (typeof v === 'object' && v !== null && !Object.isFrozen(v)) {
+    Object.freeze(v)
+    for (const x of Object.values(v)) deepFreeze(x)
+  }
+  return v
+}
 test('no operation changes its input', () => {
+  const full = (): SiteDocument => {
+    const doc = base()
+    const c = nodeOf(doc, 'c')
+    Object.assign(c, {
+      kind: 'text',
+      props: { level: 'p', runs: [{ text: 'A' }], sample: true },
+      style: {
+        base: { gap: 1 },
+        phone: { gap: 2 },
+        when: [{ state: 's', is: 'v', decl: { gap: 3 } }],
+      },
+      hide: { tablet: true },
+      bind: { a: { from: 'item', field: 'f' } },
+      state: [{ name: 's', values: ['v', 'w'], initial: 'v' }],
+      on: [{ on: 'click', do: { toggle: 's' } }],
+      required: false,
+      placement: { mode: 'front' },
+      showIfAny: [
+        { from: 'site', field: 'x' },
+        { from: 'site', field: 'y' },
+      ],
+      children: [node('k1', 'box'), node('k2', 'box')],
+    })
+    return doc
+  }
   const calls: [keyof typeof ops, object][] = [
     [
       'add',
       {
-        parent: 'b',
-        index: 0,
+        parent: 'c',
+        index: 1,
         node: { kind: 'box', children: [{ kind: 'text' }] },
       },
     ],
-    ['remove', { id: 'c' }],
-    ['move', { id: 'c', parent: 'e', index: 0 }],
-    ['setProps', { id: 't', props: { level: 'h1' }, name: 'N' }],
-    ['setText', { id: 't', text: 'New' }],
+    ['remove', { id: 'k1' }],
+    ['move', { id: 'k1', parent: 'e', index: 0, slot: { grow: 1 } }],
+    ['setProps', { id: 'c', props: { level: 'h1', runs: null }, name: 'N' }],
+    ['setText', { id: 'c', text: 'New' }],
     ['setStyle', { id: 'c', layer: 'base', decl: { gap: 2 } }],
     [
       'setStyle',
-      { id: 'c', layer: { when: { state: 's', is: 'v' } }, decl: { gap: 2 } },
+      {
+        id: 'c',
+        layer: { when: { state: 's', is: 'v' } },
+        decl: { gap: null },
+      },
     ],
-    ['setHidden', { id: 'c', layout: 'tablet', hidden: true }],
-    ['setSlot', { id: 'c', slot: { grow: 1 }, placement: { mode: 'front' } }],
+    [
+      'setStyle',
+      { id: 'c', layer: { when: { state: 's', is: 'w' } }, decl: { gap: 5 } },
+    ],
+    ['setHidden', { id: 'c', layout: 'phone', hidden: true }],
+    ['setHidden', { id: 'c', layout: 'tablet', hidden: false }],
+    ['setSlot', { id: 'c', slot: { grow: 1 }, placement: null }],
     ['setRequired', { id: 'c', required: true }],
     [
       'bindData',
-      {
-        id: 'c',
-        bind: { a: { from: 'item', field: 'f' } },
-        showIf: { from: 'site', field: 'x' },
-      },
+      { id: 'c', bind: { z: { from: 'item', field: 'g' } }, showIfAny: null },
     ],
-    [
-      'setStates',
-      {
-        id: 'c',
-        state: [{ name: 's', values: 'on-off', initial: 'on' }],
-        on: [],
-      },
-    ],
+    ['setStates', { id: 'c', state: [], on: null }],
   ]
   for (const [name, op] of calls) {
-    const doc = base()
+    const doc = deepFreeze(full())
     const before = structuredClone(doc)
     ok(run(name, doc, op))
     assert.deepEqual(doc, before, name)

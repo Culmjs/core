@@ -1,6 +1,6 @@
 import { STATES } from '../document/layers.ts'
 import { ID_RE, kindSpec } from '../document/kinds.ts'
-import { isRequired, walkWithAncestors } from '../document/required.ts'
+import { requiredRefs } from '../document/required.ts'
 import { UNSAFE_FIELDS, isObj } from '../document/rules.ts'
 import { touched } from '../document/samples.ts'
 import {
@@ -212,26 +212,36 @@ export const add: OpFn<'add'> = (doc, registry, op) => {
 
 // ---- remove
 
+/** The first node that was required in `before` and is not in `after` (same tree, same id), or undefined. */
+export function lostRequired(
+  before: SiteDocument,
+  after: SiteDocument,
+): NodeRef | undefined {
+  const key = (r: NodeRef) => `${JSON.stringify(r.tree)}|${r.id}`
+  const kept = new Set(requiredRefs(after).map(key))
+  return requiredRefs(before).find(r => !kept.has(key(r)))
+}
+
 export const remove: OpFn<'remove'> = (doc, _registry, op) => {
   const t = at(doc, op as unknown as Fields)
   if (isRefusal(t)) return t
   if (t.root.id === t.node.id)
     return bad('The root of a tree cannot be removed.', { nodeId: t.node.id })
-  let held: string | undefined
-  walkWithAncestors(t.root, (n, up) => {
-    if (held || (n !== t.node && !up.includes(t.node))) return
-    const form = [...up].reverse().find(a => a.kind === 'form')
-    if (isRequired(n, form)) held = n.id
-  })
-  if (held)
-    return refuse('POLICY_VIOLATION', `"${held}" must stay in the site.`, {
-      nodeId: held,
-      rule: 'required',
-    })
   const parent = parentOf(t.root, t.node.id)!
+  const result = withRoot(doc, t.tree, removeNode(t.root, t.node.id))
+  const lost = lostRequired(doc, result)
+  if (lost)
+    return refuse(
+      'POLICY_VIOLATION',
+      `"${lost.id}" must stay in the site${typeof lost.tree === 'object' && 'component' in lost.tree ? ` (in component "${lost.tree.component}")` : ''}.`,
+      {
+        nodeId: lost.id,
+        rule: 'required',
+      },
+    )
   return {
     ok: true,
-    doc: withRoot(doc, t.tree, removeNode(t.root, t.node.id)),
+    doc: result,
     created: [],
     changed: [ref(t.tree, parent.id)],
   }
