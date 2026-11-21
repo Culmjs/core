@@ -1,6 +1,8 @@
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import net from 'node:net'
+import os from 'node:os'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { memoryStore } from '@culmjs/core/ops'
@@ -14,14 +16,15 @@ after(async () => {
 })
 
 async function start() {
-  const server = createMcpServer({
-    store: memoryStore({ s: siteWith() }),
-    registry: kitRegistry(),
-    site: 's',
-    data: { rows: {} },
-  })
+  const make = () =>
+    createMcpServer({
+      store: memoryStore({ s: siteWith() }),
+      registry: kitRegistry(),
+      site: 's',
+      data: { rows: {} },
+    })
   const lines: string[] = []
-  const l = await listenLocal(server, 0, x => lines.push(x))
+  const l = await listenLocal(make, 0, x => lines.push(x))
   closers.push(l.close)
   return { ...l, lines }
 }
@@ -80,6 +83,103 @@ test('the listening address is 127.0.0.1', async () => {
     authorization: `Bearer ${l.token}`,
   })
   assert.equal(r.status, 200)
+  const other = Object.values(os.networkInterfaces())
+    .flat()
+    .find(i => i && !i.internal && i.family === 'IPv4')
+  if (other) {
+    await assert.rejects(
+      new Promise((res, rej) => {
+        const s = net.connect(l.port, other.address, () => {
+          s.destroy()
+          res(0)
+        })
+        s.on('error', rej)
+      }),
+      { code: 'ECONNREFUSED' },
+    )
+  }
+})
+
+test('two Host headers are refused with 400', async () => {
+  const l = await start()
+  const status = await new Promise<number>((resolve, reject) => {
+    const s = net.connect(l.port, '127.0.0.1', () =>
+      s.write(
+        `POST / HTTP/1.1\r\nHost: 127.0.0.1:${l.port}\r\nHost: 127.0.0.1:${l.port}\r\nAuthorization: Bearer ${l.token}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`,
+      ),
+    )
+    let t = ''
+    s.on('data', d => (t += d))
+    s.on('end', () => resolve(Number(t.split(' ')[1])))
+    s.on('error', reject)
+  })
+  assert.equal(status, 400)
+})
+
+test('the default log writes the token to stderr and not stdout', async () => {
+  const out: string[] = []
+  const err: string[] = []
+  const o = process.stdout.write
+  const e = process.stderr.write
+  process.stdout.write = ((c: string) => (out.push(String(c)), true)) as never
+  process.stderr.write = ((c: string) => (err.push(String(c)), true)) as never
+  let l
+  try {
+    l = await listenLocal(
+      () =>
+        createMcpServer({
+          store: memoryStore({ s: siteWith() }),
+          registry: kitRegistry(),
+          site: 's',
+          data: { rows: {} },
+        }),
+      0,
+    )
+  } finally {
+    process.stdout.write = o
+    process.stderr.write = e
+  }
+  closers.push(l.close)
+  assert.ok(err.join('').includes(l.token))
+  assert.ok(!out.join('').includes(l.token))
+})
+
+async function connectClient(l: { port: number; token: string }) {
+  const client = new Client({ name: 't', version: '0' })
+  closers.push(() => client.close())
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${l.port}/`), {
+      requestInit: { headers: { authorization: `Bearer ${l.token}` } },
+    }),
+  )
+  return client
+}
+
+test('a client can close and a new one reconnect', async () => {
+  const l = await start()
+  const a = await connectClient(l)
+  const n = (await a.listTools()).tools.length
+  assert.equal(n, 9)
+  await a.close()
+  const b = await connectClient(l)
+  assert.equal((await b.listTools()).tools.length, 9)
+})
+
+test('two clients at once both list tools', async () => {
+  const l = await start()
+  const [a, b] = [await connectClient(l), await connectClient(l)]
+  assert.equal((await a.listTools()).tools.length, 9)
+  assert.equal((await b.listTools()).tools.length, 9)
+})
+
+test('an unknown session id is refused', async () => {
+  const l = await start()
+  const r = await send(l.port, {
+    host: `127.0.0.1:${l.port}`,
+    authorization: `Bearer ${l.token}`,
+    'mcp-session-id': 'nope',
+  })
+  assert.equal(r.status, 404)
 })
 
 test('a request with Host "evil.test" is 403', async () => {
