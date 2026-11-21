@@ -19,7 +19,8 @@ import {
   sep,
 } from 'node:path'
 import { FONTS, buildIdentity, compileSite } from '@culmjs/core'
-import type { Manifest } from '@culmjs/core'
+import type { Manifest, SiteDocument } from '@culmjs/core'
+import type { Loaded } from '../folder/load.ts'
 import type { Located } from '../folder/plugins.ts'
 import type { Project } from '../folder/project.ts'
 
@@ -108,6 +109,60 @@ const bad = (message: string, extra: Partial<Located> = {}): Located => ({
   ...extra,
 })
 
+/** A page that is on may not take a path build writes. Shared with the dev server. */
+export function slugProblems(doc: SiteDocument, loaded: Loaded): Located[] {
+  const problems: Located[] = []
+  for (const p of doc.pages) {
+    const top = p.slug.split('/')[1]
+    if (p.on && (top === 'assets' || top === '_fonts' || top === MANIFEST_FILE))
+      problems.push(
+        loaded.map.locateProblem(
+          bad(`The slug "${p.slug}" is a path the build writes ("${top}").`, {
+            path: `pages.${p.id}.slug`,
+          }),
+        ),
+      )
+  }
+  return problems
+}
+
+/** The font files the compiled pages ask for (the @font-face rules of the fonts actually used) must be in fonts/. Shared with the dev server. */
+export function fontProblems(
+  files: { content: string }[],
+  hashes: { path: string }[],
+  loaded: Loaded,
+): Located[] {
+  const problems: Located[] = []
+  const where = (needle: string) => {
+    for (const f of loaded.files) {
+      const i = f.text.split('\n').findIndex(l => l.includes(needle))
+      if (i >= 0) return { file: f.path, line: i + 1 }
+    }
+    return {}
+  }
+  const have = new Set(hashes.map(h => h.path))
+  const wanted = new Set(
+    files.flatMap(f =>
+      [...f.content.matchAll(/@font-face\{[^}]*\/_fonts\/([^)"']+)\)/g)].map(
+        m => m[1]!,
+      ),
+    ),
+  )
+  for (const file of [...wanted].sort())
+    if (!have.has(`fonts/${file}`)) {
+      const id = Object.keys(FONTS).find(k =>
+        FONTS[k]!.files.some(f => f.file === file),
+      )
+      problems.push(
+        bad(
+          `The font file fonts/${file} is missing.`,
+          id ? where(`"cat:${id}"`) : {},
+        ),
+      )
+    }
+  return problems
+}
+
 /**
  * Compiles the site and writes it to `out` (default: the project's `out`). Any problem: nothing is written. `out` is cleared first,
  * but only when it is empty or holds `culm-manifest.json`; any other non-empty folder is refused and left alone.
@@ -130,13 +185,6 @@ export async function buildSite(
         : [bad('The project could not be loaded.')],
     }
 
-  const where = (needle: string) => {
-    for (const f of loaded.files) {
-      const i = f.text.split('\n').findIndex(l => l.includes(needle))
-      if (i >= 0) return { file: f.path, line: i + 1 }
-    }
-    return {}
-  }
   const problems: Located[] = []
 
   // the folder build may clear is never the project folder or one that holds it
@@ -157,43 +205,12 @@ export async function buildSite(
       )
   }
 
-  // a page may not take a path build writes
-  for (const p of doc.pages) {
-    const top = p.slug.split('/')[1]
-    if (p.on && (top === 'assets' || top === '_fonts' || top === MANIFEST_FILE))
-      problems.push(
-        loaded.map.locateProblem(
-          bad(`The slug "${p.slug}" is a path the build writes ("${top}").`, {
-            path: `pages.${p.id}.slug`,
-          }),
-        ),
-      )
-  }
+  problems.push(...slugProblems(doc, loaded))
 
   const hashes = await fileHashes(dir)
   const site = compileSite(doc, { registry, data: loaded.data, links })
   problems.push(...site.problems.map(p => loaded.map.locateProblem(p)))
-  // the font files the compiled pages ask for (the @font-face rules of the fonts actually used) are in fonts/
-  const have = new Set(hashes.map(h => h.path))
-  const wanted = new Set(
-    site.files.flatMap(f =>
-      [...f.content.matchAll(/@font-face\{[^}]*\/_fonts\/([^)"']+)\)/g)].map(
-        m => m[1]!,
-      ),
-    ),
-  )
-  for (const file of [...wanted].sort())
-    if (!have.has(`fonts/${file}`)) {
-      const id = Object.keys(FONTS).find(k =>
-        FONTS[k]!.files.some(f => f.file === file),
-      )
-      problems.push(
-        bad(
-          `The font file fonts/${file} is missing.`,
-          id ? where(`"cat:${id}"`) : {},
-        ),
-      )
-    }
+  problems.push(...fontProblems(site.files, hashes, loaded))
   if (problems.length) return { ok: false, problems }
 
   const manifest: Manifest = {

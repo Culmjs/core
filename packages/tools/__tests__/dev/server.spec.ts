@@ -101,7 +101,7 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 test('serves each page at its slug with the client script before </body>', async () => {
   await withDev(async ({ dev }) => {
     for (const [path, title] of [
-      ['/', 'Basic'],
+      ['/', 'Home'],
       ['/menu', 'Menu'],
       ['/about', 'About'],
     ] as const) {
@@ -113,7 +113,7 @@ test('serves each page at its slug with the client script before </body>', async
         r.body.indexOf(CLIENT_MARKER) < r.body.lastIndexOf('</body>'),
         path,
       )
-      assert.ok(r.body.includes('<title>') || title, path)
+      assert.ok(r.body.includes(`<title>${title}`), path)
     }
     assert.ok(CLIENT_SCRIPT.length > 100)
     assert.ok(CLIENT_SCRIPT.includes('/__culm/events'))
@@ -254,21 +254,21 @@ test('a path that resolves outside assets/ and fonts/ is 404', async () => {
 
 test('the server listens on 127.0.0.1 only', async () => {
   await withDev(async ({ dev }) => {
-    assert.match(dev.url, /^http:\/\/127\.0\.0\.1:\d+$/)
+    assert.equal(dev.address, '127.0.0.1')
     assert.equal(dev.url, `http://127.0.0.1:${dev.port}`)
+    const hosts = ['::1']
     const other = Object.values(networkInterfaces())
       .flat()
       .find(i => i && i.family === 'IPv4' && !i.internal)
-    if (!other) return
-    await assert.rejects(
-      new Promise((ok, bad) => {
-        const r = http.get(
-          { host: other.address, port: dev.port, path: '/' },
-          ok,
-        )
-        r.on('error', bad)
-      }),
-    )
+    if (other) hosts.push(other.address)
+    for (const host of hosts)
+      await assert.rejects(
+        new Promise((ok, bad) => {
+          const r = http.get({ host, port: dev.port, path: '/' }, ok)
+          r.on('error', bad)
+        }),
+        host,
+      )
   })
 })
 
@@ -361,5 +361,86 @@ test('the client draws the overlay with text nodes, never HTML', () => {
   assert.ok(!CLIENT_SCRIPT.includes('innerHTML'))
   assert.ok(
     CLIENT_SCRIPT.includes("'problems'") && CLIENT_SCRIPT.includes("'reload'"),
+  )
+})
+
+test('assets/ or fonts/ itself a link that leaves the project serves nothing', async () => {
+  const outside = await mkdtemp(join(tmpdir(), 'culm-outside-'))
+  await writeFile(join(outside, 'secret.txt'), 'SECRET')
+  await withDev(
+    async ({ dev }) => {
+      for (const p of ['/assets/secret.txt', '/_fonts/secret.txt']) {
+        const r = await get(dev, p)
+        assert.equal(r.status, 404, p)
+        assert.ok(!r.body.includes('SECRET'), p)
+      }
+    },
+    async dir => {
+      await symlink(outside, join(dir, 'assets'))
+      await symlink(outside, join(dir, 'fonts'))
+    },
+  )
+})
+
+test('before the first good compile every page path serves the client page with 503', async () => {
+  await withDev(
+    async ({ dev, events }) => {
+      for (const p of ['/', '/menu', '/a/b']) {
+        const r = await get(dev, p)
+        assert.equal(r.status, 503, p)
+        assert.ok(r.body.includes(CLIENT_MARKER), p)
+      }
+      await events.wait('problems')
+    },
+    async dir => {
+      const p = join(dir, 'pages/about.json')
+      await writeFile(
+        p,
+        (await readFile(p, 'utf8')).replace(
+          '"kind": "column"',
+          '"kind": "colum"',
+        ),
+      )
+    },
+  )
+})
+
+test('dev reports what build refuses: a catalogue font missing from fonts/ and a reserved slug', async () => {
+  await withDev(
+    async ({ events }) => {
+      const i = await events.wait('problems')
+      const ps = events.log[i]!.data as { message: string }[]
+      assert.ok(
+        ps.some(x => x.message.includes('inter.woff2')),
+        JSON.stringify(ps),
+      )
+    },
+    async dir => {
+      const sj = join(dir, 'site.json')
+      await writeFile(
+        sj,
+        (await readFile(sj, 'utf8')).replace(
+          '"headingFont": "sys:serif"',
+          '"headingFont": "cat:inter"',
+        ),
+      )
+    },
+  )
+  await withDev(
+    async ({ events }) => {
+      const i = await events.wait('problems')
+      const ps = events.log[i]!.data as { message: string }[]
+      assert.ok(
+        ps.some(x => x.message.includes('"/assets"')),
+        JSON.stringify(ps),
+      )
+    },
+    async dir => {
+      const p = join(dir, 'pages/about.json')
+      await writeFile(
+        p,
+        (await readFile(p, 'utf8')).replace('"/about"', '"/assets"'),
+      )
+    },
   )
 })

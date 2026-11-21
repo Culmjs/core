@@ -5,6 +5,7 @@ import type { FSWatcher } from 'node:fs'
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises'
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { compileSite } from '@culmjs/core'
+import { fileHashes, fontProblems, slugProblems } from '../build/bundle.ts'
 import { openProject } from '../folder/project.ts'
 import type { Located } from '../folder/plugins.ts'
 import { CLIENT_SCRIPT } from './client.ts'
@@ -45,7 +46,12 @@ const inside = (p: string, root: string) => {
 export async function startDev(
   dir: string,
   options: { port?: number } = {},
-): Promise<{ url: string; port: number; close(): Promise<void> }> {
+): Promise<{
+  url: string
+  port: number
+  address: string
+  close(): Promise<void>
+}> {
   const root = resolve(dir)
   let pages = new Map<string, string>() // `/` or `/slug` -> html
   let problems: Located[] = []
@@ -89,7 +95,11 @@ export async function startDev(
           data: loaded.data,
           links: project.links,
         })
-        found = site.problems.map(p => loaded.map.locateProblem(p))
+        found = [
+          ...slugProblems(loaded.doc, loaded),
+          ...site.problems.map(p => loaded.map.locateProblem(p)),
+          ...fontProblems(site.files, await fileHashes(root), loaded),
+        ]
         if (!found.length)
           next = new Map(
             site.files.map(f => [
@@ -165,7 +175,12 @@ export async function startDev(
       const from = resolve(root, base)
       const real = await realpath(resolve(from, rest))
       const realBase = await realpath(from)
-      if (!inside(real, realBase) || !(await lstat(real)).isFile())
+      // the folder itself may be a link out of the project; checked on every request, as the link can change while dev runs
+      if (
+        !inside(realBase, await realpath(root)) ||
+        !inside(real, realBase) ||
+        !(await lstat(real)).isFile()
+      )
         return end(res, 404)
       res
         .writeHead(200, {
@@ -221,7 +236,7 @@ export async function startDev(
           'cache-control': 'no-cache',
         })
         .end(page(html))
-    if (pages.size === 0 && slug === '/')
+    if (pages.size === 0)
       return void res
         .writeHead(503, { 'content-type': TYPES['.html']! })
         .end(
@@ -239,10 +254,14 @@ export async function startDev(
     watcher?.close()
     throw e
   })
-  const port = (server.address() as { port: number }).port
+  const { port, address } = server.address() as {
+    port: number
+    address: string
+  }
   return {
     url: `http://127.0.0.1:${port}`,
     port,
+    address,
     async close() {
       clearTimeout(timer)
       watcher?.close()
