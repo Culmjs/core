@@ -292,7 +292,7 @@ const summary = (r: Extract<ApplyResult, { ok: true }>, extra: Obj = {}) =>
   )
 
 export function createMcpServer(o: McpOptions): Server {
-  const { store, registry, site, data, allow, locate } = o
+  const { store, registry, site, allow, locate } = o
   const server = new Server(
     { name: 'culm', version: FRAMEWORK_VERSION },
     { capabilities: { tools: {} } },
@@ -522,7 +522,7 @@ export function createMcpServer(o: McpOptions): Server {
       if (a.cursor === undefined) {
         const input = {
           registry,
-          data,
+          data: o.data,
           ...(a.pages ? { pages: a.pages as string[] } : {}),
           ...(a.widths ? { widths: a.widths as number[] } : {}),
           ...(a.classes ? { classes: a.classes as (1 | 2 | 3)[] } : {}),

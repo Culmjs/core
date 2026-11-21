@@ -73,10 +73,13 @@ export async function listenLocal(
         if (t.sessionId) sessions.delete(t.sessionId)
         servers.delete(server)
       }
-      await server.connect(t)
-      await t.handleRequest(req, res, parsed)
-      // a failed initialize opened no session: nothing else will close this transport
-      if (!t.sessionId) await t.close()
+      try {
+        await server.connect(t)
+        await t.handleRequest(req, res, parsed)
+      } finally {
+        // a failed initialize, or a throw, opened no session: nothing else will close this transport
+        if (!t.sessionId) await t.close().catch(() => {})
+      }
     } catch {
       if (!res.headersSent) refuse(400)
       else res.end()

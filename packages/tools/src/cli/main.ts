@@ -6,6 +6,8 @@ import { buildSite, fileHashes } from '../build/bundle.ts'
 import { startDev } from '../dev/server.ts'
 import { expandShortForm } from '../folder/write.ts'
 import { fileStore } from '../folder/store.ts'
+import { loadFolder } from '../folder/load.ts'
+import type { Problem } from '@culmjs/core'
 import { openProject, type Project } from '../folder/project.ts'
 import type { Located } from '../folder/plugins.ts'
 import { runMeasure } from '../measure/run.ts'
@@ -146,7 +148,16 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
       out('Wrote culm.schema.json\n')
       return 0
     }
-    if (loaded.problems.length) {
+    // a plug-in, a block file or a data field that fails leaves no registry to serve; any other problem is the agent's to see, located
+    const registryProblem = (p: Located) =>
+      p.file === 'culm.json' ||
+      p.file?.startsWith('blocks/') ||
+      p.file?.startsWith('data/')
+    if (
+      command === 'mcp'
+        ? loaded.problems.some(registryProblem)
+        : loaded.problems.length
+    ) {
       show(loaded.problems)
       return 1
     }
@@ -200,8 +211,15 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
         assets: p => readFile(join(cwd, p)).catch(() => undefined),
       })
       for (const f of report.findings) {
-        const at = loaded.map.locate({ page: f.page }, f.nodes[0] ?? '')
-        err(`${formatLocated({ ...f, ...at })}\n`)
+        const at = loaded.map.locateProblem({
+          code: 'INVALID_DOCUMENT',
+          message: f.message,
+          nodeId: f.nodes[0],
+        })
+        const file = at.file ?? loaded.map.pageFile(f.page)
+        err(
+          `${formatLocated({ ...f, file, line: at.line, column: at.column })}\n`,
+        )
       }
       for (const i of report.incomplete)
         err(`${i.page}: ${formatLocated(i.problem)}\n`)
@@ -211,18 +229,37 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
       return report.incomplete.length ? 2 : report.findings.length ? 1 : 0
     }
 
-    // mcp: the folder's own store, so every change is a revision on disk
+    // mcp: the folder's own store, so every change is a revision on disk.
+    // The map and the data are read again whenever the store reads the folder, so a later change, by a batch or by hand, is located and used as it is now.
+    // ponytail: one extra load per tool call; read again only on a changed revision or file hash if that costs.
+    const kept = await fileStore(cwd, project.registry)
+    let map = loaded.map
+    let data = loaded.data
+    const store: typeof kept = {
+      ...kept,
+      async head(site) {
+        const h = await kept.head(site)
+        if ('doc' in h) {
+          const now = await loadFolder(cwd, project.registry)
+          map = now.map
+          data = now.data
+        }
+        return h
+      },
+    }
     const options = {
-      store: await fileStore(cwd, project.registry),
+      store,
       registry: project.registry,
       site: 'site',
-      data: loaded.data,
+      get data() {
+        return data
+      },
       allow: protect,
       folder: true,
       executable: values.chrome,
-      locate: <P extends Parameters<typeof loaded.map.locateProblem>[0]>(
-        p: P,
-      ) => loaded.map.locateProblem(p),
+      // a problem the store already located stays as it is
+      locate: <P extends Problem>(p: P): P =>
+        (p as { file?: string }).file ? p : (map.locateProblem(p) as P),
       // the folder may have changed since the server started
       build: async () => buildSite(await openProject(cwd)),
     }

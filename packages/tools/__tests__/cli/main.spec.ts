@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -351,4 +352,109 @@ test('tools index exports exactly the nine names', () => {
     'protect',
     'runMeasure',
   ])
+})
+
+test('mcp locates a problem in the files as they are now, after a change to them', async () => {
+  const dir = await copyFixture('site-basic')
+  const client = new Client({ name: 't', version: '0' })
+  await client.connect(
+    new StdioClientTransport({
+      command: process.execPath,
+      args: childArgs('mcp'),
+      cwd: dir,
+      stderr: 'ignore',
+    }),
+  )
+  try {
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const r = await client.callTool({ name, arguments: args })
+      return JSON.parse((r.content as { text: string }[])[0]!.text)
+    }
+    const bad = (revision: number) =>
+      call('plan', {
+        baseRevision: revision,
+        ops: [
+          {
+            op: 'setStyle',
+            tree: { page: 'home' },
+            id: 'intro',
+            layer: 'base',
+            decl: { size: 8 },
+          },
+        ],
+      })
+    const file = join(dir, 'pages', 'home.json')
+    const lineOf = async () =>
+      (await readFile(file, 'utf8'))
+        .split('\n')
+        .findIndex(l => l.includes('"size": 18')) + 1
+    const { revision } = await call('describe', {})
+    const first = await bad(revision)
+    assert.equal(
+      first.problems[0].file,
+      'pages/home.json',
+      JSON.stringify(first),
+    )
+    const was = await lineOf()
+    assert.equal(first.problems[0].line, was)
+    // lines are added above `intro` by hand
+    const text = await readFile(file, 'utf8')
+    await writeFile(
+      file,
+      text.replace(
+        '"slug": "/",',
+        `"slug": "/",\n${'    // more\n'.repeat(12)}`,
+      ),
+    )
+    const now = await lineOf()
+    assert.ok(now > was + 10)
+    const { revision: next } = await call('describe', {})
+    const second = await bad(next)
+    assert.equal(second.problems[0].file, 'pages/home.json')
+    assert.equal(second.problems[0].line, now)
+  } finally {
+    await client.close()
+  }
+})
+
+test('check, build, dev, schema and expand create no .culm/', async () => {
+  const dir = await copyFixture('site-basic')
+  await run(['build'], dir)
+  await run(['schema'], dir)
+  await run(['expand', 'pages/home.json', 'hero1'], dir)
+  await run(['check', '--chrome', '/nonexistent/chrome'], dir)
+  const c = child(dir, 'dev', '--port', '0')
+  await c.until('out', /http:\/\/127\.0\.0\.1:\d+/)
+  c.p.kill('SIGINT')
+  await c.exit
+  assert.ok(!existsSync(join(dir, '.culm')))
+})
+
+test('mcp starts on a folder whose files have problems, and a tool returns them located', async () => {
+  const dir = await copyFixture('site-basic')
+  const file = join(dir, 'pages', 'home.json')
+  await writeFile(
+    file,
+    (await readFile(file, 'utf8')).replace(
+      '"block": "hero"',
+      '"block": "nope"',
+    ),
+  )
+  const client = new Client({ name: 't', version: '0' })
+  await client.connect(
+    new StdioClientTransport({
+      command: process.execPath,
+      args: childArgs('mcp'),
+      cwd: dir,
+      stderr: 'ignore',
+    }),
+  )
+  try {
+    const r = await client.callTool({ name: 'describe', arguments: {} })
+    assert.equal(r.isError, true)
+    const j = JSON.parse((r.content as { text: string }[])[0]!.text)
+    assert.equal(j.problems[0].file, 'pages/home.json')
+  } finally {
+    await client.close()
+  }
 })

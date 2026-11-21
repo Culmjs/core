@@ -352,5 +352,6 @@ test('a request of 1,000,000 characters written with \\u escapes (about 6 MB) is
     req.on('error', reject)
     req.end(text)
   })
-  assert.notEqual(status, 413)
+  // the request is read whole; core's own limit then refuses the tool call, as a result of the call, not as a status
+  assert.equal(status, 200)
 })
