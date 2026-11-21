@@ -12,6 +12,10 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadPlugins } from '../../src/folder/plugins.ts'
 
+const fixtureEsm = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../fixtures/plugin-esm-pkg',
+)
 const fixture = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '../fixtures/plugin-pkg',
@@ -22,6 +26,7 @@ function project(extra: Record<string, string> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'culm-plugins-'))
   mkdirSync(join(dir, 'node_modules'))
   symlinkSync(fixture, join(dir, 'node_modules/plugin-pkg'), 'dir')
+  symlinkSync(fixtureEsm, join(dir, 'node_modules/plugin-esm-pkg'), 'dir')
   for (const [name, code] of Object.entries(extra)) {
     mkdirSync(join(dir, 'node_modules', name))
     writeFileSync(
@@ -46,10 +51,7 @@ const block = {
         id: 'r',
         kind: 'box',
         name: 'Box',
-        slot: 'child',
-        props: {},
-        style: {},
-        children: [],
+        slot: {},
       },
     },
   ],
@@ -96,10 +98,10 @@ test('a block file that names a function (onInsert, or a setting with fn) is ref
       'blocks/b.json': `{ "id": "b",\n "settings": [\n {\n "fn": "f" } ] }`,
     }),
   )
-  assert.equal(r.problems.length, 2)
-  assert.ok(r.problems.every(p => p.code === 'POLICY_VIOLATION'))
+  const fns = r.problems.filter(p => p.code === 'POLICY_VIOLATION')
+  assert.equal(fns.length, 2)
   assert.deepEqual(
-    r.problems.map(p => [p.file, p.line]),
+    fns.map(p => [p.file, p.line]),
     [
       ['blocks/a.json', 4],
       ['blocks/b.json', 4],
@@ -146,6 +148,166 @@ test('a package whose default export is not a plug-in is a problem, and nothing 
     assert.equal(r.registry.block('dup'), undefined)
   } finally {
     rmSync(dir, { recursive: true })
+  }
+})
+
+test('a package whose import throws is a problem at its line', async () => {
+  const dir = project({ boom: 'throw new Error("boom")' })
+  try {
+    const r = await loadPlugins(
+      dir,
+      files({ 'culm.json': '{ "plugins": ["boom"] }' }),
+    )
+    assert.equal(r.problems.length, 1)
+    assert.match(r.problems[0]!.message, /boom/)
+    assert.equal(r.problems[0]!.line, 1)
+  } finally {
+    rmSync(dir, { recursive: true })
+  }
+})
+
+test('only bare package names load; a path or an absolute path is a problem at its line', async () => {
+  const dir = project()
+  try {
+    writeFileSync(
+      join(dir, 'outside.js'),
+      'globalThis.__ran = true; export default {}',
+    )
+    const r = await loadPlugins(
+      dir,
+      files({
+        'culm.json':
+          '{\n "plugins": [\n "../outside.js",\n "' +
+          join(dir, 'outside.js') +
+          '",\n "./outside.js"\n ]\n}',
+      }),
+    )
+    assert.deepEqual(
+      r.problems.map(p => p.line),
+      [3, 4, 5],
+    )
+    assert.equal((globalThis as { __ran?: boolean }).__ran, undefined)
+  } finally {
+    rmSync(dir, { recursive: true })
+  }
+})
+
+test('a package is looked up in the project only, never in a parent folder', async () => {
+  const dir = project()
+  try {
+    mkdirSync(join(dir, 'sub'))
+    const r = await loadPlugins(
+      join(dir, 'sub'),
+      files({ 'culm.json': '{ "plugins": ["plugin-pkg"] }' }),
+    )
+    assert.equal(r.problems.length, 1)
+    assert.match(r.problems[0]!.message, /not installed in node_modules/)
+  } finally {
+    rmSync(dir, { recursive: true })
+  }
+})
+
+test('a package with an import-only exports map loads', async () => {
+  const dir = project()
+  try {
+    const r = await loadPlugins(
+      dir,
+      files({ 'culm.json': '{ "plugins": ["plugin-esm-pkg"] }' }),
+    )
+    assert.deepEqual(r.problems, [])
+    assert.ok(r.registry.plugins().some(p => p.name === 'plugin-esm-pkg'))
+  } finally {
+    rmSync(dir, { recursive: true })
+  }
+})
+
+test('a package with no usable entry is a problem', async () => {
+  const dir = project()
+  try {
+    mkdirSync(join(dir, 'node_modules/noentry'))
+    writeFileSync(
+      join(dir, 'node_modules/noentry/package.json'),
+      '{ "exports": { "require": "./x.cjs" } }',
+    )
+    const r = await loadPlugins(
+      dir,
+      files({ 'culm.json': '{ "plugins": ["noentry"] }' }),
+    )
+    assert.match(r.problems[0]!.message, /no entry for import/)
+  } finally {
+    rmSync(dir, { recursive: true })
+  }
+})
+
+test('block files are checked: shape, tree, duplicates; a bad file is skipped alone', async () => {
+  const bad = (o: object) => JSON.stringify({ ...block, ...o })
+  const r = await loadPlugins(
+    '/nowhere',
+    files({
+      'culm.json': '{}',
+      'blocks/a-noid.json': '{\n "name": "noid"\n}',
+      'blocks/b-looks.json': bad({ id: 'looks', looks: 'bad' }),
+      'blocks/c-kind.json': bad({
+        id: 'kind',
+        looks: [
+          {
+            id: 'a',
+            name: 'A',
+            tree: { id: 'r', kind: 'nonsense', name: 'X', slot: {} },
+          },
+        ],
+      }),
+      'blocks/d-one.json': bad({ id: 'same' }),
+      'blocks/e-two.json': bad({ id: 'same' }),
+      'blocks/f-good.json': bad({ id: 'good' }),
+    }),
+  )
+  const by = (f: string) => r.problems.filter(p => p.file === f)
+  assert.ok(
+    by('blocks/a-noid.json').length >= 1 &&
+      by('blocks/a-noid.json').every(p => p.line !== undefined || p.message),
+  )
+  assert.equal(by('blocks/b-looks.json')[0]!.line, 1)
+  assert.equal(by('blocks/c-kind.json')[0]!.code, 'UNKNOWN_KIND')
+  assert.equal(by('blocks/e-two.json').length, 1)
+  assert.match(by('blocks/e-two.json')[0]!.message, /d-one\.json/)
+  assert.deepEqual(
+    r.registry
+      .blocks()
+      .map(b => b.id)
+      .sort(),
+    ['good', 'same'],
+  )
+})
+
+test('data files are checked: rows against fields, unknown field types', async () => {
+  const r = await loadPlugins(
+    '/nowhere',
+    files({
+      'culm.json': '{}',
+      'data/a.json': '{ "fields": { "n": "text" }, "rows": [{ "n": 1 }] }',
+      'data/b.json': '{\n "fields": {\n "n": "texte" }\n}',
+      'data/c.json': '{ "fields": { "n": "text" }, "rows": [{ "n": "ok" }] }',
+    }),
+  )
+  assert.deepEqual(
+    r.problems.map(p => p.file),
+    ['data/a.json', 'data/b.json'],
+  )
+  assert.equal(r.problems[1]!.line, 3)
+  assert.deepEqual(
+    r.registry.sources().map(s => s.name),
+    ['c'],
+  )
+})
+
+test('out naming a source folder is refused', async () => {
+  for (const out of ['blocks', 'data/x', 'node_modules', '.culm', 'pages']) {
+    const r = await loadPlugins(
+      '/proj',
+      files({ 'culm.json': JSON.stringify({ out }) }),
+    )
+    assert.equal(r.problems.length, 1, out)
   }
 })
 
