@@ -375,6 +375,24 @@ test('a link inside assets/ to a file inside the project is served as that file,
   )
 })
 
+test('a link in assets/ or fonts/ to a project source file is 404', async () => {
+  await withDev(
+    async ({ dev }) => {
+      for (const p of ['/assets/x.json', '/assets/h.txt', '/_fonts/c.woff2'])
+        assert.equal((await get(dev, p)).status, 404, p)
+    },
+    async dir => {
+      await mkdir(join(dir, 'assets'))
+      await mkdir(join(dir, 'fonts'))
+      await mkdir(join(dir, '.culm'))
+      await writeFile(join(dir, '.culm/head'), '1')
+      await symlink(join(dir, 'site.json'), join(dir, 'assets/x.json'))
+      await symlink(join(dir, '.culm/head'), join(dir, 'assets/h.txt'))
+      await symlink(join(dir, 'culm.json'), join(dir, 'fonts/c.woff2'))
+    },
+  )
+})
+
 test('the client draws the overlay with text nodes, never HTML', () => {
   assert.ok(CLIENT_SCRIPT.includes('textContent'))
   assert.ok(!CLIENT_SCRIPT.includes('innerHTML'))

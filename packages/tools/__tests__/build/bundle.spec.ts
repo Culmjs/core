@@ -330,3 +330,18 @@ test('a font or asset linked outside, inside assets/ or fonts/, is refused; a li
     await rm(outside, { recursive: true, force: true })
   }
 })
+
+test('an asset or font linked to a project source file is refused by build, which writes nothing', async () => {
+  const dir = await site()
+  await mkdir(join(dir, 'fonts'))
+  await symlink(join(dir, 'site.json'), join(dir, 'assets/x.json'))
+  await symlink(join(dir, 'culm.json'), join(dir, 'fonts/c.woff2'))
+  const r = await buildSite(await openProject(dir))
+  assert.ok(!r.ok)
+  for (const f of ['assets/x.json', 'fonts/c.woff2'])
+    assert.ok(
+      r.problems.some(p => p.file === f),
+      f,
+    )
+  assert.ok(!(await exists(join(dir, 'dist'))))
+})

@@ -197,7 +197,7 @@ Exit codes: 0 done; 1 problems or findings; 2 wrong usage, or `check` could not 
 
 ### `culm dev`
 
-The server binds `127.0.0.1` only and has no option to bind elsewhere. It refuses a request whose `Host` header is not `127.0.0.1:<port>` or `localhost:<port>`. It serves `assets/` and `fonts/` (as `/_fonts/`) from the project and nothing outside it, including through a symbolic link.
+The server binds `127.0.0.1` only and has no option to bind elsewhere. It refuses a request whose `Host` header is not `127.0.0.1:<port>` or `localhost:<port>`. It serves `assets/` and `fonts/` (as `/_fonts/`) from the project and nothing outside them, including through a symbolic link. A file under `assets/` or `fonts/` is used (served, copied, hashed, measured) only when its real path lies inside that same folder; a link to a file elsewhere in the project, such as `site.json`, is refused by build and `check` with its file named, and is a 404 in dev. A link to a folder is skipped everywhere, and a folder that cannot be read is a problem.
 
 On a save, the server waits 50 ms for the burst of file events to end, reloads the folder, compiles, and swaps the new pages in whole. It then sends a `reload` event and the page reloads itself.
 
