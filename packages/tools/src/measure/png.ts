@@ -33,6 +33,7 @@ export function decodePng(png: Uint8Array): Image {
   let prev = Buffer.alloc(stride)
   for (let y = 0; y < height; y++) {
     const kind = raw[y * (stride + 1)]!
+    if (kind > 4) throw new Error(`Row ${y} has the unknown filter ${kind}.`)
     const row = Buffer.from(
       raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)),
     )

@@ -184,8 +184,6 @@ export async function openBrowser(
     '--no-pings',
     '--dns-prefetch-disable',
     '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
-    // Frames stay in the page's own process, so the one Fetch interception below sees every request of the page, iframes included.
-    '--disable-features=IsolateOrigins,site-per-process',
     '--hide-scrollbars',
     '--mute-audio',
     '--force-color-profile=srgb',
@@ -209,10 +207,12 @@ export async function openBrowser(
   try {
     const cdp = connect(child)
     const v = await cdp.send('Browser.getVersion', {}, undefined, 15000)
+    const hub = watch(cdp)
+    await cdp.send('Target.setAutoAttach', AUTO)
     let closing: Promise<void> | undefined
     const browser: Browser = {
       version: String(v.product ?? 'Chrome'),
-      newPage: () => newPage(cdp),
+      newPage: () => newPage(cdp, hub),
       close: () =>
         (closing ??= (async () => {
           cdp.send('Browser.close', {}, undefined, 2000).catch(() => {})
@@ -244,6 +244,8 @@ type Cdp = {
   ): Promise<Json>
   on(session: string, method: string, fn: (p: Json) => void): void
   once(session: string, method: string, ms: number): Promise<Json>
+  /** Forgets every listener of a session. */
+  drop(session: string): void
 }
 
 /** The DevTools pipe: JSON messages, each ended by a NUL byte, written to fd 3 and read from fd 4. */
@@ -252,28 +254,38 @@ function connect(child: ChildProcess): Cdp {
   const inn = child.stdio[4] as NodeJS.ReadableStream
   out.on('error', () => {})
   let seq = 0
+  let closed = false
   const calls = new Map<number, { ok(r: Json): void; no(e: Error): void }>()
   const listeners = new Map<string, ((p: Json) => void)[]>()
   const key = (s: string, m: string) => `${s}|${m}`
-  let buf = Buffer.alloc(0)
+  const got = (text: string) => {
+    const m = JSON.parse(text)
+    if (m.id !== undefined) {
+      const c = calls.get(m.id)
+      calls.delete(m.id)
+      if (m.error) c?.no(new Error(m.error.message))
+      else c?.ok(m.result)
+    } else
+      for (const f of [
+        ...(listeners.get(key(m.sessionId ?? '', m.method)) ?? []),
+      ])
+        f(m.params)
+  }
+  // Only each new chunk is scanned for the NUL; a message is joined once, when it ends.
+  let parts: Buffer[] = []
   inn.on('data', (chunk: Buffer) => {
-    buf = Buffer.concat([buf, chunk])
-    for (let i = buf.indexOf(0); i >= 0; i = buf.indexOf(0)) {
-      const m = JSON.parse(buf.subarray(0, i).toString('utf8'))
-      buf = buf.subarray(i + 1)
-      if (m.id !== undefined) {
-        const c = calls.get(m.id)
-        calls.delete(m.id)
-        if (m.error) c?.no(new Error(m.error.message))
-        else c?.ok(m.result)
-      } else
-        for (const f of [
-          ...(listeners.get(key(m.sessionId ?? '', m.method)) ?? []),
-        ])
-          f(m.params)
+    let start = 0
+    for (let i = chunk.indexOf(0); i >= 0; i = chunk.indexOf(0, start)) {
+      parts.push(chunk.subarray(start, i))
+      const text = Buffer.concat(parts).toString('utf8')
+      parts = []
+      start = i + 1
+      got(text)
     }
+    if (start < chunk.length) parts.push(chunk.subarray(start))
   })
   child.once('close', () => {
+    closed = true
     for (const c of calls.values()) c.no(new Error('Chrome closed'))
     calls.clear()
   })
@@ -283,8 +295,13 @@ function connect(child: ChildProcess): Cdp {
   }
   return {
     on,
+    drop: s => {
+      for (const k of [...listeners.keys()])
+        if (k.startsWith(`${s}|`)) listeners.delete(k)
+    },
     send: (method, params = {}, session, ms = 60000) =>
       new Promise((ok, no) => {
+        if (closed) return no(new Error('Chrome closed'))
         const id = ++seq
         const timer = setTimeout(() => {
           calls.delete(id)
@@ -321,25 +338,149 @@ function connect(child: ChildProcess): Cdp {
   }
 }
 
-async function newPage(cdp: Cdp): Promise<Page> {
+/** What a page answers with, and what it was refused: shared by the page and every target that belongs to it (frames, workers). */
+type Owner = {
+  fn?: (url: string) => Promise<Answer | undefined>
+  blocked: string[]
+  hooked: Set<string>
+}
+type Hub = {
+  owners: Map<string, Owner>
+  /** The session of a top-level page, by target id, once Chrome has attached it. */
+  slot(targetId: string): { p: Promise<string>; ok(s: string): void }
+  /** Attaches what the session's target starts (frames, workers) to the owner's answer. */
+  adopt(owner: Owner, session: string): Promise<void>
+  /** The page that answered last: a shared or service worker has no opener to ask. ponytail: pages are measured one at a time. */
+  last?: Owner
+}
+const AUTO = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }
+
+/**
+ * Every target Chrome starts is attached before it runs. A page of ours is handed to newPage; a window a page opened is closed and listed; a frame in another
+ * process, a worker, a shared worker or a service worker gets the same Fetch answer as the page it belongs to before its first request.
+ */
+function watch(cdp: Cdp): Hub {
+  const slots = new Map<string, { p: Promise<string>; ok(s: string): void }>()
+  const hub: Hub = {
+    owners: new Map(),
+    async adopt(owner, session) {
+      cdp.on(session, 'Target.attachedToTarget', ev => void attached(ev, owner))
+      await cdp.send('Target.setAutoAttach', AUTO, session)
+    },
+    slot(id) {
+      let d = slots.get(id)
+      if (!d) {
+        let ok!: (s: string) => void
+        d = { p: new Promise<string>(r => (ok = r)), ok: s => ok(s) }
+        slots.set(id, d)
+      }
+      return d
+    },
+  }
+  const attached = async (ev: Json, parent?: Owner) => {
+    const { sessionId, targetInfo: t, waitingForDebugger } = ev
+    try {
+      if (!parent && t.type === 'page') {
+        if (!t.openerId) return hub.slot(t.targetId).ok(sessionId)
+        ;(hub.owners.get(t.openerId) ?? hub.last)?.blocked.push(
+          t.url || 'a window opened by the page',
+        )
+        return void (await cdp.send('Target.closeTarget', {
+          targetId: t.targetId,
+        }))
+      }
+      const owner = parent ?? hub.last
+      if (!owner)
+        return void (await cdp.send('Target.closeTarget', {
+          targetId: t.targetId,
+        }))
+      await hook(cdp, owner, sessionId)
+      await hub.adopt(owner, sessionId)
+      if (waitingForDebugger)
+        await cdp.send('Runtime.runIfWaitingForDebugger', {}, sessionId)
+    } catch {
+      // a target that went away while it was being set up
+    }
+  }
+  cdp.on('', 'Target.attachedToTarget', ev => void attached(ev))
+  return hub
+}
+
+/** Fetch on a session, answered by the owner's current answer (set again by a second `answer`); a request with no answer fails and is listed. */
+async function hook(cdp: Cdp, owner: Owner, session: string) {
+  if (owner.hooked.has(session)) return
+  owner.hooked.add(session)
+  cdp.on(
+    session,
+    'Fetch.requestPaused',
+    async ({ requestId, request }: Json) => {
+      const s = (method: string, params: object) =>
+        cdp.send(method, params, session)
+      try {
+        if (/^(data|about|blob):/.test(request.url))
+          return void (await s('Fetch.continueRequest', { requestId }))
+        const r = await owner.fn?.(request.url)
+        if (!r) {
+          owner.blocked.push(request.url)
+          return void (await s('Fetch.failRequest', {
+            requestId,
+            errorReason: 'BlockedByClient',
+          }))
+        }
+        await s('Fetch.fulfillRequest', {
+          requestId,
+          responseCode: r.status ?? 200,
+          responseHeaders: [
+            { name: 'Content-Type', value: r.type },
+            { name: 'Access-Control-Allow-Origin', value: '*' },
+          ],
+          body: Buffer.from(r.body).toString('base64'),
+        })
+      } catch {
+        await s('Fetch.failRequest', {
+          requestId,
+          errorReason: 'Failed',
+        }).catch(() => {})
+      }
+    },
+  )
+  await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }, session)
+}
+
+async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
   const { targetId } = await cdp.send('Target.createTarget', {
     url: 'about:blank',
   })
-  const { sessionId } = await cdp.send('Target.attachToTarget', {
-    targetId,
-    flatten: true,
-  })
+  const sessionId = await Promise.race([
+    hub.slot(targetId).p,
+    new Promise<never>((_, no) =>
+      setTimeout(
+        () => no(new Error('Chrome did not attach the new page')),
+        15000,
+      ),
+    ),
+  ])
   const s = (method: string, params?: object, ms?: number) =>
     cdp.send(method, params, sessionId, ms)
+  const owner: Owner = { blocked: [], hooked: new Set() }
+  hub.owners.set(targetId, owner)
+  hub.last = owner
   await s('Page.enable')
-  // WebRTC and sockets are not requests the interception sees: the page has none.
+  // Sockets and WebRTC are not requests the interception sees: the page has none. A window the page opens is not made; the address is listed.
+  await s('Runtime.enable')
+  await s('Runtime.addBinding', { name: 'culmBlocked' })
+  cdp.on(sessionId, 'Runtime.bindingCalled', ({ name, payload }: Json) => {
+    if (name === 'culmBlocked') owner.blocked.push(String(payload))
+  })
   await s('Page.addScriptToEvaluateOnNewDocument', {
     source:
-      "for (const k of ['RTCPeerConnection','webkitRTCPeerConnection','WebSocket','WebSocketStream','EventSource']) delete window[k]",
+      "for (const k of ['RTCPeerConnection','webkitRTCPeerConnection','WebSocket','WebSocketStream','EventSource']) delete window[k];" +
+      'window.open = u => { window.culmBlocked(String(u)); return null }',
   })
-  const blocked: string[] = []
+  await hub.adopt(owner, sessionId)
+  await s('Runtime.runIfWaitingForDebugger')
   return {
-    blocked,
+    blocked: owner.blocked,
     setViewport: (width, height) =>
       s('Emulation.setDeviceMetricsOverride', {
         width,
@@ -355,39 +496,9 @@ async function newPage(cdp: Cdp): Promise<Page> {
         ],
       }),
     async answer(fn) {
-      cdp.on(
-        sessionId,
-        'Fetch.requestPaused',
-        async ({ requestId, request }: Json) => {
-          try {
-            if (/^(data|about|blob):/.test(request.url))
-              return void (await s('Fetch.continueRequest', { requestId }))
-            const r = await fn(request.url)
-            if (!r) {
-              blocked.push(request.url)
-              return void (await s('Fetch.failRequest', {
-                requestId,
-                errorReason: 'BlockedByClient',
-              }))
-            }
-            await s('Fetch.fulfillRequest', {
-              requestId,
-              responseCode: r.status ?? 200,
-              responseHeaders: [
-                { name: 'Content-Type', value: r.type },
-                { name: 'Access-Control-Allow-Origin', value: '*' },
-              ],
-              body: Buffer.from(r.body).toString('base64'),
-            })
-          } catch {
-            await s('Fetch.failRequest', {
-              requestId,
-              errorReason: 'Failed',
-            }).catch(() => {})
-          }
-        },
-      )
-      await s('Fetch.enable', { patterns: [{ urlPattern: '*' }] })
+      owner.fn = fn
+      hub.last = owner
+      await hook(cdp, owner, sessionId)
     },
     async goto(url, timeoutMs) {
       const loaded = cdp.once(sessionId, 'Page.loadEventFired', timeoutMs)
@@ -438,6 +549,10 @@ async function newPage(cdp: Cdp): Promise<Page> {
       return Buffer.from(r.data, 'base64')
     },
     async close() {
+      for (const h of owner.hooked) cdp.drop(h)
+      cdp.drop(sessionId)
+      hub.owners.delete(targetId)
+      if (hub.last === owner) hub.last = undefined
       await cdp
         .send('Target.closeTarget', { targetId }, undefined, 5000)
         .catch(() => {})

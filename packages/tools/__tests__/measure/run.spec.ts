@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { SiteDocument } from '@culmjs/core'
 import { memoryStore } from '@culmjs/core/ops'
 import { copyFixture } from '../fixtures.ts'
 import { openProject } from '../../src/folder/project.ts'
@@ -83,4 +84,22 @@ test('measureSince with a revision the store does not hold is UNSUPPORTED_CAPABI
   })
   assert.ok(!none.ok)
   assert.equal(none.problems[0]!.code, 'INVALID_DOCUMENT')
+})
+
+test('a document that is not a site is incomplete, never a throw', async () => {
+  const p = await openProject(await copyFixture('site-basic'))
+  const broken = {
+    ...p.loaded.doc!,
+    pages: undefined,
+  } as unknown as SiteDocument
+  const r = await runMeasure({
+    doc: broken,
+    registry: p.registry,
+    data: p.loaded.data,
+    revision: 1,
+    executable: '/nonexistent/chrome',
+  })
+  assert.deepEqual(r.findings, [])
+  assert.equal(r.incomplete.length, 1)
+  assert.equal(r.incomplete[0]!.problem.code, 'MEASUREMENT_INCOMPLETE')
 })

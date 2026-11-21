@@ -7,7 +7,7 @@ import type { Data, Node, SiteDocument } from '@culmjs/core'
 import { apply, memoryStore } from '@culmjs/core/ops'
 import { walk } from '@culmjs/core/document'
 import { copyFixture } from '../__tests__/fixtures.ts'
-import { fileHashes } from '../src/build/bundle.ts'
+import { buildSite, fileHashes } from '../src/build/bundle.ts'
 import { openProject, type Project } from '../src/folder/project.ts'
 import { openBrowser, type Browser } from '../src/measure/browser.ts'
 import {
@@ -294,4 +294,85 @@ test('the page of a list reports node ids without the repeat suffix', async () =
   const r = await runMeasure(input({ pages: ['menu'], classes: [1, 2, 3] }))
   assert.ok(r.measured.length > 0)
   assert.ok(r.findings.every(f => f.nodes.every(n => !n.includes('~'))))
+})
+
+test('an overflow in the header is found, with the header node id', async () => {
+  const d = clone()
+  d.header.children = [
+    {
+      id: 'hbox',
+      kind: 'column',
+      name: 'Header box',
+      slot: {},
+      style: { base: { overflow: 'clip', padding: 16 } },
+      children: [
+        {
+          id: 'hrow',
+          kind: 'row',
+          name: 'Header row',
+          slot: {},
+          children: [
+            {
+              id: 'htitle',
+              kind: 'text',
+              name: 'Header title',
+              slot: {},
+              style: { base: { width: 'fit', size: 64, nowrap: true } },
+              props: {
+                level: 'h2',
+                runs: [{ text: 'Fresh sourdough baked every morning here' }],
+              },
+            },
+          ],
+        },
+      ],
+    },
+  ]
+  const r = await runMeasure(
+    input({ doc: d, pages: ['about'], widths: [390], themes: ['light'] }),
+  )
+  const f = r.findings.find(
+    x => x.check === 'overflow' && x.nodes[0] === 'htitle',
+  )
+  assert.ok(f, JSON.stringify(r.findings.map(x => [x.check, x.nodes])))
+  assert.equal(f.width, 390)
+})
+
+test('the build identity of a run is the one of culm build for the same project', async () => {
+  const built = await buildSite(await openProject(dir), join(dir, 'dist-id'))
+  assert.ok(built.ok, JSON.stringify(built))
+  const r = await runMeasure(
+    input({
+      pages: ['about'],
+      widths: [390],
+      themes: ['light'],
+      files: await fileHashes(dir),
+    }),
+  )
+  assert.equal(r.build, built.manifest.build)
+})
+
+test('a width outside the profile is reported, and the others are measured', async () => {
+  const r = await runMeasure(
+    input({ pages: ['about'], widths: [390, 1000], themes: ['light'] }),
+  )
+  assert.deepEqual(
+    r.incomplete.map(i => [i.page, i.width, i.problem.code]),
+    [['about', 1000, 'MEASUREMENT_INCOMPLETE']],
+  )
+  assert.match(r.incomplete[0]!.problem.message, /1000 is not in the profile/)
+  assert.deepEqual(
+    r.measured.map(m => m.width),
+    [390],
+  )
+})
+
+test('a state declared inside a component definition is listed in skipped', async () => {
+  const d = clone()
+  const c = d.components[0]!
+  c.root.state = [{ name: 'flap', values: ['a', 'b'], initial: 'a' }]
+  const r = await runMeasure(
+    input({ doc: d, pages: ['home'], widths: [1280], themes: ['light'] }),
+  )
+  assert.deepEqual(r.skipped, ['state:flap=b'])
 })

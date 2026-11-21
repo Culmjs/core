@@ -25,11 +25,12 @@ function encode(
   pixels: number[],
   kind: (y: number) => number,
   depth = 8,
+  interlace = 0,
 ) {
   const ihdr = Buffer.alloc(13)
   ihdr.writeUInt32BE(w, 0)
   ihdr.writeUInt32BE(h, 4)
-  ihdr.set([depth, ch === 4 ? 6 : 2, 0, 0, 0], 8)
+  ihdr.set([depth, ch === 4 ? 6 : 2, 0, 0, interlace], 8)
   const stride = w * ch
   const rows: number[] = []
   for (let y = 0; y < h; y++) {
@@ -39,7 +40,7 @@ function encode(
       const at = (yy: number, ii: number) =>
         yy < 0 || ii < 0 ? 0 : pixels[yy * stride + ii]!
       const [a, b, c] = [at(y, i - ch), at(y - 1, i), at(y - 1, i - ch)]
-      const guess = [0, a, b, (a + b) >> 1, paeth(a, b, c)][k]!
+      const guess = k > 4 ? 0 : [0, a, b, (a + b) >> 1, paeth(a, b, c)][k]!
       rows.push((pixels[y * stride + i]! - guess) & 255)
     }
   }
@@ -74,4 +75,26 @@ test('a 16-bit PNG, and bytes that are no PNG, throw', () => {
     /8-bit/,
   )
   assert.throws(() => decodePng(Buffer.from('not a png at all')), /PNG/)
+})
+
+test('each filter alone is undone, in RGB and in RGBA', () => {
+  for (const ch of [3, 4] as const)
+    for (let k = 0; k < 5; k++) {
+      const px = noise(6 * 4 * ch)
+      const img = decodePng(encode(6, 4, ch, px, () => k))
+      const want =
+        ch === 4 ? px : px.flatMap((v, i) => (i % 3 === 2 ? [v, 255] : [v]))
+      assert.deepEqual([...img.rgba], want, `filter ${k}, ${ch} channels`)
+    }
+})
+
+test('an interlaced PNG and an unknown filter byte throw', () => {
+  assert.throws(
+    () => decodePng(encode(2, 2, 4, noise(16), () => 0, 8, 1)),
+    /interlaced/,
+  )
+  assert.throws(
+    () => decodePng(encode(2, 2, 4, noise(16), y => 5 + y)),
+    /unknown filter 5/,
+  )
 })

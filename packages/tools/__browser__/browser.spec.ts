@@ -153,6 +153,126 @@ test('a script error in evaluate rejects, and a page that never loads is not ok'
   }
 })
 
+/** A local server that counts TCP connections, not requests: a preconnect would count. */
+async function counting() {
+  let connections = 0
+  const srv = createServer((_, res) => res.end('x'))
+  srv.on('connection', () => connections++)
+  await new Promise<void>(r => srv.listen(0, '127.0.0.1', r))
+  const url = `http://127.0.0.1:${(srv.address() as { port: number }).port}/o`
+  return { url, count: () => connections, close: () => srv.close() }
+}
+const settle = () => new Promise(r => setTimeout(r, 600))
+
+test('a popup to an outside address is closed, listed, and never connects', async () => {
+  const out = await counting()
+  const page = await browser.newPage()
+  try {
+    await page.answer(async url =>
+      url === 'https://site.culm.invalid/p'
+        ? HTML(`<script>window.open(${JSON.stringify(out.url)})</script>`)
+        : undefined,
+    )
+    await page.goto('https://site.culm.invalid/p', 5000)
+    await settle()
+    assert.equal(out.count(), 0)
+    assert.ok(
+      page.blocked.some(b => b.includes(out.url)),
+      JSON.stringify(page.blocked),
+    )
+  } finally {
+    await page.close()
+    out.close()
+  }
+})
+
+test('a window opened by a click or a form, not by script, is closed and listed too', async () => {
+  const out = await counting()
+  const page = await browser.newPage()
+  try {
+    await page.answer(async url =>
+      url === 'https://site.culm.invalid/a'
+        ? HTML(
+            `<a target=_blank href="${out.url}">x</a><form target=_blank action="${out.url}"></form><script>document.querySelector('a').click();document.querySelector('form').submit()</script>`,
+          )
+        : undefined,
+    )
+    await page.goto('https://site.culm.invalid/a', 5000)
+    await settle()
+    assert.equal(out.count(), 0)
+    assert.equal(page.blocked.length, 2)
+  } finally {
+    await page.close()
+    out.close()
+  }
+})
+
+test('a shared worker that fetches an outside address is answered by the page, listed, and never connects', async () => {
+  const out = await counting()
+  const page = await browser.newPage()
+  try {
+    await page.answer(async url =>
+      url === 'https://site.culm.invalid/w'
+        ? HTML(
+            `<script>new SharedWorker(URL.createObjectURL(new Blob(['fetch(${JSON.stringify(out.url)}).catch(()=>{})'])))</script>`,
+          )
+        : undefined,
+    )
+    await page.goto('https://site.culm.invalid/w', 5000)
+    await settle()
+    assert.equal(out.count(), 0)
+    assert.ok(page.blocked.includes(out.url), JSON.stringify(page.blocked))
+  } finally {
+    await page.close()
+    out.close()
+  }
+})
+
+test('a service worker registration never connects, and what it would fetch is listed', async () => {
+  const out = await counting()
+  const page = await browser.newPage()
+  try {
+    await page.answer(async url =>
+      url === 'https://site.culm.invalid/s'
+        ? HTML(
+            `<script>navigator.serviceWorker.register('/sw.js').catch(()=>{})</script>`,
+          )
+        : url === 'https://site.culm.invalid/sw.js'
+          ? {
+              type: 'text/javascript',
+              body: `fetch(${JSON.stringify(out.url)}).catch(()=>{})`,
+            }
+          : undefined,
+    )
+    await page.goto('https://site.culm.invalid/s', 5000)
+    await settle()
+    assert.equal(out.count(), 0)
+    assert.ok(
+      page.blocked.includes(out.url) ||
+        page.blocked.some(b => b.endsWith('/sw.js')),
+      JSON.stringify(page.blocked),
+    )
+  } finally {
+    await page.close()
+    out.close()
+  }
+})
+
+test('a second answer replaces the first, and a call after Chrome has gone fails at once', async () => {
+  const page = await browser.newPage()
+  await page.answer(async () => HTML('first'))
+  await page.answer(async () => HTML('second'))
+  await page.goto('https://site.culm.invalid/', 5000)
+  assert.equal(await page.evaluate('document.body.textContent'), 'second')
+  await page.close()
+  const o = await openBrowser()
+  assert.ok(o.ok)
+  await o.browser.close()
+  const t = Date.now()
+  await assert.rejects(o.browser.newPage())
+  assert.ok(Date.now() - t < 2000)
+})
+
 test('closing leaves no Chrome and no profile folder', async () => {
   const o = await openBrowser()
   assert.ok(o.ok)
