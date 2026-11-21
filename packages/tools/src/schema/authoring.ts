@@ -51,6 +51,7 @@ function kindDef(kind: string, spec: KindSpec): Schema {
   const layers = [...new Set([...STYLE_LAYERS, ...spec.states])]
   return {
     description: spec.label,
+    type: 'object',
     properties: {
       kind: { const: kind },
       props: {
@@ -91,7 +92,10 @@ function shortDef(b: BlockDef): Schema {
     type: 'object',
     properties: {
       block: { const: b.id },
-      look: { enum: b.looks.map(l => l.id) },
+      // the loader falls back to the first look for a look that is not text
+      look: {
+        anyOf: [{ enum: b.looks.map(l => l.id) }, { not: { type: 'string' } }],
+      },
       id: str,
       ...Object.fromEntries(
         b.settings
@@ -120,6 +124,9 @@ const fieldType: Schema = {
 /**
  * One JSON Schema (draft 2020-12) of the folder authoring format: site.json, a page, a piece, a block file and a data file.
  * It is open wherever the loader is open, has no depth or count limit, and holds no reference between nodes.
+ * One known place it is stricter than the loader: `site` refuses a file with `root`, `fields` or `looks`, which the loader
+ * ignores in site.json. Without it a broken page, piece, data or block file would match `site` under the root `anyOf`
+ * and no error would show.
  */
 export function authoringSchema(registry: Registry): Record<string, unknown> {
   const kinds = new Map<string, KindSpec>([
@@ -214,7 +221,15 @@ export function authoringSchema(registry: Registry): Record<string, unknown> {
       description:
         'A piece placed here; every other key is a value for one of its settings.',
       type: 'object',
-      properties: { use: { type: 'string', minLength: 1 }, id: str, name: str },
+      properties: {
+        use: { type: 'string', minLength: 1 },
+        id: str,
+        // a piece may declare a setting called name, of any type; the schema cannot see the piece
+        name: {
+          description:
+            'The name of the node, or the piece setting called name.',
+        },
+      },
       required: ['use'],
     },
     shortForm: blocks.length

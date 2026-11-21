@@ -179,3 +179,18 @@ test('piece and use may carry id and name; a block file and a data file pass', (
   )
   assert.equal(ok({ fields: { name: 'texte' } }).ok, false)
 })
+
+test('a use may set a piece setting called name to any value, and a non-text look is not refused', async () => {
+  const { project } = await sample()
+  const ok = check(project.registry)
+  const page = (child: unknown) => ({
+    id: 'p',
+    title: 'P',
+    slug: '/p',
+    root: { kind: 'column', children: [child] },
+  })
+  assert.ok(ok(page({ use: '../pieces/v.json', name: 20 })).ok)
+  assert.ok(ok(page({ use: '../pieces/v.json', name: 'Card' })).ok)
+  assert.ok(ok(page({ block: 'hero', look: 5 })).ok)
+  assert.equal(ok(page({ block: 'hero', look: 'nope' })).ok, false)
+})
