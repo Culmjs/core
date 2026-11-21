@@ -49,18 +49,18 @@ const hiddenAt = (n: Node, layout: Layout) => {
   return !!(layout === 'tablet' ? tablet : (s?.phone?.hidden ?? tablet))
 }
 
-/** Each node of the page (after instances are unrolled) with whether it or an ancestor is hidden at `layout`. */
+/** Each node of the page, header and footer (after instances are unrolled) not hidden at `layout`, itself or through an ancestor. */
 function observable(doc: SiteDocument, page: string, layout: Layout) {
-  const root = doc.pages.find(p => p.id === page)?.root
   const seen = new Set<string>()
-  if (!root) return seen
-  const tree = unrollInstances(root, doc.components, unrollEnv(doc, new Map()))
+  const env = unrollEnv(doc, new Map())
   const go = (n: Node, hidden: boolean) => {
     const h = hidden || hiddenAt(n, layout)
     if (!h) seen.add(n.id)
     for (const k of n.children ?? []) go(k, h)
   }
-  go(tree, false)
+  const root = doc.pages.find(p => p.id === page)?.root
+  for (const r of [root, doc.header, doc.footer])
+    if (r) go(unrollInstances(r, doc.components, env), false)
   return seen
 }
 
@@ -88,7 +88,8 @@ export function compareReports(
     const k = `${f.page}|${layoutOf(f.width)}`
     if (!shown.has(k))
       shown.set(k, observable(afterDoc, f.page, layoutOf(f.width)))
-    if (!f.nodes.some(id => shown.get(k)!.has(id))) return 'unobservable'
+    if (f.nodes.length > 0 && !f.nodes.some(id => shown.get(k)!.has(id)))
+      return 'unobservable'
     return keys.has(f.key) ? 'present' : 'fixed'
   }
   const old = new Set(before.findings.map(f => f.key))

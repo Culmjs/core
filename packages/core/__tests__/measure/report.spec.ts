@@ -190,3 +190,13 @@ test('buildReport records the identity, the profile version, the browser build, 
   assert.deepEqual(r.blocked, ['http://x'])
   assert.deepEqual(r.skipped, ['state:tab=second'])
 })
+
+test('a header node finding present in `after` is present; a node-less finding follows its key', () => {
+  const d = doc([node('a', 'box')])
+  d.header = { ...d.header, children: [node('hd', 'box')] }
+  const h = finding(['hd'])
+  assert.equal(status(report([h]), report([{ ...h }]), d), 'present')
+  const s = finding([], 1280, 'h-scroll')
+  assert.equal(status(report([s]), report([{ ...s }])), 'present')
+  assert.equal(status(report([s]), report([])), 'fixed')
+})
