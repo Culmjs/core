@@ -13,5 +13,10 @@
     "skipLibCheck": true,
     "customConditions": ["source"]
   },
-  "include": ["packages/*/src", "packages/*/__tests__", "scripts"]
+  "include": [
+    "packages/*/src",
+    "packages/*/__tests__",
+    "packages/*/__browser__",
+    "scripts"
+  ]
 }

@@ -53,3 +53,37 @@ test('packed core installs offline and every sub-path imports', () => {
     rmSync(join(core, 'dist'), { recursive: true, force: true })
   }
 })
+
+test('pack:all packs core then tools into .pack/, and packed tools runs `culm --help` with exit 0 from a temp install', () => {
+  const root = join(import.meta.dirname, '../..')
+  const tmp = mkdtempSync(join(tmpdir(), 'culm-packall-'))
+  try {
+    run('npm', ['run', 'pack:all'], root)
+    const tars = readdirSync(join(root, '.pack')).filter(f =>
+      f.endsWith('.tgz'),
+    )
+    const core = tars.find(f => f.startsWith('culmjs-core-'))
+    const tools = tars.find(f => f.startsWith('culmjs-tools-'))
+    assert.ok(core && tools, `missing tarballs in .pack: ${tars.join()}`)
+    writeFileSync(join(tmp, 'package.json'), '{"type":"module"}')
+    run(
+      'npm',
+      [
+        'install',
+        join(root, '.pack', core),
+        join(root, '.pack', tools),
+        '--offline',
+        '--no-audit',
+        '--no-fund',
+      ],
+      tmp,
+    )
+    const out = run('npx', ['culm', '--help'], tmp)
+    assert.match(out, /culm/)
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+    rmSync(join(root, '.pack'), { recursive: true, force: true })
+    rmSync(join(root, 'packages/core/dist'), { recursive: true, force: true })
+    rmSync(join(root, 'packages/tools/dist'), { recursive: true, force: true })
+  }
+})

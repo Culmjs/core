@@ -46,4 +46,22 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    files: ['packages/tools/src/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              // other packages by folder name; core is imported as @culmjs/core/<sub-path>
+              regex: '^(\\.\\./)+(core|starter|packages)/',
+              message:
+                'tools src may not import by a relative path into another package',
+            },
+          ],
+        },
+      ],
+    },
+  },
 )

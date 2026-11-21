@@ -16,3 +16,15 @@ jobs:
       - run: npm test
       - run: npm run check:layers
       - run: npm run check:terms
+  browser:
+    runs-on: ubuntu-latest
+    env:
+      CULM_CHROME: /usr/bin/google-chrome
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:browser
