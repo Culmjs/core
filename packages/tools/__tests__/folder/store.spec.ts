@@ -1,6 +1,7 @@
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  existsSync,
   mkdirSync,
   rmSync,
   readdirSync,
@@ -437,6 +438,17 @@ const damages: [string, (dir: string, head: number) => string][] = [
     ),
   ],
   [
+    'head deleted while revisions exist',
+    dir => (rmSync(join(dir, '.culm/head')), '.culm/head'),
+  ],
+  [
+    'a non-head record that does not parse',
+    (dir, head) => (
+      writeFileSync(join(dir, `.culm/revisions/${head - 1}.json`), 'nope'),
+      `.culm/revisions/${head - 1}.json`
+    ),
+  ],
+  [
     'a blob missing',
     (dir, head) => {
       const rec = JSON.parse(
@@ -465,3 +477,112 @@ for (const [damage, hurt] of damages)
     assert.ok(!r.ok)
     assert.deepEqual(snap(join(dir, '.culm')), before)
   })
+
+const commented = async (dir: string) => {
+  const about = join(dir, 'pages/about.json')
+  writeFileSync(
+    about,
+    '// about note\n' + readFileSync(about, 'utf8').replace(/\n  /g, '\n\t'),
+  )
+  const home = join(dir, 'pages/home.json')
+  writeFileSync(
+    home,
+    readFileSync(home, 'utf8').replace('"One"', '"One" /* keep */'),
+  )
+}
+
+test('restore after removePage writes the stored files back, comments and tabs included', async () => {
+  const { dir, registry, store } = await open(two())
+  await commented(dir)
+  const n = (await headOf(store)).revision
+  const atN = await readProject(dir)
+  const r = await apply(
+    store,
+    registry,
+    req(n, 'a', [{ op: 'removePage', page: 'about' }]),
+  )
+  assert.ok(r.ok, JSON.stringify(r))
+  assert.ok(!(await readProject(dir)).has('pages/about.json'))
+  const rr = await restore(store, registry, {
+    site: SITE,
+    to: n,
+    baseRevision: n + 1,
+    key: 'b',
+  })
+  assert.ok(rr.ok, JSON.stringify(rr))
+  assert.deepEqual(await readProject(dir), atN)
+  const head = await headOf(store)
+  assert.equal(head.revision, n + 2)
+  assert.deepEqual(await store.get(SITE, n + 2), await store.get(SITE, n))
+})
+
+test('restore after a batch that changed a commented line writes the stored files back', async () => {
+  const { dir, registry, store } = await open(two())
+  await commented(dir)
+  const n = (await headOf(store)).revision
+  const atN = await readProject(dir)
+  assert.ok((await apply(store, registry, req(n, 'a', [set('t1', 'X')]))).ok)
+  assert.ok(
+    (
+      await restore(store, registry, {
+        site: SITE,
+        to: n,
+        baseRevision: n + 1,
+        key: 'b',
+      })
+    ).ok,
+  )
+  assert.deepEqual(await readProject(dir), atN)
+})
+
+test('a store that outlives the deletion of .culm/ never restarts at an old number', async () => {
+  const { dir, registry } = await project(two())
+  const store = await fileStore(dir, registry, { now: () => 1_000_000_000_000 })
+  const r0 = (await headOf(store)).revision
+  assert.ok((await apply(store, registry, req(r0, 'a', [set('t1', 'A')]))).ok)
+  await rm(join(dir, '.culm'), { recursive: true })
+  const n = (await headOf(store)).revision
+  assert.ok(n > r0 + 1, `${n}`)
+  assert.equal(
+    (await headOf(store)).revision,
+    n,
+    'the number holds until the first commit',
+  )
+  const old = await apply(store, registry, req(r0, 'b', [set('t1', 'B')]))
+  assert.equal(codeOf(old), 'REVISION_CONFLICT')
+  assert.ok((await apply(store, registry, req(n, 'c', [set('t1', 'C')]))).ok)
+})
+
+test('the first batch on a folder with no history is REVISION_CONFLICT when the files changed since head', async () => {
+  const { dir, registry, store } = await open(two())
+  const n = (await headOf(store)).revision
+  hand(dir, '"One"', '"Hand"')
+  const r = await apply(store, registry, req(n, 'a', [set('t1', 'Z')]))
+  assert.equal(codeOf(r), 'REVISION_CONFLICT')
+  assert.ok(
+    readFileSync(join(dir, 'pages/home.json'), 'utf8').includes('"Hand"'),
+  )
+  assert.ok(!existsSync(join(dir, '.culm/head')))
+})
+
+test('a lock left by a dead process is taken over by recovery', async () => {
+  let crash = false
+  const { dir, registry, store } = await open(two(), {
+    after: n => {
+      if (crash && n === 6) throw new Error('crash')
+    },
+  })
+  const r0 = (await headOf(store)).revision
+  const old = await readProject(dir)
+  crash = true
+  await assert.rejects(apply(store, registry, both(r0, 'k')), /crash/)
+  writeFileSync(
+    join(dir, '.culm/lock'),
+    JSON.stringify({ pid: 99_999_999, time: Date.now(), token: 'dead' }),
+  )
+  const again = await fileStore(dir, registry)
+  assert.deepEqual(await readProject(dir), old)
+  assert.ok(!readdirSync(join(dir, '.culm')).includes('lock'))
+  assert.ok(!readdirSync(join(dir, '.culm')).includes('journal.json'))
+  assert.equal((await headOf(again)).revision, r0)
+})

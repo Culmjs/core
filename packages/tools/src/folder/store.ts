@@ -12,6 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import type { Registry } from '@culmjs/core'
 import type { ApplyResult, SiteStore } from '@culmjs/core/ops'
 import { loadFiles, loadFolder } from './load.ts'
@@ -63,6 +64,9 @@ const alive = (pid: unknown) => {
  * is ignored. Only `commit`, and recovery of an interrupted commit when the store is opened, write to `.culm/`.
  * `options.after(step)` runs after each of commit's nine steps (a test throws from it to simulate a crash; step 6's runs after the
  * first of the file renames); `options.now` replaces the clock.
+ * `commit` refuses with SOURCE_CONFLICT (and the problems) when `fileEdits` cannot make an edit, and with REVISION_CONFLICT (and
+ * the problems) when the folder does not load or `.culm/` is damaged. A restore of a revision the store holds writes that revision's
+ * files back as they were; any other change is planned by `fileEdits`.
  * ponytail: a reader does not take the lock, so it can see a folder halfway through a commit; take it for reads if that matters.
  */
 export async function fileStore(
@@ -75,7 +79,12 @@ export async function fileStore(
   const culm = join(dir, '.culm')
   const lockPath = join(culm, 'lock')
   const journalPath = join(culm, 'journal.json')
-  const first = Math.floor(now() / 1000)
+  /** The highest revision number this instance has reported or committed; a new history always starts above it. */
+  let last = -1
+  /** The number, and the files, that `head` reported for a folder with no history yet, until the first commit creates it. */
+  let pending: { n: number; files: Record<string, string> } | undefined
+  const seen = (n: number) => (last = Math.max(last, n))
+  const fresh = () => Math.max(Math.floor(now() / 1000), last + 1)
 
   const bad = (file: string, what: string): State => ({
     kind: 'bad',
@@ -130,9 +139,11 @@ export async function fileStore(
     try {
       text = await readFile(join(culm, 'head'), 'utf8')
     } catch (e) {
-      return code(e) === 'ENOENT'
-        ? { kind: 'fresh' }
-        : bad('.culm/head', 'cannot be read')
+      if (code(e) !== 'ENOENT') return bad('.culm/head', 'cannot be read')
+      // no history, or a history that lost its head: the second is damage, never a new start
+      return (await names('revisions')).length || (await names('blobs')).length
+        ? bad('.culm/head', 'is missing')
+        : { kind: 'fresh' }
     }
     if (!/^\d+$/.test(text.trim()))
       return bad('.culm/head', 'is empty or not a revision number')
@@ -143,6 +154,9 @@ export async function fileStore(
     for (const h of Object.values(rec.files))
       if (!(await exists(join(culm, 'blobs', h))))
         return bad(`.culm/blobs/${h}`, 'is missing')
+    for (const n of await numbers())
+      if (n < revision && !(await readRec(n)))
+        return bad(`.culm/revisions/${n}.json`, 'is missing or unreadable')
     return { kind: 'ok', revision, rec }
   }
 
@@ -223,6 +237,8 @@ export async function fileStore(
 
   async function prune(head: number) {
     const all = (await numbers()).filter(n => n <= head)
+    // nothing is deleted while a record cannot be read: its blobs are unknown
+    for (const n of all) if (!(await readRec(n))) return
     for (const n of all.slice(0, Math.max(0, all.length - KEPT_REVISIONS)))
       await rm(recPath(n), { force: true })
     const keep = new Set<string>()
@@ -282,6 +298,43 @@ export async function fileStore(
     }
   }
 
+  /**
+   * A restore (the request is core's `{ baseRevision, restore }`) whose document is exactly the one stored at `to`: the files of
+   * `to` written back as they were, comments and layout included. Anything else returns undefined, and `fileEdits` plans it.
+   */
+  async function restoreEdits(
+    c: { doc: unknown; request: string },
+    head: number,
+    mine: Map<string, string>,
+  ) {
+    let to: unknown
+    try {
+      const r = JSON.parse(c.request) as Record<string, unknown>
+      if (Object.keys(r).sort().join() !== 'baseRevision,restore') return
+      to = r.restore
+    } catch {
+      return
+    }
+    if (
+      typeof to !== 'number' ||
+      !Number.isSafeInteger(to) ||
+      to < 0 ||
+      to > head
+    )
+      return
+    const rec = await readRec(to)
+    const old = await store.get('', to)
+    if (!rec || !old || !isDeepStrictEqual(old, c.doc)) return
+    const write: Record<string, string> = {}
+    const remove: string[] = []
+    for (const [p, h] of Object.entries(rec.files)) {
+      const t = await blobText(h)
+      if (mine.get(p) !== t) write[p] = t
+    }
+    for (const p of mine.keys()) if (!(p in rec.files)) remove.push(p)
+    return { write, remove, notes: [], problems: [] }
+  }
+
   // ------------------------------------------------------------------- store
   const store: SiteStore = {
     async head() {
@@ -290,10 +343,14 @@ export async function fileStore(
       const loaded = await loadFolder(dir, registry)
       if (!loaded.doc || loaded.problems.length)
         return { problems: loaded.problems }
-      return {
-        revision: st.kind === 'ok' ? st.revision : first,
-        doc: loaded.doc,
+      if (st.kind === 'ok') {
+        pending = undefined
+        seen(st.revision)
+        return { revision: st.revision, doc: loaded.doc }
       }
+      pending ??= { n: fresh(), files: hashes(mineOf(loaded)) }
+      seen(pending.n)
+      return { revision: pending.n, doc: loaded.doc }
     },
 
     async get(_site, revision) {
@@ -301,7 +358,7 @@ export async function fileStore(
       const st = await state()
       if (st.kind === 'bad') return undefined
       if (st.kind === 'fresh') {
-        if (revision !== first) return undefined
+        if (revision !== pending?.n) return undefined
         const h = await store.head('')
         return 'doc' in h ? h.doc : undefined
       }
@@ -354,8 +411,15 @@ export async function fileStore(
         const mine = mineOf(loaded)
         let head: number
         if (st.kind === 'fresh') {
-          head = first
+          const f = hashes(mine)
+          // the files changed since `head` reported this number: the same rule as for a later revision
+          if (pending && !sameFiles(f, pending.files)) {
+            pending = undefined
+            return end<Refusal>({ ok: false, code: 'REVISION_CONFLICT' })
+          }
+          head = pending?.n ?? fresh()
           await record(head, mine, 'culm')
+          pending = undefined
         } else {
           head = st.revision
           if (!sameFiles(hashes(mine), st.rec.files)) {
@@ -363,6 +427,7 @@ export async function fileStore(
             await record(head, mine, 'outside')
           }
         }
+        seen(head)
         hook(2)
         // 3. the key, then the revision
         for (const n of (await numbers()).filter(n => n <= head)) {
@@ -378,7 +443,9 @@ export async function fileStore(
           return end<Refusal>({ ok: false, code: 'REVISION_CONFLICT' })
         hook(3)
         // 4. the edits, and the files as they are now
-        const edits = fileEdits(loaded.doc, c.doc, loaded, registry)
+        const edits =
+          (await restoreEdits(c, head, mine)) ??
+          fileEdits(loaded.doc, c.doc, loaded, registry)
         if (edits.problems.length)
           return end<Refusal>({
             ok: false,
@@ -443,6 +510,7 @@ export async function fileStore(
         await rm(journalPath, { force: true })
         await prune(revision)
         await rm(join(culm, 'tmp'), { recursive: true, force: true })
+        seen(revision)
         return end({ ok: true as const, revision, result })
       } finally {
         await release()
