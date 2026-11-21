@@ -738,3 +738,40 @@ test('a moved element takes its trailing comment and the block comment above it,
   )
   assert.equal(front.split('block above').length, 2)
 })
+
+test('an add after an element whose comma follows a block comment still gives valid JSON', async () => {
+  const t = base
+    .get('pages/menu.json')!
+    .replace(
+      '"heading": "Today\'s bakes"\n      },',
+      '"heading": "Today\'s bakes"\n      } /* c */,',
+    )
+  const files = new Map(base)
+  files.set('pages/menu.json', t)
+  const l = await loadFiles(files, registry)
+  assert.deepEqual(l.problems, [])
+  const p = plan(l.doc!, registry, {
+    site: 's',
+    baseRevision: 0,
+    key: 'k',
+    ops: [
+      {
+        op: 'add',
+        tree: menu,
+        parent: 'menuroot',
+        index: 1,
+        node: { kind: 'text', props: { level: 'p', runs: [{ text: 'x' }] } },
+      },
+    ],
+  })
+  assert.ok(p.ok)
+  const e = fileEdits(l.doc!, p.doc, l, registry)
+  assert.deepEqual(e.problems, [])
+  assert.ok(e.write['pages/menu.json']!.includes('} /* c */,'))
+  const again = await loadFiles(
+    new Map([...files, ...Object.entries(e.write)]),
+    registry,
+  )
+  assert.deepEqual(again.problems, [])
+  assert.deepEqual(again.doc, p.doc)
+})

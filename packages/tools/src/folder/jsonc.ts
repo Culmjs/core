@@ -126,15 +126,29 @@ function spliceInsert(
   }
   const prev = kids[i - 1]!
   const end = prev.offset + prev.length
-  const tail = /^[ \t]*(,)?(?:[ \t]*\/\/[^\r\n]*)?/.exec(body.slice(end))!
-  const at = end + tail[0].length
-  if (tail[1] || i < kids.length)
+  // the comma after the previous element, found past any comment or line break
+  const sc = createScanner(body, true)
+  sc.setPosition(end)
+  const comma = sc.scan() === COMMA ? sc.getTokenOffset() : -1
+  const same = /^[ \t]*(?:\/\/[^\r\n]*|\/\*[^\r\n]*?\*\/)?/
+  if (comma >= 0 || i < kids.length) {
     // the previous element has its comma: the new one takes a comma too, and the next element's text is untouched
+    const after = (comma >= 0 ? comma : end) + 1
+    const at =
+      after + (/^[ \t]*\/\/[^\r\n]*/.exec(body.slice(after))?.[0].length ?? 0)
     return body.slice(0, at) + sep + text + ',' + body.slice(at)
-  // the last element has none yet: it gets its comma before any comment on its line
+  }
+  // the last element has none yet: it gets its comma right after it, before any comment on its line
+  const at = end + same.exec(body.slice(end))![0].length
   return (
     body.slice(0, end) + ',' + body.slice(end, at) + sep + text + body.slice(at)
   )
+}
+
+/** The text when it parses without error, else undefined: no edit ever hands back JSON that does not parse. */
+export const onlyIfValid = (text: string): string | undefined => {
+  const [, body] = split(text)
+  return parsed(body) ? text : undefined
 }
 
 const change = (
@@ -157,13 +171,13 @@ const change = (
       const arr = findNodeAtLocation(tree, path.slice(0, -1))
       const done =
         arr?.type === 'array' ? spliceInsert(body, arr, last, value) : undefined
-      if (done !== undefined) return bom + done
+      if (done !== undefined) return onlyIfValid(bom + done)
     }
     const edits = modify(body, path, value, {
       formattingOptions: formatOf(body),
       isArrayInsertion,
     })
-    return bom + applyEdits(body, edits)
+    return onlyIfValid(bom + applyEdits(body, edits))
   } catch {
     return undefined
   }
@@ -228,5 +242,5 @@ export function removeAt(text: string, path: JsonPath): string | undefined {
   cut = cut.sort((a, b) => b[0] - a[0])
   let out = body
   for (const [a, b] of cut) out = out.slice(0, a) + out.slice(b)
-  return bom + out
+  return onlyIfValid(bom + out)
 }

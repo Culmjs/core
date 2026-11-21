@@ -167,3 +167,22 @@ test('an insert into a multi-line array leaves every other byte unchanged, a tra
   assert.ok(front.endsWith(t.slice(t.indexOf('{ "x"'))))
   assert.ok(front.includes('    7,\n    { "x": 1 }, // first'))
 })
+
+test('an insert finds the comma of the element before it, past a block comment or a line break', () => {
+  const c = editFile('[1 /* c */, 2]', [1], 5, { insert: true })
+  assert.deepEqual(parseFile(c).errors, [])
+  assert.equal(c, '[1 /* c */, 5, 2]')
+  const n = editFile('[1\n, 2]', [1], 5, { insert: true })
+  assert.deepEqual(parseFile(n).errors, [])
+  assert.deepEqual(parseFile(n).value, [1, 5, 2])
+  assert.ok(n.startsWith('[1\n,'))
+  assert.ok(n.endsWith(' 2]'))
+  const last = editFile('[1 /* c */]', [1], 5, { insert: true })
+  assert.deepEqual(parseFile(last).errors, [])
+  assert.deepEqual(parseFile(last).value, [1, 5])
+})
+
+test('a result that does not parse is never returned', () => {
+  assert.equal(raw.onlyIfValid('{ "a": '), undefined)
+  assert.equal(raw.onlyIfValid('{ "a": 1 }'), '{ "a": 1 }')
+})
