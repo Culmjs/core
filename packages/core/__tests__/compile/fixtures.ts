@@ -45,6 +45,41 @@ withSamples.footer = node('footer', 'column', [
 ])
 
 const registry = sampleRegistry()
+const links = {
+  page: (slug: string) => `/${slug}`,
+  file: (id: string) => `/f/${id}`,
+  form: () => '/_forms',
+}
+const withProps = (
+  id: string,
+  kind: Node['kind'],
+  props: Node['props'],
+  kids: Node[] = [],
+): Node => {
+  const n = node(id, kind, kids)
+  n.props = props
+  return n
+}
+const switchHeader = (): Node => ({
+  ...node('header', 'column', [withProps('hb', 'button', { label: 'Dark' })]),
+  state: [{ name: 'mode', values: ['light', 'dark'], initial: 'light' }],
+})
+const withHeader = siteWith([text('t', 'Hello')])
+withHeader.header = switchHeader()
+withHeader.header.children![0].on = [
+  { on: 'click', do: { set: 'mode', to: 'dark' } },
+]
+const formDoc = siteWith([
+  node('fm', 'form', [
+    withProps('fb', 'button', { label: 'Submit' }),
+    withProps('fo', 'button', {
+      label: 'Open',
+      command: 'show-modal',
+      opens: 'dlg',
+    }),
+  ]),
+  withProps('dlg', 'box', { layer: 'dialog' }, [text('dt', 'Hi')]),
+])
 const rows = { rows: { projects: [{ title: 'Alpha' }, { title: 'Beta' }] } }
 
 /** Every document the page tests compile, as [name, document, options]; the tools' schema test reads this list too. */
@@ -56,4 +91,23 @@ export const FIXTURES: [string, SiteDocument, CompileOptions][] = [
   ['repeated list', siteWithProjectsList(), { registry, data: rows }],
   ['nested lists', siteWith([projectsList('out')]), { registry, data: rows }],
   ['untouched samples', withSamples, { registry }],
+  ['header with states', withHeader, { registry }],
+  ['form with buttons', formDoc, { registry, links }],
+  [
+    'image through links.file',
+    siteWith([withProps('im', 'image', { assetId: 'a1', alt: 'Me' })]),
+    { registry, links },
+  ],
+  [
+    'menu',
+    siteWith([withProps('mn', 'menu', { which: 'menu' })]),
+    { registry, links },
+  ],
+  [
+    'right-to-left',
+    siteWith([text('t', 'x')], {
+      languages: [{ code: 'en' }, { code: 'fa', dir: 'rtl' }],
+    }),
+    { registry, lang: 'fa' },
+  ],
 ]

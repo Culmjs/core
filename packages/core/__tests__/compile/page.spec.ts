@@ -929,10 +929,14 @@ test('measure mode writes data-id on every node element, and a repeated node car
     data: rows('Alpha', 'Beta'),
   })
   const ids = [...list.html.matchAll(/ data-id="([^"]*)"/g)].map(m => m[1])
-  const rowIds = ids.filter(i => i !== 'homeroot' && i !== 'plist')
-  assert.ok(rowIds.length > 0)
-  for (const i of new Set(rowIds))
-    assert.equal(ids.filter(x => x === i).length, 1, `${i} appears once`)
+  assert.deepEqual(ids, [
+    'homeroot',
+    'plist',
+    'plistitem~0',
+    'plisttitle~0',
+    'plistitem~1',
+    'plisttitle~1',
+  ])
 })
 
 test('mode "print" is refused', () => {
