@@ -9,6 +9,8 @@
 
 <p align="center">
   <a href="docs/overview.md">Overview</a> ·
+  <a href="docs/folder-sites.md">Folder sites</a> ·
+  <a href="docs/mcp.md">MCP</a> ·
   <a href="#why">Why</a> ·
   <a href="#example">Example</a> ·
   <a href="#what-exists-today">Status</a>
@@ -18,7 +20,7 @@ Culm builds websites from data. A whole site is one JSON document. Culm checks t
 
 It is made for sites that AI agents build and maintain. An agent does not write page code. It writes a small piece of data, Culm tells it exactly what is wrong if anything is, and only a valid document becomes a page.
 
-> **Status: early.** Stage 1 of 6 is done: the document model, validation, the plug-in registry and the compiler. Stage 2 is under way: its first checkpoint, checked operations with reads, a catalogue, diff and restore, is done, and measurement, the command-line tool, the MCP server and the starter are still to come. The API will change, and nothing is on npm yet. See [What exists today](#what-exists-today).
+> **Status: early.** Stage 1 of 6 is done: the document model, validation, the plug-in registry and the compiler. Stage 2 is under way: its first two checkpoints are done, checked operations with reads, a catalogue, diff and restore (2a), and page measurement, a site as a folder of JSON files, the `culm` command with its dev server, and the MCP server (2b). The starter package and the agent comparison are still to come. The API will change, and nothing is on npm yet. See [What exists today](#what-exists-today).
 
 ## Why
 
@@ -167,7 +169,7 @@ Read [docs/overview.md](docs/overview.md) for the document model, the plug-in AP
 
 ## What exists today
 
-Stage 1 and the first checkpoint of stage 2, in `packages/core` (`@culmjs/core`), with no runtime dependencies. It runs in Node 22+, edge workers and the browser.
+Stage 1 and the first two checkpoints of stage 2. `packages/core` (`@culmjs/core`) has no runtime dependencies and runs in Node 22+, edge workers and the browser. `packages/tools` (`@culmjs/tools`) adds the `culm` command, folder sites, the dev server, the measure runner and the MCP server, and runs in Node.
 
 | Area       | What you get                                                                                                                                                                                                                                        |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -179,18 +181,29 @@ Stage 1 and the first checkpoint of stage 2, in `packages/core` (`@culmjs/core`)
 | Diff       | `diffSites`, which lists the added, removed, moved and changed nodes and the affected pages of two revisions                                                                                                                                        |
 | Data       | `expand` and `rowsOf`: filter, sort, group, limit and nested repeats over rows the caller supplies                                                                                                                                                  |
 | Compiler   | `compilePage`, `compileSubtree` (for editors that replace part of a canvas) and `compileSite` (every page plus a manifest), and `buildIdentity`, one hash of what a build used                                                                      |
+| Measure    | `PROBE_SCRIPT`, `runChecks` (16 checks and the compile problem, in three classes), `buildReport` and `compareReports`: findings an agent can act on, and a rerun that marks a repair fixed                                                          |
 | Budgets    | `BUDGETS` and `checkBudgets`                                                                                                                                                                                                                        |
+
+`@culmjs/tools`:
+
+| Area         | What you get                                                                                                                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Folder sites | A site as `site.json`, `pages/`, `pieces/`, `blocks/` and `data/`, written as JSON with comments. Every error and finding names a file and a line, and a write keeps your comments and key order |
+| History      | `.culm/` keeps the last 200 revisions; a batch is saved whole or not at all, even across a crash, and a hand edit is one outside revision                                                        |
+| Commands     | `culm dev` (reloads on save, an overlay on a mistake), `build`, `check` (measure in Chrome), `expand`, `schema` (a JSON Schema for editors), `mcp`                                               |
+| Measure      | Chrome or Chromium driven over the DevTools protocol with no dependency and no download; it is found from `--chrome`, `CULM_CHROME`, a Playwright Chromium or the system Chrome                  |
+| MCP server   | Nine tools (`describe`, `read`, `catalogue`, `plan`, `apply`, `measure`, `diff`, `restore`, `build`) over standard input and output, and a local port with a token; no accounts                  |
 
 Not built yet, by stage:
 
-| Stage | Adds                                                                                                                                                                                                                                                                                                               |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2     | Still to come after the operations above: page measurement with findings an agent can act on, a folder of JSON files as a site, a command-line tool with a dev server and an MCP server (checkpoint 2b), a starter package of general blocks (2c), and a measured comparison with agents that write page code (2d) |
-| 3     | Motion in CSS and a small timeline script                                                                                                                                                                                                                                                                          |
-| 4     | GPU effects, including shaders written by agents under checked limits                                                                                                                                                                                                                                              |
-| 5     | Live data, sign-in state, in-page navigation, islands and shared component packages                                                                                                                                                                                                                                |
+| Stage | Adds                                                                                                                                                                 |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2     | Still to come after the checkpoints above: a starter package of general blocks and `culm init` (2c), and a measured comparison with agents that write page code (2d) |
+| 3     | Motion in CSS and a small timeline script                                                                                                                            |
+| 4     | GPU effects, including shaders written by agents under checked limits                                                                                                |
+| 5     | Live data, sign-in state, in-page navigation, islands and shared component packages                                                                                  |
 
-An agent can use Culm today by sending operations to `plan` or `apply`, reading with the four reads and `catalogue`, and compiling with `compilePage`. The only store is `memoryStore`. A site as a folder of files, the command and the MCP server are not built yet.
+An agent can use Culm today through the MCP server (`culm mcp` in a folder site, or `createMcpServer` over your own store), or in code by sending operations to `plan` or `apply`, reading with the four reads and `catalogue`, and compiling with `compilePage`. A person can make a site as a folder of JSON files, run `culm dev`, and run `culm build`. `culm init` and the starter are not built yet: copy `packages/tools/__tests__/fixtures/site-basic` to begin. See [docs/folder-sites.md](docs/folder-sites.md) and [docs/mcp.md](docs/mcp.md).
 
 ## Development
 
@@ -201,19 +214,20 @@ npm install
 npm test
 ```
 
-| Command                                   | Does                                                      |
-| ----------------------------------------- | --------------------------------------------------------- |
-| `npm test`                                | Runs the tests with Node's built-in runner                |
-| `npm run typecheck`                       | Type-checks the repository                                |
-| `npm run lint`                            | Runs ESLint                                               |
-| `npm run format` / `npm run format-check` | Runs Prettier                                             |
-| `npm run check:layers`                    | Fails when a lower layer of the core imports a higher one |
-| `npm run check:terms`                     | Fails when a product-specific term appears in the core    |
-| `npm run gen:scripts`                     | Regenerates the minified page scripts                     |
+| Command                                   | Does                                                       |
+| ----------------------------------------- | ---------------------------------------------------------- |
+| `npm test`                                | Runs the tests with Node's built-in runner                 |
+| `npm run typecheck`                       | Type-checks the repository                                 |
+| `npm run lint`                            | Runs ESLint                                                |
+| `npm run format` / `npm run format-check` | Runs Prettier                                              |
+| `npm run check:layers`                    | Fails when a lower layer of the core imports a higher one  |
+| `npm run check:terms`                     | Fails when a product-specific term appears in the core     |
+| `npm run gen:scripts`                     | Regenerates the minified page scripts                      |
+| `npm run test:browser`                    | Runs the tests that open Chrome (needs one on the machine) |
 
 On a machine that has the private packages, run `npm run parity:setup` once (and again after a clean `npm ci`) before `npm run parity`: it installs the four packages the parity harness needs without adding them to any tracked dependency list.
 
-The core is layered: `scripts`, `document`, `style`, `layout`, `registry`, `validate`, `data`, `compile`. A layer never imports from a later one.
+The core is layered: `scripts`, `document`, `style`, `layout`, `registry`, `validate`, `data`, `compile`, `ops`, `measure`. A layer never imports from a later one.
 
 ## Brand
 

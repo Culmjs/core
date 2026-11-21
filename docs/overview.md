@@ -2,7 +2,7 @@
 
 Culm is a JavaScript framework that builds websites from data. This page says exactly what exists in the repository today. The package is `@culmjs/core`. It has no runtime dependencies and runs in Node 22+, edge workers and the browser.
 
-This page covers stage 1 (the document, validation and the compiler) and checkpoint 2a of stage 2 (checked operations, reads, the catalogue, diff and restore). Stage 2 is not finished: measure, the folder loader, the command, the MCP server and the starter package are checkpoints 2b and 2c, and they do not exist yet. The API will change before a first release.
+This page covers stage 1 (the document, validation and the compiler), checkpoint 2a of stage 2 (checked operations, reads, the catalogue, diff and restore) and checkpoint 2b (measure, folder sites, the `culm` command, the dev server and the MCP server). `@culmjs/core` is the part described in most of this page; `@culmjs/tools` is the second package, described in "Tools" below. Stage 2 is not finished: the starter package and `culm init` (checkpoint 2c) and the agent comparison (2d) do not exist yet. The API will change before a first release.
 
 ## The idea in three sentences
 
@@ -271,11 +271,39 @@ Each of these validates first. If the document, the rows or an option has a prob
 
 Sizes are raw minified bytes. `compilePage` reports a page that passes a ceiling as a `RESOURCE_LIMIT_EXCEEDED` problem and returns its real figures in `stats`.
 
+## Measure
+
+The `measure` layer of the core says what is wrong with a rendered page, in a form an agent can act on, and confirms a repair. It has no browser in it: it takes measurements that a runner made and returns findings.
+
+- `PROBE_SCRIPT` is one function a runner evaluates in the page. It returns, for every element with a node id, its box, whether it paints, its background, clipping, text lines and size, and tap size.
+- `runChecks(input)` takes those measurements for every layout of one page, and returns findings. There are 16 checks and one row for a compile problem (`invalid`). Class 1 is a compile problem, class 2 a defect (`off-screen`, `overflow`, `h-scroll`, `overlap`, `contrast`, `tap-target`) and class 3 taste (`column`, `alignment`, `symmetry`, `rhythm`, `empty-band`, `line-length`, `heading-order`, `duplicate-heading`, `stacked-row`, `phone-order`). The thresholds are in `THRESHOLDS`. `runChecks` takes the document (`doc`), not a root, and unrolls the header, the page and the footer itself.
+- A finding names the check, the class, the page, the width, the theme, the direction, the nodes, what was observed, what was expected, and a `key` (`findingKey`) that is the same on every run for the same defect.
+- `buildReport` joins the findings of many cells into one `Report`, and `compareReports(old, new, doc)` says, for each earlier finding, whether it is `fixed`, still `present`, `unobservable` (its node is gone or hidden in every cell) or `unchecked`, and lists the findings that are new.
+- The measure profile is version 1: widths 1280, 834 and 390, themes light and dark, each direction the site's languages declare, and the default state of each part. `MEASURE_PROFILE` is that version, and a report says what the profile skipped.
+- `compilePage` accepts `mode: 'measure'` for a runner: the live page with the node ids on its elements. `compileSite` and `culm build` never use it.
+
+`isRequired(node, form?)` is also public: the rule that decides whether a node is required, so a product's guard cannot drift from core's.
+
+## Tools
+
+`@culmjs/tools` depends on `@culmjs/core` (a peer dependency), `@modelcontextprotocol/sdk` and `jsonc-parser`. It adds what needs files, a browser or a port.
+
+| What           | Does                                                                                                                                                                                   |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Folder sites   | `loadFolder` reads a folder of JSON files into the document with a source map; `fileStore` is a `SiteStore` that writes changes back into the same files and keeps history in `.culm/` |
+| `culm` command | `dev`, `build`, `check`, `expand`, `schema`, `mcp`                                                                                                                                     |
+| Dev server     | Serves the pages on `127.0.0.1`, reloads on save, and shows an overlay with file, line and message when a save has a problem                                                           |
+| Measure runner | Opens Chrome over the DevTools protocol on a pipe, with no dependency and no port, and runs the probe and the checks on every page                                                     |
+| MCP server     | `createMcpServer`: nine tools over standard input and output, and optionally a local port with a token                                                                                 |
+| JSON Schema    | `authoringSchema(registry)` and `culm schema`: completion and checks for the folder's files in an editor                                                                               |
+
+Read [docs/folder-sites.md](folder-sites.md) for the folder format, `.culm/` and the commands, and [docs/mcp.md](mcp.md) for the nine tools, what `protect` refuses and the local port.
+
 ## Guarantees and their limits
 
 What the code holds today, each backed by tests:
 
-- `validateSite`, `migrate`, `checkRows`, the three compile functions, `plan`, `apply`, `restore`, the four reads, `catalogue` and `diffSites` return problems for bad input and do not throw. `buildIdentity` rejects when its input cannot be written as JSON.
+- `validateSite`, `migrate`, `checkRows`, the three compile functions, `plan`, `apply`, `restore`, the four reads, `catalogue`, `diffSites`, `runChecks` and `compareReports` return problems for bad input and do not throw. `buildIdentity` rejects when its input cannot be written as JSON.
 - No operation changes the document it is given.
 - A batch is saved whole or not at all, a request key applies once, and a reply of a read never passes `READ_CAP`.
 - Culm writes every byte of HTML through one writer with one escape function. A text, an attribute value, a page title or a row cannot open a tag.
@@ -284,17 +312,27 @@ What the code holds today, each backed by tests:
 - A file path produced by `compileSite` comes from a validated slug and cannot leave the bundle.
 - The same document, rows and options compile to the same bytes.
 
+What the tools add, each backed by tests:
+
+- A folder loaded and written back with no change leaves every file byte for byte the same, comments included. A write to a file that changed since it was loaded is `SOURCE_CONFLICT` and changes nothing.
+- Every problem and measure finding on a folder site names a file and a line.
+- `culm dev`, `culm mcp --port` and the measure runner bind or serve `127.0.0.1` only. The loader reads inside the project folder only, and `culm build` deletes only inside an output folder that holds a manifest it wrote.
+- Measure never downloads a browser and never contacts an address outside the compiled bundle. `build` and `dev` make no network request.
+- The dev server's reload code is in no file `build` writes, and a built page gains no bytes from stage 2.
+
 What it does not do:
 
-- It does not fetch, store, host, publish or sign anyone in.
-- It does not store a site on disk. The only store is `memoryStore`. Reading a folder of files, writing it back, the `culm` command and its dev server, and an MCP server are checkpoint 2b.
-- It does not measure a rendered page. Reporting overflow, clipped text and contrast is checkpoint 2b.
+- It does not fetch, store, host, publish or sign anyone in. The MCP server has no accounts and no identity.
+- A plug-in named in `culm.json` runs as code with your rights, and a caller that can write the files can bypass every operation. Both are stated in "What this does not protect" in [folder-sites.md](folder-sites.md).
+- Measure covers the default state of each part. Hover, focus, open and other states are listed as skipped, not measured.
 - It has no starter package or `culm init` (checkpoint 2c) and has not been compared with agents that write page code (checkpoint 2d).
 - A removed or moved page does not rewrite the links that pointed at it. The result says which links now lead nowhere.
 - A plug-in's block functions and rules are ordinary code that runs with the product's rights. Culm checks what they return. It does not sandbox them.
 
 ## Package layout
 
-`@culmjs/core` exports its public names from the package root, and by area from `/document`, `/style`, `/layout`, `/scripts`, `/registry`, `/validate`, `/data`, `/compile` and `/ops`. A test pins the exact set of names the root exports, so a new public name is always a deliberate change.
+`@culmjs/core` exports its public names from the package root, and by area from `/document`, `/style`, `/layout`, `/scripts`, `/registry`, `/validate`, `/data`, `/compile`, `/ops` and `/measure`. A test pins the exact set of names the root exports, so a new public name is always a deliberate change.
 
-Inside, the code is layered in this order: `scripts`, `document`, `style`, `layout`, `registry`, `validate`, `data`, `compile`, `ops`. A script fails the build when a layer imports from a later one.
+Inside, the code is layered in this order: `scripts`, `document`, `style`, `layout`, `registry`, `validate`, `data`, `compile`, `ops`, `measure`. A script fails the build when a layer imports from a later one.
+
+`@culmjs/tools` is a separate package. Its source imports `@culmjs/core` by its public sub-paths only, never by a relative path into another package, and the lint rules hold that boundary. `npm test` needs no browser and no network; the tests that open Chrome are in `packages/tools/__browser__` and run with `npm run test:browser`.
