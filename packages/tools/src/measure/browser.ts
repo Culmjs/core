@@ -615,11 +615,31 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
 
 /**
  * Speculation rules (prefetch, prerender) are loaded by the browser itself, where no interception reaches, and `'unsafe-inline'` allows them. So the page may run
- * only its own inline scripts, named by hash (a rules script, written or added later, is none of them), plus files of its own origin and workers from blob: URLs.
+ * only its own inline scripts, named by hash, plus files of its own origin and workers from blob: URLs. A hash is checked against text only, so only a script that runs
+ * as JavaScript is hashed, and never one whose text is JSON: Chrome reads rules as strict JSON, so no rules text, written or copied later, matches a hash.
  */
 function scriptPolicy(html: string): string {
   const hashes = [...html.matchAll(/<script(\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
-    .filter(m => !/type\s*=\s*["']?speculationrules/i.test(m[1] ?? ''))
-    .map(m => `'sha256-${createHash('sha256').update(m[2]!).digest('base64')}'`)
+    .filter(([, attrs = '', text]) => {
+      const t = /(?:^|\s)type\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]*))/i.exec(
+        attrs,
+      )
+      const type = (t ? (t[1] ?? t[2] ?? t[3]!) : '').trim()
+      if (!JS_TYPE.test(type)) return false
+      try {
+        JSON.parse(text!)
+        return false
+      } catch {
+        return true
+      }
+    })
+    .map(([, , text]) => {
+      const lf = text!.replace(/\r\n?/g, '\n')
+      return `'sha256-${createHash('sha256').update(lf).digest('base64')}'`
+    })
   return `script-src 'self' blob: ${[...new Set(hashes)].join(' ')}`
 }
+
+/** The type values a browser runs as classic or module JavaScript (HTML, "JavaScript MIME type essence match"). */
+const JS_TYPE =
+  /^(module|(text|application)\/(x-)?(javascript|ecmascript)|text\/javascript1\.[0-5]|text\/(jscript|livescript))?$/i

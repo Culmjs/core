@@ -6,6 +6,7 @@ import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { openBrowser, type Browser } from '../src/measure/browser.ts'
 import { decodePng } from '../src/measure/png.ts'
+import { BASE_SCRIPT, STATES_SCRIPT } from '@culmjs/core/scripts'
 
 const left = () => {
   const dirs = readdirSync(tmpdir()).filter(d => d.startsWith('culm-chrome-'))
@@ -200,9 +201,7 @@ test('a window opened by a click or a form, not by script, is closed and listed 
     await page.goto('https://site.culm.invalid/a', 5000)
     await settle()
     assert.equal(out.count(), 0)
-    const popups = page.blocked.filter(
-      b => b === 'a window opened by the page' || b.includes(out.url),
-    )
+    const popups = page.blocked.filter(b => b === 'a window opened by the page')
     assert.ok(popups.length >= 2, JSON.stringify(page.blocked))
   } finally {
     await page.close()
@@ -288,6 +287,63 @@ for (const kind of ['prefetch', 'prerender'] as const)
       out.close()
     }
   })
+
+for (const [name, body] of [
+  ['a script with the same text', (r: string) => `<script>${r}</script>`],
+  [
+    'a text/plain script with the same text',
+    (r: string) => `<script type=text/plain>${r}</script>`,
+  ],
+  [
+    'a running script that copies a text/plain script into new rules',
+    (r: string) =>
+      `<script type=text/plain id=p>${r}</script><script>document.body.append(Object.assign(document.createElement('script'),{type:'speculationrules',textContent:document.getElementById('p').textContent}))</script>`,
+  ],
+] as const)
+  test(`speculation rules allowed by ${name} are refused and never connect`, async () => {
+    const out = await counting()
+    const page = await browser.newPage()
+    try {
+      const rules = JSON.stringify({
+        prerender: [{ source: 'list', urls: [out.url] }],
+        prefetch: [{ source: 'list', urls: [out.url + '2'] }],
+      })
+      const rulesTag = name.includes('copies')
+        ? ''
+        : `<script type=speculationrules>${rules}</script>`
+      await page.answer(async url =>
+        url === 'https://site.culm.invalid/c'
+          ? HTML(
+              `<script>window.v=0;addEventListener('securitypolicyviolation',()=>window.v++)</script>${body(rules)}${rulesTag}`,
+            )
+          : undefined,
+      )
+      await page.goto('https://site.culm.invalid/c', 5000)
+      await settle()
+      await settle()
+      assert.equal(out.count(), 0)
+      assert.ok((await page.evaluate<number>('window.v')) >= 1)
+    } finally {
+      await page.close()
+      out.close()
+    }
+  })
+
+test("core's compiled script runs under the page policy, with CRLF line ends too", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.answer(async () =>
+      HTML(
+        `<script>${BASE_SCRIPT};${STATES_SCRIPT}</script><script>\r\nwindow.crlf=1\r\n</script>`,
+      ),
+    )
+    await page.goto('https://site.culm.invalid/', 5000)
+    assert.equal(await page.evaluate('document._r'), 1)
+    assert.equal(await page.evaluate('window.crlf'), 1)
+  } finally {
+    await page.close()
+  }
+})
 
 test('a shared worker that fetches an outside address is answered by the page, listed, and never connects', async () => {
   const out = await counting()
