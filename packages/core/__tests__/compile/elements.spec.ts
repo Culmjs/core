@@ -1019,3 +1019,14 @@ test('a form action that fails urlOk is not written', () => {
     !form.includes('javascript') && form.startsWith('<form method="post">'),
   )
 })
+
+test('the ids flag (measure mode) writes data-id on a live element and changes nothing else', () => {
+  const tree = n('r', 'column', undefined, { children: [n('a', 'box')] })
+  const live = html(tree)
+  const ids = html(tree, 'live', { ids: true })
+  assert.deepEqual(ids.match(/ data-id="[^"]*"/g), [
+    ' data-id="r"',
+    ' data-id="a"',
+  ])
+  assert.equal(ids.replace(/ data-id="[^"]*"/g, ''), live)
+})

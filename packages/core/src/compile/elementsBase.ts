@@ -16,6 +16,8 @@ export type ElementCtx = {
   doc: Pick<SiteDocument, 'pages'>
   links: Links
   mode: 'edit' | 'live'
+  /** Measure mode: live output that also writes `data-id`. */
+  ids?: boolean
   /** The kinds plug-ins add. */
   kinds?: ReadonlyMap<string, KindSpec>
   mail?: { used: boolean }

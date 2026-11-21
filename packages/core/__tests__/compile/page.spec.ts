@@ -29,6 +29,7 @@ import {
   stateful,
   text,
 } from '../kit.ts'
+import { FIXTURES, mail, mailButton, openPopover } from './fixtures.ts'
 
 const registry = sampleRegistry()
 const compile = (
@@ -222,14 +223,6 @@ test('a loose trigger entry cannot crash the compile', () => {
   assert.equal(typeof r.ok, 'boolean')
 })
 
-const openPopover = (id = 'pop'): Node => {
-  const close = node(`${id}x`, 'button')
-  close.props = { label: 'Close', command: 'hide-popover', opens: id }
-  const pop = node(id, 'box', [text(`${id}t`, 'Inside'), close])
-  pop.props = { layer: 'popover-manual', open: true }
-  return pop
-}
-
 test('a popover marked open at load adds the open snippet to the base script', () => {
   const r = page(siteWith([openPopover()]))
   assert.equal(r.scripts[0].code, BASE_SCRIPT + OPEN_SCRIPT)
@@ -237,16 +230,6 @@ test('a popover marked open at load adds the open snippet to the base script', (
   plain.props = { layer: 'popover-manual' }
   assert.equal(page(siteWith([plain])).scripts[0].code, BASE_SCRIPT)
 })
-
-const mail = (id = 'm'): Node =>
-  text(id, '', {
-    props: {
-      level: 'p',
-      runs: [{ text: 'ada@lab.example', link: { email: 'ada@lab.example' } }],
-    },
-  })
-const mailButton: Node = node('mb', 'button')
-mailButton.props = { label: 'Write to me', link: { email: 'ada@lab.example' } }
 
 test('a hidden address: no mailto and no address in the HTML, the words read user [at] domain, the script is on the page', () => {
   const r = page(siteWith([mail(), mailButton]))
@@ -916,4 +899,43 @@ test('the states script ships only when a state attribute or trigger entry is wr
     h.scripts.some(s => s.name === 'states'),
     h.html.includes('data-s-m="off"'),
   )
+})
+
+// ---- measure mode ----
+
+test('measure mode is live mode plus data-id', () => {
+  for (const [name, doc, options] of FIXTURES) {
+    const live = compilePage(doc, 'home', { ...options, mode: 'live' })
+    const measured = compilePage(doc, 'home', { ...options, mode: 'measure' })
+    assert.ok(live.ok && measured.ok, name)
+    assert.equal(
+      measured.html.replace(/ data-id="[^"]*"/g, ''),
+      live.html,
+      name,
+    )
+    assert.equal(measured.css, live.css, name)
+    assert.deepEqual(measured.scripts, live.scripts, name)
+  }
+})
+
+test('measure mode writes data-id on every node element, and a repeated node carries its id once per row', () => {
+  const doc = siteWith([text('t', 'Hello'), stateful()])
+  const r = page(doc, { mode: 'measure' })
+  for (const id of ['homeroot', 't', 'tabs', 'tabsgo'])
+    assert.ok(r.html.includes(`data-id="${id}"`), id)
+  assert.ok(r.scripts.length > 0, 'the live scripts stay')
+  const list = page(siteWithProjectsList(), {
+    mode: 'measure',
+    data: rows('Alpha', 'Beta'),
+  })
+  const ids = [...list.html.matchAll(/ data-id="([^"]*)"/g)].map(m => m[1])
+  const rowIds = ids.filter(i => i !== 'homeroot' && i !== 'plist')
+  assert.ok(rowIds.length > 0)
+  for (const i of new Set(rowIds))
+    assert.equal(ids.filter(x => x === i).length, 1, `${i} appears once`)
+})
+
+test('mode "print" is refused', () => {
+  const r = compile(siteWith([text('t', 'x')]), { mode: 'print' as never })
+  assert.ok(!r.ok && r.problems.some(p => p.path === 'mode'))
 })

@@ -192,7 +192,7 @@ function build(
       : undefined
   const attrs: Attrs = {
     class: classOf.get(w.id),
-    'data-id': mode === 'edit' ? w.id : undefined,
+    'data-id': mode === 'edit' || ctx.ids ? w.id : undefined,
     // editor only: a sample line is marked on the canvas, since the published page leaves it out until the owner writes over it
     'data-sample': mode === 'edit' && isSample(w) ? '' : undefined,
     id: ctx.targets?.has(w.id) && SAFE_ID.test(w.id) ? domId(w.id) : undefined,

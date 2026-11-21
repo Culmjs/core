@@ -35,7 +35,8 @@ import { compileStyles } from './styles.ts'
 export type CompileOptions = {
   registry: Registry
   data?: Data
-  mode?: 'live' | 'edit'
+  /** `measure` is live plus a `data-id` on every node, for the probe; it is never written to a site. */
+  mode?: 'live' | 'edit' | 'measure'
   links?: Links
   lang?: string
   fontBase?: string
@@ -101,9 +102,12 @@ export function optionProblems(o: CompileOptions): Problem[] {
     path,
   })
   return [
-    ...(o.mode === undefined || o.mode === 'live' || o.mode === 'edit'
+    ...(o.mode === undefined ||
+    o.mode === 'live' ||
+    o.mode === 'edit' ||
+    o.mode === 'measure'
       ? []
-      : [bad('mode must be "live" or "edit".', 'mode')]),
+      : [bad('mode must be "live", "edit" or "measure".', 'mode')]),
     ...(f === undefined ||
     (typeof f === 'string' && urlOk(f) && !/["'()\\;{}<>\s]/.test(f))
       ? []
@@ -116,7 +120,9 @@ export function resolve(doc: SiteDocument, o: CompileOptions) {
   const L = o.links
   const lang = o.lang ?? doc.languages?.[0]?.code ?? 'en'
   return {
-    mode: o.mode ?? 'live',
+    // measure is live in every branch; `ids` is the one place it differs
+    mode: o.mode === 'edit' ? ('edit' as const) : ('live' as const),
+    ids: o.mode === 'measure',
     links: {
       // wrapped, not spread: a class instance keeps its prototype methods and their `this`
       page: (slug: string) => (L ? L.page(slug) : slug),
@@ -242,6 +248,7 @@ export function siteElement(
     doc,
     links: p.links,
     mode,
+    ...(p.ids ? { ids: true } : {}),
     kinds: p.kinds,
     // the editor shows the address as written; its page has no script to join it
     ...(mode === 'live' ? { mail } : {}),
