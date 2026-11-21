@@ -7,6 +7,7 @@ import {
   parseTree,
   printParseErrorCode,
   type FormattingOptions,
+  type Node,
   type ParseError,
 } from 'jsonc-parser'
 
@@ -61,10 +62,27 @@ export function parseFile(text: string): {
 // ponytail: indent is read from the first indented line; a file that mixes styles gets the first one.
 const formatOf = (body: string): FormattingOptions => {
   const eol = body.includes('\r\n') ? '\r\n' : '\n'
-  const m = /^([ \t]+)\S/m.exec(body)
+  const m = /^([ \t]+)(?![*]|\/[/*])\S/m.exec(body)
   if (!m) return { insertSpaces: true, tabSize: 2, eol }
   if (m[1]!.startsWith('\t')) return { insertSpaces: false, tabSize: 1, eol }
   return { insertSpaces: true, tabSize: m[1]!.length, eol }
+}
+
+// A path the file cannot take: a step runs through a scalar, or a key step meets an array / an index step meets an object.
+const blocked = (root: Node, path: JsonPath): boolean => {
+  for (let i = 0; i < path.length; i++) {
+    const node = findNodeAtLocation(root, path.slice(0, i))
+    if (!node) return false
+    const want = typeof path[i] === 'number' ? 'array' : 'object'
+    if (node.type !== want) return true
+  }
+  return false
+}
+
+const parsed = (body: string): Node | undefined => {
+  const errs: ParseError[] = []
+  const tree = parseTree(body, errs, { allowTrailingComma: true })
+  return errs.length ? undefined : tree
 }
 
 const change = (
@@ -72,40 +90,50 @@ const change = (
   path: JsonPath,
   value: unknown,
   insert: boolean,
-): string => {
+): string | undefined => {
   const [bom, body] = split(text)
-  const last = path[path.length - 1]
-  let isArrayInsertion = insert
-  if (!isArrayInsertion && typeof last === 'number' && value !== undefined) {
-    const tree = parseTree(body, [], { allowTrailingComma: true })
-    const arr = tree && findNodeAtLocation(tree, path.slice(0, -1))
-    isArrayInsertion = arr?.type === 'array' && last >= arr.children!.length
+  const tree = parsed(body)
+  if (!tree || path.length === 0 || blocked(tree, path)) return undefined
+  try {
+    const last = path[path.length - 1]
+    let isArrayInsertion = insert
+    if (!isArrayInsertion && typeof last === 'number') {
+      const arr = findNodeAtLocation(tree, path.slice(0, -1))
+      isArrayInsertion = arr?.type === 'array' && last >= arr.children!.length
+    }
+    const edits = modify(body, path, value, {
+      formattingOptions: formatOf(body),
+      isArrayInsertion,
+    })
+    return bom + applyEdits(body, edits)
+  } catch {
+    return undefined
   }
-  const edits = modify(body, path, value, {
-    formattingOptions: formatOf(body),
-    isArrayInsertion,
-  })
-  return bom + applyEdits(body, edits)
 }
 
-/** Inserts when the last step is an array index one past the end, or when `insert` is set. */
+/**
+ * Inserts when the last step is an array index one past the end, or when `insert` is set.
+ * Returns undefined, and never throws, when the edit cannot be made: the text has a syntax
+ * error, or the path runs through a scalar or a container of the other kind.
+ */
 export const editFile = (
   text: string,
   path: JsonPath,
   value: unknown,
   opts: { insert?: boolean } = {},
-): string => change(text, path, value, opts.insert ?? false)
+): string | undefined => change(text, path, value, opts.insert ?? false)
 
 /**
  * Removes a key (with its comma) or an array element. jsonc-parser's own removal eats the
  * comment above the next sibling and reformats it, so this cuts only the entry itself, its
  * comma and, when it has its own lines, those lines.
+ * Returns undefined, and never throws, when the text has a syntax error or the path does not exist.
  */
-export function removeAt(text: string, path: JsonPath): string {
+export function removeAt(text: string, path: JsonPath): string | undefined {
   const [bom, body] = split(text)
-  const tree = parseTree(body, [], { allowTrailingComma: true })
+  const tree = parsed(body)
   const node = tree && findNodeAtLocation(tree, path)
-  if (!node?.parent) return text
+  if (!node?.parent) return undefined
   const entry = node.parent.type === 'property' ? node.parent : node
   const container = entry.parent!
   const idx = container.children!.indexOf(entry)
@@ -131,10 +159,14 @@ export function removeAt(text: string, path: JsonPath): string {
   if (rest && /^[ \t]*$/.test(body.slice(lineStart, start)) && lineStart > 0) {
     start = lineStart
     end += rest[0].length
+  } else if (cut.length && /^\s*$/.test(body.slice(cut[0]![1], start))) {
+    // inline last element: take the space after the previous comma with it
+    cut[0]![1] = end
+    start = end
   } else {
     end += /^[ \t]*/.exec(body.slice(end))![0].length
   }
-  cut.push([start, end])
+  if (start !== end) cut.push([start, end])
   cut = cut.sort((a, b) => b[0] - a[0])
   let out = body
   for (const [a, b] of cut) out = out.slice(0, a) + out.slice(b)

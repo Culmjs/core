@@ -1,6 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { editFile, parseFile, removeAt } from '../../src/folder/jsonc.ts'
+import * as raw from '../../src/folder/jsonc.ts'
+import { parseFile } from '../../src/folder/jsonc.ts'
+
+// the happy-path tests expect a string
+const editFile = (...a: Parameters<typeof raw.editFile>) => raw.editFile(...a)!
+const removeAt = (...a: Parameters<typeof raw.removeAt>) => raw.removeAt(...a)!
 
 const doc = `{
   "name": "site",
@@ -99,3 +104,25 @@ for (const variant of ['crlf', 'bom', 'no final newline', 'tabs']) {
     assert.equal(removeAt(editFile(text, ['z'], 1), ['z']), text)
   })
 }
+
+test('editFile and removeAt return undefined, not throw, for a scalar on the path and for broken text', () => {
+  assert.equal(raw.editFile('{"a":1}', ['a', 'b'], 2), undefined)
+  assert.equal(raw.editFile('{"a":1}', ['a', 0], 2), undefined)
+  assert.equal(raw.editFile('{ "a": ', ['a'], 1), undefined)
+  assert.equal(raw.removeAt('{"a":1}', ['a', 'b']), undefined)
+  assert.equal(raw.removeAt('{"a":1}', ['zz']), undefined)
+  assert.equal(raw.removeAt('{ "a": ', ['a']), undefined)
+})
+
+test('an indent is never taken from a comment line', () => {
+  const t = '{\n/*\n * hi\n */\n    "a": 1\n}\n'
+  assert.equal(
+    editFile(t, ['b'], 2),
+    '{\n/*\n * hi\n */\n    "a": 1,\n    "b": 2\n}\n',
+  )
+})
+
+test('removing the last element of an inline array leaves no stray space', () => {
+  assert.equal(removeAt('{ "a": [1, 2, 3] }', ['a', 2]), '{ "a": [1, 2] }')
+  assert.equal(removeAt('{ "a": [1, 2, 3] }', ['a', 0]), '{ "a": [2, 3] }')
+})
