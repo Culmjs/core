@@ -47,17 +47,17 @@ const server = createMcpServer({
 
 ## The tools
 
-| Tool        | Input                                                                  | Output                                                                                                                           |
-| ----------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `describe`  | none                                                                   | versions, site name and revision, ceilings, the read cap, required node count, text range, folder or host-supplied               |
-| `read`      | `what` (`site`, `page`, `node`, `search`) with its arguments, `cursor` | rows, revision, `cut`, `cursor`                                                                                                  |
-| `catalogue` | `what` (`kinds`, `blocks`, `sources`, `operations`), `id`, `cursor`    | entries, `cut`, `cursor`                                                                                                         |
-| `plan`      | `baseRevision`, `ops`, `key`?                                          | `revision`, counts, created and changed ids, pages affected, notes; or the refusal. Saves nothing                                |
-| `apply`     | `baseRevision`, `key`, `ops`                                           | the new `revision` and `from`, with the same fields as `plan`; or the refusal                                                    |
-| `measure`   | `pages`, `widths`, `classes`, `since`, `cursor`                        | the report's findings, `cut`, `cursor`, and the comparison when `since` is given                                                 |
-| `diff`      | `from`, `to` (default: the head), `cursor`                             | the added, removed, moved and changed nodes and the affected pages, `cut`, `cursor`                                              |
-| `restore`   | `to`, `baseRevision`, `key`                                            | the new revision, with the same fields as `plan`; or the refusal                                                                 |
-| `build`     | none                                                                   | counts and lists of the manifest's pages, scripts and styles, and its build hash; `UNSUPPORTED_CAPABILITY` with no output folder |
+| Tool        | Input                                                                  | Output                                                                                                                                              |
+| ----------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `describe`  | none                                                                   | versions, site name and revision, ceilings, the read cap, required node count, text range, folder or host-supplied                                  |
+| `read`      | `what` (`site`, `page`, `node`, `search`) with its arguments, `cursor` | rows, revision, `cut`, `cursor`                                                                                                                     |
+| `catalogue` | `what` (`kinds`, `blocks`, `sources`, `operations`), `id`, `cursor`    | entries, `cut`, `cursor`                                                                                                                            |
+| `plan`      | `baseRevision`, `ops`, `key`?                                          | `revision`, counts, created and changed ids, pages affected, notes; or the refusal. Saves nothing                                                   |
+| `apply`     | `baseRevision`, `key`, `ops`                                           | the new `revision` and `from`, with the same fields as `plan`; or the refusal                                                                       |
+| `measure`   | `pages`, `widths`, `classes`, `since`, `cursor`                        | the report's findings, `cut`, `cursor`, and the comparison when `since` is given                                                                    |
+| `diff`      | `from`, `to` (default: the head), `cursor`                             | the added, removed, moved and changed nodes and the affected pages, `cut`, `cursor`                                                                 |
+| `restore`   | `to`, `baseRevision`, `key`                                            | the new revision, with the same fields as `plan`; or the refusal                                                                                    |
+| `build`     | none                                                                   | counts and lists of the manifest's pages, scripts and styles, and its build hash; `UNSUPPORTED_CAPABILITY` when the host passes no `build` function |
 
 ### `describe`
 

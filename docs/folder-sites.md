@@ -164,7 +164,7 @@ When an operation changes the site, the writer takes the difference between the 
 
 Two things you may notice:
 
-- Changing an inner part of a short form first rewrites that short form in expanded form. The result's `notes` says so, naming the node. A change a setting of the short form can hold leaves it a short form.
+- Changing an inner part of a short form first rewrites that short form in expanded form. `apply`'s result says so in its `notes`, naming the node; `plan` does not show that note. A change a setting of the short form can hold leaves it a short form.
 - A node moved to another parent is rewritten whole, and a comment inside it that was attached to the old place is lost.
 
 An edit that cannot be made (a file with a syntax error, a path through a scalar) is a located problem, and nothing is written.
