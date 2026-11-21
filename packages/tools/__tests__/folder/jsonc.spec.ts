@@ -186,3 +186,9 @@ test('a result that does not parse is never returned', () => {
   assert.equal(raw.onlyIfValid('{ "a": '), undefined)
   assert.equal(raw.onlyIfValid('{ "a": 1 }'), '{ "a": 1 }')
 })
+
+test('removeAt finds its comma past a comment or a line break and changes no other byte', () => {
+  assert.equal(removeAt('[1 /* c */, 2]', [0]), '[2]')
+  assert.equal(removeAt('[1\n, 2]', [0]), '[2]')
+  assert.equal(removeAt('[1, 2 /* c */, 3]', [1]), '[1, 3]')
+})

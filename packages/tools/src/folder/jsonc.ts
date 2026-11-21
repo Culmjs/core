@@ -211,8 +211,11 @@ export function removeAt(text: string, path: JsonPath): string | undefined {
   const idx = container.children!.indexOf(entry)
   let start = entry.offset
   let end = entry.offset + entry.length
-  const comma = /^\s*,/.exec(body.slice(end))
-  if (comma) end += comma[0].length
+  // the comma after the entry, found past any comment or line break
+  const cs = createScanner(body, true)
+  cs.setPosition(end)
+  const comma = cs.scan() === COMMA
+  if (comma) end = cs.getTokenOffset() + 1
   let cut: [number, number][] = []
   if (!comma && idx > 0) {
     const prev = container.children![idx - 1]!
