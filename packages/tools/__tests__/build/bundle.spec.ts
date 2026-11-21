@@ -11,6 +11,7 @@ import {
 import { join } from 'node:path'
 import { buildIdentity } from '@culmjs/core'
 import { copyFixture } from '../fixtures.ts'
+import { CLIENT_MARKER } from '../../src/dev/client.ts'
 import { openProject } from '../../src/folder/project.ts'
 import { buildSite, fileHashes, MANIFEST_FILE } from '../../src/build/bundle.ts'
 
@@ -188,7 +189,7 @@ test('no built file contains "data-id=" or the dev client marker', async () => {
     if (!(await stat(join(r.out, f))).isFile()) continue
     const t = await readFile(join(r.out, f), 'utf8')
     assert.ok(!t.includes('data-id='), f)
-    assert.ok(!t.includes('culm-dev-client'), f)
+    assert.ok(!t.includes(CLIENT_MARKER), f)
   }
 })
 

@@ -1,0 +1,257 @@
+import { createServer } from 'node:http'
+import type { ServerResponse } from 'node:http'
+import { watch } from 'node:fs'
+import type { FSWatcher } from 'node:fs'
+import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises'
+import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { compileSite } from '@culmjs/core'
+import { openProject } from '../folder/project.ts'
+import type { Located } from '../folder/plugins.ts'
+import { CLIENT_SCRIPT } from './client.ts'
+
+const PAUSE_MS = 50
+const TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.avif': 'image/avif',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.txt': 'text/plain; charset=utf-8',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.pdf': 'application/pdf',
+}
+
+const inside = (p: string, root: string) => {
+  const r = relative(root, p)
+  return r !== '' && !(r === '..' || r.startsWith(`..${sep}`) || isAbsolute(r))
+}
+
+/**
+ * Serves the project on 127.0.0.1 (no other address, no option). Pages come from the last good compile held in memory; a save that
+ * does not compile leaves them as they are and sends `problems`, a good one swaps them in whole and sends `reload`.
+ */
+export async function startDev(
+  dir: string,
+  options: { port?: number } = {},
+): Promise<{ url: string; port: number; close(): Promise<void> }> {
+  const root = resolve(dir)
+  let pages = new Map<string, string>() // `/` or `/slug` -> html
+  let problems: Located[] = []
+  let outDir = resolve(root, 'dist')
+  const clients = new Set<ServerResponse>()
+  const send = (res: ServerResponse, event: string, data: unknown) =>
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+  const broadcast = (event: string, data: unknown) =>
+    clients.forEach(c => send(c, event, data))
+
+  /** The text of every source file and the size and time of every asset and font: the same twice means the save left nothing to show. */
+  const stamp = async (files: { path: string; text: string }[]) => {
+    const media: string[] = []
+    for (const d of ['assets', 'fonts'])
+      for (const n of await readdir(join(root, d), { recursive: true }).catch(
+        () => [],
+      ))
+        await stat(join(root, d, n)).then(
+          st => media.push(`${d}/${n} ${st.size} ${st.mtimeMs}`),
+          () => {},
+        )
+    return JSON.stringify([files.map(f => [f.path, f.text]), media.sort()])
+  }
+  let last = ''
+
+  async function reload(): Promise<void> {
+    try {
+      const project = await openProject(root)
+      const now = await stamp(project.loaded.files)
+      // the file system may report one save in two bursts more than the pause apart; the second finds nothing new
+      const same = now === last
+      last = now
+      if (same) return
+      outDir = resolve(root, project.config.out)
+      const { loaded } = project
+      let next: Map<string, string> | undefined
+      let found: Located[] = [...loaded.problems]
+      if (loaded.doc && !found.length) {
+        const site = compileSite(loaded.doc, {
+          registry: project.registry,
+          data: loaded.data,
+          links: project.links,
+        })
+        found = site.problems.map(p => loaded.map.locateProblem(p))
+        if (!found.length)
+          next = new Map(
+            site.files.map(f => [
+              f.path === 'index.html'
+                ? '/'
+                : `/${f.path.slice(0, -'/index.html'.length)}`,
+              f.content,
+            ]),
+          )
+      }
+      if (!found.length && !loaded.doc)
+        found = [
+          {
+            code: 'INVALID_DOCUMENT',
+            message: 'The project could not be loaded.',
+          },
+        ]
+      problems = found
+      if (next) pages = next
+    } catch (e) {
+      problems = [
+        {
+          code: 'INVALID_DOCUMENT',
+          message: `The project could not be read: ${e instanceof Error ? e.message : String(e)}`,
+        },
+      ]
+    }
+    if (problems.length) broadcast('problems', problems)
+    else broadcast('reload', {})
+  }
+
+  let timer: NodeJS.Timeout | undefined
+  let chain: Promise<void> = Promise.resolve()
+  const schedule = () => {
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      chain = chain.then(reload)
+    }, PAUSE_MS)
+  }
+  await reload() // the first load; its event goes to nobody
+  const ignored = (name: string) => {
+    const p = resolve(root, name)
+    const top = name.split(/[\\/]/)[0]
+    return (
+      top === '.culm' ||
+      top === 'node_modules' ||
+      name === 'culm.schema.json' ||
+      p === outDir ||
+      inside(p, outDir)
+    )
+  }
+  let watcher: FSWatcher | undefined = watch(
+    root,
+    { recursive: true },
+    (_e, name) => {
+      if (name && !ignored(name.toString())) schedule()
+    },
+  )
+  watcher.on('error', () => {})
+
+  const page = (html: string) => {
+    const at = html.lastIndexOf('</body>')
+    const tag = `<script>${CLIENT_SCRIPT}</script>`
+    return at < 0 ? html + tag : html.slice(0, at) + tag + html.slice(at)
+  }
+  const end = (res: ServerResponse, status: number, body = '') =>
+    res
+      .writeHead(status, { 'content-type': 'text/plain; charset=utf-8' })
+      .end(body || (status === 404 ? 'Not found' : 'Refused'))
+
+  async function file(res: ServerResponse, base: string, rest: string) {
+    try {
+      const from = resolve(root, base)
+      const real = await realpath(resolve(from, rest))
+      const realBase = await realpath(from)
+      if (!inside(real, realBase) || !(await lstat(real)).isFile())
+        return end(res, 404)
+      res
+        .writeHead(200, {
+          'content-type':
+            TYPES[extname(real).toLowerCase()] ?? 'application/octet-stream',
+          'x-content-type-options': 'nosniff',
+          'cache-control': 'no-cache',
+        })
+        .end(await readFile(real))
+    } catch {
+      end(res, 404)
+    }
+  }
+
+  const server = createServer((req, res) => {
+    const host = req.headers.host
+    const port = (server.address() as { port: number }).port
+    if (host !== `127.0.0.1:${port}` && host !== `localhost:${port}`)
+      return end(res, 403)
+    if (req.method !== 'GET' && req.method !== 'HEAD') return end(res, 405)
+    const raw = (req.url ?? '/').split(/[?#]/)[0]!
+    if (raw === '/__culm/events') {
+      res.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+      })
+      res.write(': culm\n\n')
+      clients.add(res)
+      res.on('close', () => clients.delete(res))
+      if (problems.length) send(res, 'problems', problems)
+      return
+    }
+    let path: string
+    try {
+      path = decodeURIComponent(raw)
+    } catch {
+      return end(res, 404)
+    }
+    if (path.includes('\0')) return end(res, 404)
+    for (const [prefix, base] of [
+      ['/assets/', 'assets'],
+      ['/_fonts/', 'fonts'],
+    ] as const)
+      if (path.startsWith(prefix))
+        return void file(res, base, path.slice(prefix.length))
+    const slug = path.length > 1 ? path.replace(/\/+$/, '') : path
+    const html = pages.get(slug)
+    if (html !== undefined)
+      return void res
+        .writeHead(200, {
+          'content-type': TYPES['.html']!,
+          'cache-control': 'no-cache',
+        })
+        .end(page(html))
+    if (pages.size === 0 && slug === '/')
+      return void res
+        .writeHead(503, { 'content-type': TYPES['.html']! })
+        .end(
+          page(
+            '<!doctype html><title>Culm</title><body>The project has problems.</body>',
+          ),
+        )
+    end(res, 404)
+  })
+
+  await new Promise<void>((ok, bad) => {
+    server.once('error', bad)
+    server.listen(options.port ?? 4321, '127.0.0.1', ok)
+  }).catch(e => {
+    watcher?.close()
+    throw e
+  })
+  const port = (server.address() as { port: number }).port
+  return {
+    url: `http://127.0.0.1:${port}`,
+    port,
+    async close() {
+      clearTimeout(timer)
+      watcher?.close()
+      watcher = undefined
+      await chain
+      clients.forEach(c => c.end())
+      clients.clear()
+      server.closeAllConnections()
+      await new Promise<void>(ok => server.close(() => ok()))
+    },
+  }
+}
