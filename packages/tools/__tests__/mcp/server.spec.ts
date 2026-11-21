@@ -8,6 +8,7 @@ import {
   MEASURE_PROFILE,
   SCHEMA_VERSION,
   defaultSiteStyles,
+  walk,
   type Data,
   type Manifest,
   type Problem,
@@ -194,6 +195,7 @@ test('CUJ 1, fixture form, on the memory store', async () => {
   const planned = await call('plan', { baseRevision: 0, ops })
   assert.equal(planned.error, false, JSON.stringify(planned.json))
   assert.ok(planned.json.counts.created > 2)
+  assert.equal(planned.json.revision, 0)
   const applied = await call('apply', { baseRevision: 0, key: 'k1', ops })
   assert.equal(applied.error, false, JSON.stringify(applied.json))
   assert.equal(applied.json.revision, 1)
@@ -242,7 +244,7 @@ function cujDoc(): SiteDocument {
 }
 
 test('CUJ 2, fixture form, on the memory store', async () => {
-  const { call } = await connect(cujDoc())
+  const { call, store } = await connect(cujDoc())
   const ops = [
     { op: 'addPage', title: 'News', slug: '/news', page: 'news', inMenu: true },
     { op: 'setText', tree: { component: 'card' }, id: 'ct', text: 'New' },
@@ -290,6 +292,8 @@ test('CUJ 2, fixture form, on the memory store', async () => {
   assert.equal(late.error, true)
   assert.equal(late.json.problems[0].code, 'REVISION_CONFLICT')
 
+  const head = await store.head('s')
+  assert.ok(!('problems' in head) && head.revision === 1)
   const back = await call('restore', { to: 0, baseRevision: 1, key: 'r' })
   assert.equal(back.error, false, JSON.stringify(back.json))
   assert.equal(back.json.revision, 2)
@@ -355,6 +359,16 @@ test('every tool reply is within READ_CAP on a 2,000-node site, and its cursor c
   assert.ok(outline.length > 1, 'the page outline is cut')
   const found = await all(call, 'read', { what: 'search', text: 'word' })
   assert.ok(found.length > 1, 'the search is cut')
+  const idsOf = (rs: { rows: { id: string }[] }[]) =>
+    rs.flatMap(r => r.rows.map(x => x.id))
+  const walked: string[] = []
+  const texts: string[] = []
+  walk(bigPage(2000).pages[0]!.root, n => {
+    walked.push(n.id)
+    if (n.kind === 'text') texts.push(n.id)
+  })
+  assert.deepEqual(idsOf(found).sort(), texts.sort())
+  assert.deepEqual(idsOf(outline).sort(), walked.sort())
   const node1 = await call('read', { what: 'node', tree: T, id: 'c0' })
   assert.equal(node1.error, false)
   for (const what of ['kinds', 'blocks', 'sources', 'operations'])
@@ -505,4 +519,31 @@ test('measure with no browser available returns MEASUREMENT_INCOMPLETE as a resu
   assert.equal(since.json.problems[0].code, 'UNSUPPORTED_CAPABILITY')
   const bad = await call('measure', { widths: 'wide' })
   assert.equal(bad.error, true)
+})
+
+test('inputs of the wrong type are INVALID_OPERATION, never ignored', async () => {
+  const { call } = await connect(base())
+  const cases: [string, Record<string, unknown>][] = [
+    ['diff', { from: 'a' }],
+    ['diff', { from: 0, to: 1.5 }],
+    ['diff', { from: 0, cursor: 5 }],
+    ['read', { what: 'site', cursor: 5 }],
+    ['read', { what: 'page', page: 'home', cursor: {} }],
+    ['catalogue', { what: 'kinds', cursor: 5 }],
+    ['measure', { cursor: 5 }],
+  ]
+  for (const [tool, args] of cases) {
+    const r = await call(tool, args)
+    assert.equal(r.error, true, `${tool} ${JSON.stringify(args)}`)
+    assert.equal(r.json.problems[0].code, 'INVALID_OPERATION')
+  }
+})
+
+test('a measure cursor for a report that is no longer held is refused, and no browser is opened', async () => {
+  const { call } = await connect(base(), {
+    executable: '/nonexistent/chrome-for-culm',
+  })
+  const r = await call('measure', { cursor: '0:1:[null,null,null,null]' })
+  assert.equal(r.error, true)
+  assert.match(r.json.problems[0].message, /run measure again/)
 })

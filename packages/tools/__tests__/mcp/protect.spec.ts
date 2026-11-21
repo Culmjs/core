@@ -65,3 +65,42 @@ test('restore and every other operation: allowed', () => {
     undefined,
   )
 })
+
+test('protect never throws, whatever the shape of the operation', () => {
+  for (const styles of [null, 'x', [], 7, undefined])
+    assert.doesNotThrow(() =>
+      protect({ op: 'setSiteStyles', styles } as unknown as Op, doc()),
+    )
+  for (const op of [
+    {},
+    { op: 'setRequired' },
+    { op: 'setSiteStyles' },
+    { op: 'setRequired', tree: 7, id: 3 },
+  ])
+    assert.doesNotThrow(() => protect(op as unknown as Op, doc()))
+  assert.equal(protect(range('wide'), doc())?.rule, 'textRange')
+})
+
+test("a field of a form is required by core's rule, and a form marked off is not", () => {
+  const d = doc()
+  const form = {
+    id: 'f',
+    kind: 'form',
+    name: 'f',
+    slot: {},
+    props: { formId: 'f' },
+    children: [
+      {
+        id: 'a',
+        kind: 'field',
+        name: 'a',
+        slot: {},
+        props: { name: 'e', label: 'E' },
+      },
+    ],
+  }
+  d.pages[0]!.root.children!.push(form as never)
+  assert.equal(protect(req('a', false), d)?.rule, 'protected')
+  ;(form as { required?: boolean }).required = false
+  assert.equal(protect(req('a', false), d), undefined)
+})

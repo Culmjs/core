@@ -1,4 +1,10 @@
-import { find, type Node, type Problem, type SiteDocument } from '@culmjs/core'
+import {
+  find,
+  isRequired,
+  type Node,
+  type Problem,
+  type SiteDocument,
+} from '@culmjs/core'
 import type { Allow } from '@culmjs/core/ops'
 
 const veto = (message: string, rule: string, more: Partial<Problem> = {}) =>
@@ -15,14 +21,11 @@ function rootOf(doc: SiteDocument, tree: unknown): Node | undefined {
   return undefined
 }
 
-/** Whether `n` must stay: marked, or a form, or a field of a form that is not marked off (as core's own rule says). */
+/** Whether the node `id` of `root` is required, by core's rule (`isRequired`, with its enclosing form). */
 function required(root: Node, id: string): boolean {
   let out = false
   const go = (n: Node, form?: Node): void => {
-    if (n.id === id)
-      out =
-        n.required ??
-        (n.kind === 'form' || (n.kind === 'field' && form?.required !== false))
+    if (n.id === id) out = isRequired(n, form)
     for (const c of n.children ?? []) go(c, n.kind === 'form' ? n : form)
   }
   go(root)
@@ -43,7 +46,12 @@ export const protect: Allow = (op, doc) => {
         { nodeId: op.id, path: 'required' },
       )
   }
-  if (op.op === 'setSiteStyles' && 'textRange' in op.styles) {
+  if (
+    op.op === 'setSiteStyles' &&
+    typeof op.styles === 'object' &&
+    op.styles !== null &&
+    'textRange' in op.styles
+  ) {
     const was = doc.styles?.textRange
     const now = op.styles.textRange
     if (was && (now === null || now === undefined || typeof now !== 'object'))

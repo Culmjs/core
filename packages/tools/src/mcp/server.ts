@@ -73,6 +73,11 @@ const bad = (message: string, path?: string): Problem => ({
   message,
   ...(path ? { path } : {}),
 })
+/** The cursor of a call: absent, or a text. Anything else is a refusal. */
+const badCursor = (a: Obj): Result | undefined =>
+  a.cursor !== undefined && typeof a.cursor !== 'string'
+    ? refuse([bad('cursor must be a text.', 'cursor')])
+    : undefined
 const why = (e: unknown) =>
   (e instanceof Error ? e.message : String(e)).slice(0, 300)
 
@@ -346,6 +351,8 @@ export function createMcpServer(o: McpOptions): Server {
     },
 
     async read(a) {
+      const c = badCursor(a)
+      if (c) return c
       const h = await headOf()
       if ('content' in h) return h
       const cursor = typeof a.cursor === 'string' ? { cursor: a.cursor } : {}
@@ -379,6 +386,8 @@ export function createMcpServer(o: McpOptions): Server {
     },
 
     async catalogue(a) {
+      const c = badCursor(a)
+      if (c) return c
       const h = await headOf()
       if ('content' in h) return h
       return pass(
@@ -409,7 +418,9 @@ export function createMcpServer(o: McpOptions): Server {
         allow,
       )
       return r.ok
-        ? reply(summary({ ...r, revision: h.revision }))
+        ? reply(
+            summary({ ...r, revision: h.revision }, { revision: h.revision }),
+          )
         : fail(r.problems)
     },
 
@@ -444,6 +455,18 @@ export function createMcpServer(o: McpOptions): Server {
     },
 
     async diff(a) {
+      const c = badCursor(a)
+      if (c) return c
+      if (
+        !Number.isInteger(a.from) ||
+        (a.to !== undefined && !Number.isInteger(a.to))
+      )
+        return fail([
+          bad(
+            'from and to must be revision numbers.',
+            Number.isInteger(a.from) ? 'to' : 'from',
+          ),
+        ])
       const h = await headOf()
       if ('content' in h) return h
       const to = a.to === undefined ? h.revision : a.to
@@ -468,6 +491,8 @@ export function createMcpServer(o: McpOptions): Server {
     },
 
     async measure(a) {
+      const c = badCursor(a)
+      if (c) return c
       const lists = (k: string, ok: (v: unknown) => boolean) =>
         a[k] === undefined ||
         (Array.isArray(a[k]) && (a[k] as unknown[]).every(ok))
@@ -487,7 +512,14 @@ export function createMcpServer(o: McpOptions): Server {
       if ('content' in h) return h
       const tag = JSON.stringify([a.pages, a.widths, a.classes, a.since])
       const key = `${h.revision}|${tag}`
-      if (a.cursor === undefined || last?.key !== key) {
+      if (a.cursor !== undefined && last?.key !== key)
+        return fail([
+          bad(
+            'That report is no longer held; run measure again without a cursor.',
+            'cursor',
+          ),
+        ])
+      if (a.cursor === undefined) {
         const input = {
           registry,
           data,
