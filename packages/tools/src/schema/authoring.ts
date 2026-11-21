@@ -80,8 +80,8 @@ function kindDef(kind: string, spec: KindSpec): Schema {
 function settingSchema(s: BlockDef['settings'][number]): Schema {
   if (s.type === 'number') return { type: 'number' }
   if (s.type === 'switch') return { type: 'boolean' }
-  if (s.type === 'select' && s.options)
-    return { enum: s.options.map(o => o.value) }
+  if (s.type === 'select' && Array.isArray(s.options))
+    return { enum: s.options.map(o => o?.value) }
   if (s.type === 'text' || s.type === 'textarea') return str
   return {}
 }
@@ -98,8 +98,12 @@ function shortDef(b: BlockDef): Schema {
       },
       id: str,
       ...Object.fromEntries(
-        b.settings
-          .filter(s => !['block', 'look', 'id'].includes(s.key))
+        (Array.isArray(b.settings) ? b.settings : [])
+          .filter(
+            s =>
+              typeof s?.key === 'string' &&
+              !['block', 'look', 'id'].includes(s.key),
+          )
           .map(s => [s.key, { description: s.label, ...settingSchema(s) }]),
       ),
     },

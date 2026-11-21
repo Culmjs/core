@@ -190,6 +190,20 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
 
     const project: Project = await openProject(cwd)
     const { loaded } = project
+    // a plug-in, a block file or a data field that fails leaves no registry to serve; any other problem is the agent's to see, located
+    const registryProblem = (p: Located) =>
+      p.file === 'culm.json' ||
+      p.file?.startsWith('blocks/') ||
+      p.file?.startsWith('data/')
+    if (
+      command === 'mcp' || command === 'schema'
+        ? loaded.problems.some(registryProblem)
+        : loaded.problems.length
+    ) {
+      show(loaded.problems)
+      return 1
+    }
+
     if (command === 'schema') {
       await writeFile(
         join(cwd, 'culm.schema.json'),
@@ -198,20 +212,6 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
       out('Wrote culm.schema.json\n')
       return 0
     }
-    // a plug-in, a block file or a data field that fails leaves no registry to serve; any other problem is the agent's to see, located
-    const registryProblem = (p: Located) =>
-      p.file === 'culm.json' ||
-      p.file?.startsWith('blocks/') ||
-      p.file?.startsWith('data/')
-    if (
-      command === 'mcp'
-        ? loaded.problems.some(registryProblem)
-        : loaded.problems.length
-    ) {
-      show(loaded.problems)
-      return 1
-    }
-
     if (command === 'build') {
       const r = await buildSite(project)
       if (!r.ok) return (show(r.problems), 1)

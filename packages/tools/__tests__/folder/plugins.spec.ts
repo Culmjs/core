@@ -378,3 +378,40 @@ test('"." and ".." are refused as a part of a scoped package name', async () => 
   assert.equal(r.problems.length, 3)
   for (const p of r.problems) assert.match(p.message, /not a package name/)
 })
+
+for (const [name, setting, line] of [
+  ['null', 'null', 'settings'],
+  ['a number', '1', 'settings'],
+  ['no key', '{ "label": "L", "type": "text", "actions": [] }', 'key'],
+  [
+    'an unknown type',
+    '{ "key": "k", "label": "L", "type": "fancy", "actions": [] }',
+    'type',
+  ],
+  [
+    'a select with no options',
+    '{ "key": "k", "label": "L", "type": "select", "actions": [] }',
+    'options',
+  ],
+  ['no actions', '{ "key": "k", "label": "L", "type": "text" }', 'actions'],
+] as const)
+  test(`a block setting of ${name} is a located problem and the file is skipped alone`, async () => {
+    const r = await loadPlugins(
+      '/nowhere',
+      files({
+        'culm.json': '{}',
+        'blocks/note.json': JSON.stringify(block),
+        'blocks/bad.json': `{\n"id": "bad", "version": 1, "name": "B", "category": "c",\n"looks": ${JSON.stringify(block.looks)},\n"settings": [\n${setting}\n]\n}`,
+      }),
+    )
+    const mine = r.problems.filter(p => p.file === 'blocks/bad.json')
+    assert.equal(mine.length, 1, JSON.stringify(r.problems))
+    assert.equal(mine[0]!.code, 'INVALID_DOCUMENT')
+    assert.equal(mine[0]!.line, 5)
+    assert.match(
+      mine[0]!.message,
+      new RegExp(line === 'settings' ? 'setting' : line),
+    )
+    assert.equal(r.registry.block('bad'), undefined)
+    assert.ok(r.registry.block('note'))
+  })

@@ -194,3 +194,37 @@ test('a use may set a piece setting called name to any value, and a non-text loo
   assert.ok(ok(page({ block: 'hero', look: 5 })).ok)
   assert.equal(ok(page({ block: 'hero', look: 'nope' })).ok, false)
 })
+
+test('authoringSchema never throws for a block whose settings or options are malformed', () => {
+  const r = createRegistry()
+  r.use({
+    name: 'odd',
+    version: 1,
+    api: [1],
+    runs: ['load'],
+    trust: 'declarative',
+    blocks: [
+      {
+        id: 'odd',
+        version: 1,
+        name: 'Odd',
+        category: 'c',
+        looks: [
+          {
+            id: 'a',
+            name: 'A',
+            tree: { id: 'r', kind: 'box', name: 'B', slot: {} },
+          },
+        ],
+        settings: [
+          null,
+          1,
+          { label: 'no key', type: 'text' },
+          { key: 'pick', label: 'P', type: 'select', options: [null] },
+          { key: 'pick2', label: 'P', type: 'select' },
+        ],
+      },
+    ] as never,
+  } as Plugin)
+  assert.doesNotThrow(() => authoringSchema(r))
+})

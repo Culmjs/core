@@ -105,6 +105,22 @@ test('schema: writes culm.schema.json in the project root', async () => {
   assert.deepEqual(schema, tools.authoringSchema(p.registry))
 })
 
+test('schema: a block whose settings hold null exits 1 with the file and line, not a TypeError', async () => {
+  const dir = await copyFixture('site-basic')
+  const file = join(dir, 'blocks/cards.json')
+  await writeFile(
+    file,
+    (await readFile(file, 'utf8')).replace(
+      '"settings": [',
+      '"settings": [\n    null,',
+    ),
+  )
+  const r = await run(['schema'], dir)
+  assert.equal(r.code, 1)
+  assert.match(r.err, /^blocks\/cards\.json:\d+:\d+ /m)
+  assert.doesNotMatch(r.err, /TypeError/)
+})
+
 test('expand pages/home.json hero1: the short form is now nodes and the folder loads to the same document', async () => {
   const dir = await copyFixture('site-basic')
   const before = (await openProject(dir)).loaded

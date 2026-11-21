@@ -51,6 +51,53 @@ const validType = (t: unknown): boolean =>
   SCALARS.includes(t as string) ||
   (isObj(t) && isObj(t.rows) && Object.values(t.rows).every(validType))
 
+const SETTING_TYPES = [
+  'number',
+  'switch',
+  'select',
+  'text',
+  'textarea',
+  'color',
+  'link',
+  'asset',
+]
+const optional = (v: unknown, type: string) =>
+  v === undefined || typeof v === type
+/** What a declarative setting lacks, by the shape core's `Setting` and its readers expect: [what, path inside the setting]. */
+function settingProblems(s: Record<string, unknown>): [string, JsonPath][] {
+  const out: [string, JsonPath][] = []
+  const need = (ok: boolean, what: string, path: JsonPath) => {
+    if (!ok) out.push([what, path])
+  }
+  need(typeof s.key === 'string' && s.key !== '', 'a "key"', ['key'])
+  need(typeof s.label === 'string', 'a "label"', ['label'])
+  need(
+    SETTING_TYPES.includes(s.type as string),
+    `a "type" (${SETTING_TYPES.join(', ')})`,
+    ['type'],
+  )
+  need(
+    optional(s.min, 'number') && optional(s.max, 'number'),
+    '"min" and "max" as numbers',
+    ['min'],
+  )
+  need(optional(s.invert, 'boolean'), '"invert" as true or false', ['invert'])
+  need(
+    s.type !== 'select' ||
+      (Array.isArray(s.options) &&
+        s.options.every(
+          o =>
+            isObj(o) &&
+            typeof o.label === 'string' &&
+            typeof o.value === 'string',
+        )),
+    '"options" as a list of labels and values',
+    ['options'],
+  )
+  need(Array.isArray(s.actions), '"actions" as a list', ['actions'])
+  return out
+}
+
 // Same registry, plus the project's own data sources, so a block can repeat over them.
 const withSources = (r: Registry, local: DataSource[]): Registry => ({
   ...r,
@@ -279,13 +326,23 @@ export async function loadPlugins(
         ['onInsert'],
       )
     if (Array.isArray(value.settings))
-      for (const [i, s] of value.settings.entries())
-        if (isObj(s) && 'fn' in s)
+      for (const [i, s] of value.settings.entries()) {
+        const here: JsonPath = ['settings', i]
+        if (!isObj(s)) {
+          bad('INVALID_DOCUMENT', 'A setting must be an object.', here)
+        } else if ('fn' in s)
           bad(
             'POLICY_VIOLATION',
             'A block file cannot name a function: "fn".',
-            ['settings', i, 'fn'],
+            [...here, 'fn'],
           )
+        else
+          for (const [what, path] of settingProblems(s))
+            bad('INVALID_DOCUMENT', `A setting needs ${what}.`, [
+              ...here,
+              ...(path[0]! in s ? path : []),
+            ])
+      }
     const need = (ok: boolean, what: string, path: JsonPath) => {
       if (!ok) bad('INVALID_DOCUMENT', `A block needs ${what}.`, path)
     }
