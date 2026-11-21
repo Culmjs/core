@@ -30,7 +30,7 @@ import type {
 } from '@culmjs/core'
 import { derivedId } from './ids.ts'
 import { parseFile, type JsonPath } from './jsonc.ts'
-import type { Located } from './plugins.ts'
+import { readByPlugins, type Located } from './plugins.ts'
 import { makeSourceMap, treeKey } from './sourceMap.ts'
 import type { Origin, SourceMap } from './sourceMap.ts'
 
@@ -226,13 +226,13 @@ async function build(
   })
 
   // A JSON syntax error in any file means no document. Each file has one owner of its problems: loadPlugins reports
-  // culm.json, blocks/ and the fields of data/; this reports site.json, pages/ and pieces/ (and the rows of data/).
+  // the files readByPlugins names; this reports every other file (and the rows of data/).
   let broken = false
   for (const [file] of files) {
     const e = parse(file).errors[0]
     if (!e) continue
     broken = true
-    if (!opts.alreadyReported || /^(site\.json|pages\/|pieces\/)/.test(file))
+    if (!opts.alreadyReported || !readByPlugins(file))
       problems.push({
         code: 'INVALID_DOCUMENT',
         message: `Invalid JSON: ${e.message}.`,

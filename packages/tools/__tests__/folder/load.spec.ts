@@ -431,6 +431,9 @@ test('each file has one owner: a change to one file is reported once by loadPlug
       'culm.json',
       text('culm.json').replace('"plugins": []', '"plugins": [ , ,'),
     ],
+    // loadPlugins reads only top-level blocks/ and data/ files; a nested one is loadFiles's to report.
+    ['data/sub/x.json', '{ "a": , }'],
+    ['blocks/sub/x.json', '{ "a": , }'],
   ] as const) {
     const r = await both({ [file]: broken })
     assert.equal(r.problems.length, 1, `${file}: ${JSON.stringify(r.problems)}`)

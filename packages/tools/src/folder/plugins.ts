@@ -18,6 +18,10 @@ import type {
 } from '@culmjs/core'
 import { parseFile, type JsonPath } from './jsonc.ts'
 
+/** The files loadPlugins reads, and so owns the problems of: culm.json and the top-level blocks/ and data/ files. */
+export const readByPlugins = (file: string): boolean =>
+  /^(culm\.json|(blocks|data)\/[^/]+\.json)$/.test(file)
+
 const ID_RE = /^[a-z0-9]{1,20}$/
 const LOCAL = {
   name: 'local',
@@ -215,9 +219,9 @@ export async function loadPlugins(
   }
 
   // The local plug-in: blocks/*.json and the fields of data/*.json.
-  const names = (dirName: string) =>
+  const names = (dirName: 'blocks' | 'data') =>
     [...files.keys()]
-      .filter(k => new RegExp(`^${dirName}/[^/]+\\.json$`).test(k))
+      .filter(k => k.startsWith(`${dirName}/`) && readByPlugins(k))
       .sort()
   const sources: DataSource[] = []
   // A data file that failed is already one problem; the blocks that name its source are not told again.
