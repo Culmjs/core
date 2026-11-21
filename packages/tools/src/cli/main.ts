@@ -15,6 +15,7 @@ import { createMcpServer } from '../mcp/server.ts'
 import { listenLocal } from '../mcp/http.ts'
 import { protect } from '../mcp/protect.ts'
 import { authoringSchema } from '../schema/authoring.ts'
+import { locateFinding } from '../folder/locateFinding.ts'
 import { formatLocated } from './print.ts'
 
 export interface Io {
@@ -95,6 +96,7 @@ export async function folderMcpOptions(
     // a problem the store already located stays as it is
     locate: <P extends Problem>(p: P): P =>
       (p as { file?: string }).file ? p : (map.locateProblem(p) as P),
+    pageFile: (id: string) => map.pageFile(id),
     // the folder may have changed since the server started
     build: async () => buildSite(await openProject(cwd)),
   }
@@ -254,17 +256,16 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
         files: await fileHashes(cwd),
         assets: p => readFile(join(cwd, p)).catch(() => undefined),
       })
-      for (const f of report.findings) {
-        const at = loaded.map.locateProblem({
-          code: 'INVALID_DOCUMENT',
-          message: f.message,
-          nodeId: f.nodes[0],
-        })
-        const file = at.file ?? loaded.map.pageFile(f.page)
+      for (const f of report.findings)
         err(
-          `${formatLocated({ ...f, file, line: at.line, column: at.column })}\n`,
+          `${formatLocated(
+            locateFinding(
+              f,
+              p => loaded.map.locateProblem(p) as typeof p,
+              id => loaded.map.pageFile(id),
+            ),
+          )}\n`,
         )
-      }
       for (const i of report.incomplete)
         err(`${i.page}: ${formatLocated(i.problem)}\n`)
       out(

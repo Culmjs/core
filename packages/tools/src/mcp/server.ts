@@ -37,6 +37,8 @@ import {
   type SiteStore,
 } from '@culmjs/core/ops'
 import type { Browser } from '../measure/browser.ts'
+import type { Finding } from '@culmjs/core/measure'
+import { locateFinding } from '../folder/locateFinding.ts'
 import { measureSince, runMeasure } from '../measure/run.ts'
 
 export type McpOptions = {
@@ -51,6 +53,8 @@ export type McpOptions = {
   out?: string
   /** Folder sites: adds file and line to a problem. */
   locate?<P extends Problem>(p: P): P
+  /** Folder sites: the file of a page, for a finding whose node cannot be placed. */
+  pageFile?(page: string): string | undefined
   /** Absent: `build` returns UNSUPPORTED_CAPABILITY. */
   build?(): Promise<
     { ok: true; manifest: Manifest } | { ok: false; problems: Problem[] }
@@ -548,6 +552,9 @@ export function createMcpServer(o: McpOptions): Server {
               })
         if (!m.ok) return fail(m.problems)
         const r = m.report
+        // folder sites: each finding names its file and line
+        const at = (f: Finding): Finding =>
+          locate ? locateFinding(f, locate, id => o.pageFile?.(id)) : f
         last = {
           key,
           meta: {
@@ -559,11 +566,13 @@ export function createMcpServer(o: McpOptions): Server {
             skipped: r.skipped,
           },
           rows: [
-            ...r.findings.map(finding => ({ finding })),
+            ...r.findings.map(finding => ({ finding: at(finding) })),
             ...r.incomplete.map(incomplete => ({ incomplete })),
             ...r.blocked.map(blocked => ({ blocked })),
-            ...(m.comparison?.was.map(was => ({ was })) ?? []),
-            ...(m.comparison?.added.map(added => ({ added })) ?? []),
+            ...(m.comparison?.was.map(w => ({
+              was: { ...w, finding: at(w.finding) },
+            })) ?? []),
+            ...(m.comparison?.added.map(f => ({ added: at(f) })) ?? []),
           ],
         }
       }
