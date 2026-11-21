@@ -137,7 +137,7 @@ export async function readProject(dir: string): Promise<Map<string, string>> {
 
 // ---------------------------------------------------------------- loading
 
-const defaultSlot = (parent: string | undefined): Slot =>
+export const defaultSlot = (parent: string | undefined): Slot =>
   parent === 'free'
     ? { x: 0, y: 0, w: 6, h: 4, z: 0 }
     : parent === 'row' || parent === 'column'
