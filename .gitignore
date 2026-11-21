@@ -7,6 +7,14 @@ REFERENCE.md
 docs/spikes/
 docs/stage-1-exit.md
 .superpowers
+# Claude Code and agent build documents
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+.impeccable/
+graphify-out/
+docs/superpowers/
 dist
 .pack
 docs/stage-2*-exit.md
