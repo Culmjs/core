@@ -1,6 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  readdir,
+  readFile,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { join } from 'node:path'
 import { buildIdentity } from '@culmjs/core'
 import { copyFixture } from '../fixtures.ts'
@@ -45,7 +52,7 @@ test('build writes index.html, menu/index.html, about/index.html, assets/, _font
     '_fonts/x.woff2',
     MANIFEST_FILE,
   ])
-    assert.ok(names.includes(n.replace(/\//g, '/')), n)
+    assert.ok(names.includes(n), n)
   const m = JSON.parse(await readFile(join(r.out, MANIFEST_FILE), 'utf8'))
   assert.match(m.build, /^[0-9a-f]{64}$/)
   assert.deepEqual(m, r.manifest)
@@ -183,4 +190,49 @@ test('no built file contains "data-id=" or the dev client marker', async () => {
     assert.ok(!t.includes('data-id='), f)
     assert.ok(!t.includes('culm-dev-client'), f)
   }
+})
+
+test('an out inside a source folder, a parent folder or a symlink is refused and nothing throws', async () => {
+  const dir = await site()
+  const p = await openProject(dir)
+  await mkdir(join(dir, 'pieces/sub'), { recursive: true })
+  await writeFile(join(dir, 'pieces/sub', MANIFEST_FILE), '{}')
+  await mkdir(join(dir, 'real'))
+  await symlink(join(dir, 'real'), join(dir, 'link'))
+  for (const out of [
+    join(dir, 'assets/dist'),
+    join(dir, 'fonts'),
+    join(dir, 'pieces'),
+    join(dir, 'pieces/sub'),
+    join(dir, 'site.json/sub'),
+    join(dir, '..'),
+    join(dir, 'link'),
+  ]) {
+    const r = await buildSite(p, out)
+    assert.equal(r.ok, false, out)
+  }
+  assert.ok(await exists(join(dir, 'pieces/visit-card.json')))
+  assert.deepEqual(await all(join(dir, 'assets')), ['loaf.svg'])
+  assert.deepEqual(await all(join(dir, 'real')), [])
+})
+
+test('culm.json cannot name an out inside assets/ or fonts/', async () => {
+  const dir = await site()
+  await writeFile(join(dir, 'culm.json'), '{ "out": "assets/dist" }')
+  const p = await openProject(dir)
+  assert.ok(p.loaded.problems.some(x => x.file === 'culm.json'))
+})
+
+test('a text that merely contains "cat:inter" is not a missing font', async () => {
+  const dir = await site()
+  const about = join(dir, 'pages/about.json')
+  await writeFile(
+    about,
+    (await readFile(about, 'utf8')).replace(
+      'A small bakery on a corner.',
+      'cat:inter is a font ref',
+    ),
+  )
+  const r = await buildSite(await openProject(dir))
+  assert.ok(r.ok)
 })

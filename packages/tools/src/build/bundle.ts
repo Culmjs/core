@@ -11,7 +11,7 @@ import {
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { FONTS, buildIdentity, compileSite } from '@culmjs/core'
 import type { Manifest } from '@culmjs/core'
-import type { Located } from '../folder/plugins.ts'
+import { RESERVED, type Located } from '../folder/plugins.ts'
 import type { Project } from '../folder/project.ts'
 
 export const MANIFEST_FILE = 'culm-manifest.json'
@@ -54,14 +54,6 @@ const bad = (message: string, extra: Partial<Located> = {}): Located => ({
   ...extra,
 })
 
-const catRefs = (v: unknown, into = new Set<string>()): Set<string> => {
-  if (typeof v === 'string') {
-    if (v.startsWith('cat:')) into.add(v.slice(4))
-  } else if (v && typeof v === 'object')
-    for (const x of Object.values(v)) catRefs(x, into)
-  return into
-}
-
 /**
  * Compiles the site and writes it to `out` (default: the project's `out`). Any problem: nothing is written. `out` is cleared first,
  * but only when it is empty or holds `culm-manifest.json`; any other non-empty folder is refused and left alone.
@@ -95,7 +87,12 @@ export async function buildSite(
 
   // the folder build may clear is never the project folder or one that holds it
   const up = relative(target, resolve(dir))
-  if (up === '' || !(up === '..' || up.startsWith(`..${sep}`)))
+  const inside = relative(resolve(dir), target)
+  if (RESERVED.test(inside.split(sep).join('/')))
+    problems.push(
+      bad(`The output folder "${inside}" is, or lies inside, a source folder.`),
+    )
+  else if (up === '' || !(up === '..' || up.startsWith(`..${sep}`)))
     problems.push(
       bad(`The output folder "${target}" is, or holds, the project folder.`),
     )
@@ -123,45 +120,66 @@ export async function buildSite(
       )
   }
 
-  // every catalogue font in use has its files in fonts/
   const hashes = await fileHashes(dir)
-  const have = new Set(hashes.map(h => h.path))
-  for (const id of catRefs(doc))
-    for (const f of Object.hasOwn(FONTS, id) ? FONTS[id]!.files : [])
-      if (!have.has(`fonts/${f.file}`))
-        problems.push(
-          bad(
-            `The font "cat:${id}" needs fonts/${f.file}, which is missing.`,
-            where(`"cat:${id}"`),
-          ),
-        )
-
   const site = compileSite(doc, { registry, data: loaded.data, links })
   problems.push(...site.problems.map(p => loaded.map.locateProblem(p)))
+  // the font files the compiled pages ask for (the @font-face rules of the fonts actually used) are in fonts/
+  const have = new Set(hashes.map(h => h.path))
+  const wanted = new Set(
+    site.files.flatMap(f =>
+      [...f.content.matchAll(/\/_fonts\/([^)"']+)\)/g)].map(m => m[1]!),
+    ),
+  )
+  for (const file of [...wanted].sort())
+    if (!have.has(`fonts/${file}`)) {
+      const id = Object.keys(FONTS).find(k =>
+        FONTS[k]!.files.some(f => f.file === file),
+      )
+      problems.push(
+        bad(
+          `The font file fonts/${file} is missing.`,
+          id ? where(`"cat:${id}"`) : {},
+        ),
+      )
+    }
   if (problems.length) return { ok: false, problems }
 
-  if (await exists(target))
-    for (const n of await readdir(target))
-      await rm(join(target, n), { recursive: true, force: true })
-  await mkdir(target, { recursive: true })
-  for (const f of site.files) {
-    await mkdir(dirname(join(target, f.path)), { recursive: true })
-    await writeFile(join(target, f.path), f.content)
-  }
-  for (const [from, to] of [
-    ['assets', 'assets'],
-    ['fonts', '_fonts'],
-  ] as const)
-    if (await exists(join(dir, from)))
-      await cp(join(dir, from), join(target, to), { recursive: true })
   const manifest: Manifest = {
     ...site.manifest,
     build: await buildIdentity(doc, loaded.data, registry, hashes),
   }
-  await writeFile(
-    join(target, MANIFEST_FILE),
-    JSON.stringify(manifest, null, 2) + '\n',
-  )
+  try {
+    if (await exists(target))
+      // the old manifest goes last, so a failed clear leaves a folder a later build may still clear
+      for (const n of (await readdir(target)).sort(
+        (x, y) => +(x === MANIFEST_FILE) - +(y === MANIFEST_FILE),
+      ))
+        await rm(join(target, n), { recursive: true, force: true })
+    await mkdir(target, { recursive: true })
+    for (const f of site.files) {
+      await mkdir(dirname(join(target, f.path)), { recursive: true })
+      await writeFile(join(target, f.path), f.content)
+    }
+    for (const [from, to] of [
+      ['assets', 'assets'],
+      ['fonts', '_fonts'],
+    ] as const)
+      if (await exists(join(dir, from)))
+        await cp(join(dir, from), join(target, to), { recursive: true })
+    await writeFile(
+      join(target, MANIFEST_FILE),
+      JSON.stringify(manifest, null, 2) + '\n',
+    )
+  } catch (e) {
+    return {
+      ok: false,
+      problems: [
+        bad(
+          `The build could not write "${target}": ${e instanceof Error ? e.message : String(e)}`,
+        ),
+      ],
+    }
+  }
   return {
     ok: true,
     out: target,
