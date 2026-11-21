@@ -2,12 +2,20 @@ import { createServer } from 'node:http'
 import type { ServerResponse } from 'node:http'
 import { watch } from 'node:fs'
 import type { FSWatcher } from 'node:fs'
-import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises'
+import {
+  lstat,
+  readdir,
+  readFile,
+  realpath,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { compileSite } from '@culmjs/core'
 import { fileHashes, fontProblems, slugProblems } from '../build/bundle.ts'
 import { openProject } from '../folder/project.ts'
 import type { Located } from '../folder/plugins.ts'
+import { authoringSchema } from '../schema/authoring.ts'
 import { CLIENT_SCRIPT } from './client.ts'
 
 const PAUSE_MS = 50
@@ -86,6 +94,11 @@ export async function startDev(
       last = now
       if (same) return
       outDir = resolve(root, project.config.out)
+      // the schema follows the registry (blocks/, culm.json); the watcher ignores this file
+      const schema = `${JSON.stringify(authoringSchema(project.registry), null, 2)}\n`
+      const schemaFile = join(root, 'culm.schema.json')
+      if ((await readFile(schemaFile, 'utf8').catch(() => '')) !== schema)
+        await writeFile(schemaFile, schema)
       const { loaded } = project
       let next: Map<string, string> | undefined
       let found: Located[] = [...loaded.problems]

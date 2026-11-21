@@ -175,8 +175,7 @@ test('a save that fixes it produces reload', async () => {
   })
 })
 
-test.skip('a change to blocks/ or culm.json rewrites culm.schema.json', async () => {
-  // enabled in Task 15 (JSON Schema)
+test('a change to blocks/ or culm.json rewrites culm.schema.json', async () => {
   await withDev(async ({ dir, events }) => {
     const schema = join(dir, 'culm.schema.json')
     await writeFile(schema, 'stale')
