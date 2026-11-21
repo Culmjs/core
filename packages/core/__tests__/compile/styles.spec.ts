@@ -2147,3 +2147,14 @@ test('a phone layer with nowrap false undoes a base nowrap; a base nowrap false 
   assert.match(on, /@media \(max-width: 600px\)\{[^]*white-space:normal/)
   assert.doesNotMatch(css({ base: { nowrap: false } }), /white-space/)
 })
+
+test('a phone italic false undoes a run-level italic', () => {
+  const css = compileFor({
+    props: { level: 'p', runs: [{ text: 'x', style: { italic: true } }] },
+    style: { phone: { italic: false } },
+  })
+  assert.match(css, /font-style:italic/)
+  // the text node's own rule and the run's rule both turn it off
+  const phone = css.slice(css.indexOf('@media (max-width: 600px)'))
+  assert.equal(phone.match(/font-style:normal/g)?.length, 2)
+})

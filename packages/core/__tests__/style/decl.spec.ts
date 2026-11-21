@@ -912,7 +912,7 @@ test('false on a later layer undoes a flag; false on the base layer writes nothi
     ['smallCaps', 'font-variant-caps:normal'],
     ['upper', 'text-transform:none'],
     ['snap', 'scroll-snap-type:none'],
-    ['balance', 'text-wrap:wrap'],
+    ['balance', 'text-wrap-style:auto'],
   ]
   for (const [k, off] of OFF) {
     assert.equal(declCss({ [k]: false }, ctx), '', `${k} on base`)

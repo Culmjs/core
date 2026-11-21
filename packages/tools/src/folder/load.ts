@@ -36,6 +36,14 @@ import type { Origin, SourceMap } from './sourceMap.ts'
 
 export type { Origin, SourceMap } from './sourceMap.ts'
 
+export type LoadOptions = {
+  /**
+   * The caller holds the problems of `loadPlugins` (culm.json, blocks/, the fields of data/), so a syntax error in one of those files
+   * is not reported again; the load still returns no document. Alone, `loadFiles` reports every broken file once.
+   */
+  alreadyReported?: boolean
+}
+
 export type Loaded = {
   /** Absent when a file could not be read into a document; present, with problems, when only validation failed. */
   doc: SiteDocument | undefined
@@ -144,6 +152,7 @@ async function build(
   files: ReadonlyMap<string, string>,
   registry: Registry,
   refused: ReadonlyMap<string, string>,
+  opts: LoadOptions,
 ): Promise<Loaded> {
   const problems: Located[] = []
   const notices: Located[] = []
@@ -223,7 +232,7 @@ async function build(
     const e = parse(file).errors[0]
     if (!e) continue
     broken = true
-    if (/^(site\.json|pages\/|pieces\/)/.test(file))
+    if (!opts.alreadyReported || /^(site\.json|pages\/|pieces\/)/.test(file))
       problems.push({
         code: 'INVALID_DOCUMENT',
         message: `Invalid JSON: ${e.message}.`,
@@ -642,12 +651,14 @@ async function build(
 export const loadFiles = (
   files: ReadonlyMap<string, string>,
   registry: Registry,
-): Promise<Loaded> => build(files, registry, new Map())
+  opts: LoadOptions = {},
+): Promise<Loaded> => build(files, registry, new Map(), opts)
 
 export async function loadFolder(
   dir: string,
   registry: Registry,
+  opts: LoadOptions = {},
 ): Promise<Loaded> {
   const { files, refused } = await scan(dir)
-  return build(files, registry, refused)
+  return build(files, registry, refused, opts)
 }

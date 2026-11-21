@@ -1101,7 +1101,7 @@ const FLAG_OFF: Partial<Record<keyof Decl, string>> = {
   smallCaps: 'font-variant-caps:normal',
   upper: 'text-transform:none',
   snap: 'scroll-snap-type:none',
-  balance: 'text-wrap:wrap',
+  balance: 'text-wrap-style:auto',
 }
 
 /** `later`: the declaration is on a layer after base, where `false` on a flag is written as its off value. */

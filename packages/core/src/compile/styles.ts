@@ -781,6 +781,7 @@ export function compileStyles(
               ) as (keyof Decl)[],
             ),
             ctx.style,
+            true,
           )
         if (s || override)
           add(`${w.id}:run${i}`, 'run', {

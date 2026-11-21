@@ -388,9 +388,31 @@ async function both(change: Record<string, string>) {
   const files = new Map(base)
   for (const [k, v] of Object.entries(change)) files.set(k, v)
   const plugins = await loadPlugins(FIXTURE, files)
-  const loaded = await loadFiles(files, plugins.registry)
+  const loaded = await loadFiles(files, plugins.registry, {
+    alreadyReported: true,
+  })
   return { problems: [...plugins.problems, ...loaded.problems], loaded }
 }
+
+test('loadFiles alone reports a broken file it does not own, once', async () => {
+  for (const [file, broken] of [
+    [
+      'blocks/hero.json',
+      text('blocks/hero.json').replace('"version": 1,', '"version": ,'),
+    ],
+    ['data/menu.json', text('data/menu.json').replace('"fields"', 'fields')],
+    [
+      'culm.json',
+      text('culm.json').replace('"plugins": []', '"plugins": [ , ,'),
+    ],
+  ] as const) {
+    const l = await load({ [file]: broken })
+    assert.equal(l.doc, undefined, file)
+    assert.equal(l.problems.length, 1, file)
+    assert.equal(l.problems[0]!.file, file)
+    assert.ok(l.problems[0]!.line! >= 1)
+  }
+})
 
 test('each file has one owner: a change to one file is reported once by loadPlugins and loadFiles together', async () => {
   const clean = await both({})
