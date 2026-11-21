@@ -53,6 +53,11 @@
       "source": "./src/ops/index.ts",
       "types": "./dist/ops/index.d.ts",
       "default": "./dist/ops/index.js"
+    },
+    "./measure": {
+      "source": "./src/measure/index.ts",
+      "types": "./dist/measure/index.d.ts",
+      "default": "./dist/measure/index.js"
     }
   },
   "files": [
