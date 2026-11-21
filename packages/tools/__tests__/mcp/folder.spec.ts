@@ -29,7 +29,7 @@ test('CUJ 1 on a folder', async () => {
   assert.notEqual(emptied, homeText)
   await writeFile(join(dir, 'pages/home.json'), emptied)
 
-  const { call, project } = await serve(dir)
+  const { call } = await serve(dir)
   const d = await call('describe')
   const n = d.json.revision as number
   assert.equal(d.json.folder, true)
@@ -120,7 +120,6 @@ test('CUJ 1 on a folder', async () => {
   const page = compiled.files.find(f => f.path === 'index.html')!.content
   for (const name of ['Sourdough', 'Croissant', 'Cinnamon bun', 'Lemon cake'])
     assert.ok(page.includes(name), name)
-  assert.equal(project.loaded.doc !== undefined, true)
 
   // every created id is read back, and a second batch against the new revision is accepted
   for (const c of created) {
@@ -134,9 +133,10 @@ test('CUJ 1 on a folder', async () => {
       {
         op: 'setText',
         tree: home,
-        id: 'hero1.lead',
+        id: 'hero1.title',
         text: 'Warm from the oven',
       },
+      { op: 'setText', tree: home, id: 'grid1.heading', text: 'Today' },
     ],
   })
   assert.equal(second.error, false, JSON.stringify(second.json))

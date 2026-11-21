@@ -45,6 +45,7 @@ test('CUJ 3 on a folder', async () => {
   // 1 remove the title
   const one = await refused('s1', [{ op: 'remove', tree: home, id: title }])
   assert.equal(one.rule, 'required')
+  assert.equal(one.nodeId, title)
   // 2 hide it on a phone
   const two = await refused('s2', [
     { op: 'setHidden', tree: home, id: title, layout: 'phone', hidden: true },
@@ -62,6 +63,7 @@ test('CUJ 3 on a folder', async () => {
     },
   ])
   assert.equal(three.rule, 'textRange')
+  assert.equal(three.path, 'style.phone.size')
   assert.deepEqual(three.allowed, ['11', '96'])
   // 4 clear the mark and remove, in one batch
   const four = await refused('s4', [
@@ -69,6 +71,7 @@ test('CUJ 3 on a folder', async () => {
     { op: 'remove', tree: home, id: title },
   ])
   assert.equal(four.rule, 'protected')
+  assert.equal(four.path, 'required')
 
   // 5 the repair: accepted, and the short form is written as nodes
   assert.ok(start['pages/home.json']!.includes('"block": "hero"'))
@@ -109,6 +112,8 @@ test('CUJ 3 on a folder', async () => {
   assert.equal(since.json.was[0].status, 'fixed')
   assert.equal(since.json.was[0].finding.check, 'overflow')
   assert.deepEqual(since.json.was[0].finding.nodes, [title])
+  assert.equal(since.json.was[0].finding.file, 'pages/home.json')
+  assert.equal(typeof since.json.was[0].finding.line, 'number')
 
   // a second hero is inserted; removing it is refused; restoring to before the insertion is accepted
   const before = await files(dir)
@@ -224,16 +229,14 @@ test('a real finding and a validation problem on the folder each name the file a
   )
 
   // a mistake made by hand in a file: the folder's own problem names the file and line
-  await writeFile(
-    join(dir, 'pages/about.json'),
-    (await files(dir))['pages/about.json']!.replace(
-      '"kind": "text"',
-      '"kind": "nope"',
-    ),
+  const aboutText = (await files(dir))['pages/about.json']!.replace(
+    '"kind": "text"',
+    '"kind": "nope"',
   )
+  await writeFile(join(dir, 'pages/about.json'), aboutText)
   const broken = await call('describe')
   assert.equal(broken.error, true)
   const q = broken.json.problems[0]
   assert.equal(q.file, 'pages/about.json')
-  assert.ok(q.line > 1, JSON.stringify(q))
+  assert.equal(q.line, lineOf(aboutText, '"kind": "nope"'), JSON.stringify(q))
 })
