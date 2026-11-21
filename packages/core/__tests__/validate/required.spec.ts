@@ -1775,38 +1775,35 @@ test('an instance that stands for a field takes its requirement from the form ar
   assert.deepEqual(refusals(inMaster(false)), [])
 })
 
-// ---- after the sweep: a math run is content ----
+// ---- after the post-tag review: a math run is not the content of a required text ----
 
-test('a required text whose only run is math is content when the math draws a character; empty or blank math is not', () => {
-  const one = (math: string) =>
+/** The post-tag review's C1 inputs (math the compiler writes as nothing or draws invisibly), and three valid formulas. */
+const C1_MATH = [
+  '<math><mi>Hello</mi>',
+  '<math><mi>Hello</mo></math>',
+  '<math><mi>&nbsp;</mi></math>',
+  '<math><mi>x</mi><mi>&foo;</mi></math>',
+  '<math><mi>x</mi><mi>&#0;</mi></math>',
+  '<math><mi>x</mi><mo>&AMP;</mo></math>',
+  '<math><mi>x</mi><mi>&#xD800;</mi></math>',
+  '<math><mphantom><mi>x</mi></mphantom></math>',
+  '<math><semantics><mspace width="1em"></mspace><mi>x</mi><annotation encoding="application/x-tex">x</annotation></semantics></math>',
+]
+const VALID_MATH = [
+  '<math><mi>x</mi></math>',
+  '<math><mfrac><mn>1</mn><mn>2</mn></mfrac></math>',
+  '<math><mtext>speed</mtext></math>',
+]
+
+test('a required text whose only run is math is refused, whatever the math: nothing depends on what the compiler draws', () => {
+  const only = (runs: object[]) =>
     validateSite(
-      put(
-        n({
-          ...text0('t'),
-          required: true,
-          props: { level: 'p', runs: [{ math }] },
-        }),
-      ),
+      put(n({ ...text0('t'), required: true, props: { level: 'p', runs } })),
       reg,
     ).map(x => [x.rule, x.nodeId, x.path])
-  for (const m of [
-    '<math><mi>x</mi></math>',
-    '<math><mn>2</mn><mo>+</mo></math>',
-    '<math><mi>&#x3B1;</mi></math>',
-    '<math display="block"><semantics><mrow><mi>x</mi></mrow><annotation encoding="application/x-tex">x</annotation></semantics></math>',
-  ])
-    assert.deepEqual(one(m), [], m)
-  for (const m of [
-    '',
-    '   ',
-    '<math></math>',
-    '<math><mspace width="1em"/></math>',
-    '<math><mi>&#x200B;</mi></math>',
-    '<math><semantics><annotation encoding="application/x-tex">x</annotation></semantics></math>',
-  ])
-    assert.deepEqual(
-      one(m),
-      [['required', 't', 'props.runs']],
-      JSON.stringify(m),
-    )
+  for (const math of [...C1_MATH, ...VALID_MATH, '', '<math></math>'])
+    assert.deepEqual(only([{ math }]), [['required', 't', 'props.runs']], math)
+  // a math run beside a run with visible characters: the text has content
+  for (const math of [...VALID_MATH, C1_MATH[0]])
+    assert.deepEqual(only([{ text: 'Speed: ' }, { math }]), [], math)
 })

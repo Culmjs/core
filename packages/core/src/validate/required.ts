@@ -15,7 +15,6 @@ import { isObj } from '../document/rules.ts'
 import { find, resolvePart } from '../document/tree.ts'
 import type { Registry } from '../registry/index.ts'
 import { dropSamples } from '../document/samples.ts'
-import { mathOk } from './tree.ts'
 import { unrollEnv, unrollInstances } from './unroll.ts'
 
 const policy = (
@@ -38,48 +37,10 @@ const INVISIBLE = '\u115F\u1160\u3164\uFFA0\u2800\u{1D159}'
 /** A character a reader sees: a letter, a number, punctuation or a symbol, other than `INVISIBLE`. Combining marks alone, format, control and private-use characters do not count. */
 const VISIBLE = new RegExp(`(?![${INVISIBLE}])[\\p{L}\\p{N}\\p{P}\\p{S}]`, 'u')
 
-/** A run counts as content when it has a binding or a character a reader sees. */
+/** A run counts as content when it has a binding or a character a reader sees in its `text`. A `math` run never counts: whether the compiler draws it is decided by its parser, in the compile layer. */
 const runHas = (r: unknown) =>
   isObj(r) &&
-  ((typeof r.text === 'string' && VISIBLE.test(r.text)) ||
-    isObj(r.bind) ||
-    mathDraws(r.math))
-
-/** The characters of the five named references and the numeric ones, as `parseMath` writes them; an invalid one is dropped. */
-const decodeRefs = (s: string) =>
-  s.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (_, e: string) => {
-    const named: Record<string, string> = {
-      amp: '&',
-      lt: '<',
-      gt: '>',
-      quot: '"',
-      apos: "'",
-    }
-    if (!e.startsWith('#')) return named[e.toLowerCase()] ?? ''
-    const cp =
-      e[1] === 'x' || e[1] === 'X'
-        ? parseInt(e.slice(2), 16)
-        : Number(e.slice(1))
-    return cp <= 0x10ffff ? String.fromCodePoint(cp) : ''
-  })
-
-/**
- * Whether a math run draws something: the compiler writes its MathML as elements (`parseMath`), so what a reader sees is the text
- * between the tags, less an `annotation` (the source a `semantics` element carries, which a browser does not draw).
- */
-const mathDraws = (m: unknown) =>
-  typeof m === 'string' &&
-  mathOk(m) &&
-  VISIBLE.test(
-    decodeRefs(
-      m
-        .replace(
-          /<annotation(?:-xml)?\b[^>]*>[\s\S]*?<\/annotation(?:-xml)?>/g,
-          '',
-        )
-        .replace(/<[^>]*>/g, ''),
-    ),
-  )
+  ((typeof r.text === 'string' && VISIBLE.test(r.text)) || isObj(r.bind))
 
 /** A text has content when a run has text or a binding. */
 const hasContent = (n: Node) => {

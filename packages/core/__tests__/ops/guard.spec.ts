@@ -1080,3 +1080,44 @@ test('droppedRequired returns no finding, and does not throw, for a malformed af
   ])
     assert.equal(droppedRequired(start(), after as never, reg), undefined)
 })
+
+// ---- after the post-tag review: a math-only run is not content ----
+
+const C1 = [
+  '<math><mi>Hello</mi>',
+  '<math><mi>Hello</mo></math>',
+  '<math><mi>&nbsp;</mi></math>',
+  '<math><mi>x</mi><mi>&foo;</mi></math>',
+  '<math><mi>x</mi><mi>&#0;</mi></math>',
+  '<math><mi>x</mi><mo>&AMP;</mo></math>',
+  '<math><mi>x</mi><mi>&#xD800;</mi></math>',
+  '<math><mphantom><mi>x</mi></mphantom></math>',
+  '<math><semantics><mspace width="1em"></mspace><mi>x</mi></semantics></math>',
+  '<math><mi>x</mi></math>',
+]
+
+test('C1 refused through plan: a required text made only of a math run, by setProps and by an override on a component part', () => {
+  for (const math of C1) {
+    for (const [ops, nodeId, path] of [
+      [
+        [{ op: 'setProps', tree: T, id: 'rt', props: { runs: [{ math }] } }],
+        'rt',
+        'props.runs',
+      ],
+      [
+        [over({ title: { props: { runs: [{ math }] } } })],
+        'i1',
+        'parts.title.props.runs',
+      ],
+    ] as const) {
+      const r = plan(start(), reg, req([...ops]))
+      assert.ok(!r.ok, math)
+      assert.ok(
+        r.problems.some(
+          p => p.rule === 'required' && p.nodeId === nodeId && p.path === path,
+        ),
+        `${math}: ${JSON.stringify(r.problems)}`,
+      )
+    }
+  }
+})
