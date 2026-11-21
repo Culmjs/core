@@ -44,7 +44,7 @@ const PLAIN = {
 } as const
 /** Project sources: an output folder may not be one of these or lie inside one. */
 export const RESERVED =
-  /^(blocks|pages|pieces|data|assets|fonts|node_modules|\.culm|site\.json|culm\.json)([\\/]|$)/
+  /^(blocks|pages|pieces|data|assets|fonts|node_modules|\.culm|site\.json|culm\.json)([\\/]|$)/i
 const NAME_RE = /^(@[a-z0-9._~-]+\/)?[a-z0-9._~-]+$/
 const SCALARS = ['text', 'number', 'boolean', 'list']
 const validType = (t: unknown): boolean =>

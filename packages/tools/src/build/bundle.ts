@@ -5,13 +5,22 @@ import {
   mkdir,
   readdir,
   readFile,
+  realpath,
   rm,
   writeFile,
 } from 'node:fs/promises'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from 'node:path'
 import { FONTS, buildIdentity, compileSite } from '@culmjs/core'
 import type { Manifest } from '@culmjs/core'
-import { RESERVED, type Located } from '../folder/plugins.ts'
+import type { Located } from '../folder/plugins.ts'
 import type { Project } from '../folder/project.ts'
 
 export const MANIFEST_FILE = 'culm-manifest.json'
@@ -46,6 +55,51 @@ export async function fileHashes(
   await walk('fonts')
   await walk('assets')
   return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+}
+
+// ponytail: macOS and Windows file systems ignore case by default, so paths compare lower-cased there; a case-sensitive volume on them is refused slightly more often.
+const fold = (p: string) =>
+  process.platform === 'darwin' || process.platform === 'win32'
+    ? p.toLowerCase()
+    : p
+const within = (inner: string, outer: string) => {
+  const r = relative(fold(outer), fold(inner))
+  return r === '' || !(r === '..' || r.startsWith(`..${sep}`) || isAbsolute(r))
+}
+/** The real path of a path that may not exist yet: the nearest existing ancestor's real path plus the missing segments. */
+const realish = async (p: string): Promise<string> => {
+  const rest: string[] = []
+  for (let cur = resolve(p); ; cur = dirname(cur)) {
+    try {
+      return join(await realpath(cur), ...rest)
+    } catch {
+      if (dirname(cur) === cur) return resolve(p)
+      rest.unshift(basename(cur))
+    }
+  }
+}
+const SOURCES = [
+  'assets',
+  'fonts',
+  'pages',
+  'pieces',
+  'blocks',
+  'data',
+  'node_modules',
+  '.culm',
+  'site.json',
+  'culm.json',
+]
+/** True when the output folder, by real path, is, holds or lies inside the project folder or one of its source folders. */
+async function outRefused(dir: string, target: string): Promise<boolean> {
+  const out = await realish(target)
+  const root = await realish(dir)
+  if (within(root, out)) return true
+  for (const name of SOURCES) {
+    const src = join(root, name)
+    if (within(out, src) || within(out, await realish(src))) return true
+  }
+  return false
 }
 
 const bad = (message: string, extra: Partial<Located> = {}): Located => ({
@@ -86,15 +140,11 @@ export async function buildSite(
   const problems: Located[] = []
 
   // the folder build may clear is never the project folder or one that holds it
-  const up = relative(target, resolve(dir))
-  const inside = relative(resolve(dir), target)
-  if (RESERVED.test(inside.split(sep).join('/')))
+  if (await outRefused(dir, target))
     problems.push(
-      bad(`The output folder "${inside}" is, or lies inside, a source folder.`),
-    )
-  else if (up === '' || !(up === '..' || up.startsWith(`..${sep}`)))
-    problems.push(
-      bad(`The output folder "${target}" is, or holds, the project folder.`),
+      bad(
+        `The output folder "${target}" is, holds or lies inside the project folder or one of its source folders.`,
+      ),
     )
   if (!problems.length && (await exists(target))) {
     const st = await lstat(target)
@@ -127,7 +177,9 @@ export async function buildSite(
   const have = new Set(hashes.map(h => h.path))
   const wanted = new Set(
     site.files.flatMap(f =>
-      [...f.content.matchAll(/\/_fonts\/([^)"']+)\)/g)].map(m => m[1]!),
+      [...f.content.matchAll(/@font-face\{[^}]*\/_fonts\/([^)"']+)\)/g)].map(
+        m => m[1]!,
+      ),
     ),
   )
   for (const file of [...wanted].sort())
@@ -148,6 +200,7 @@ export async function buildSite(
     ...site.manifest,
     build: await buildIdentity(doc, loaded.data, registry, hashes),
   }
+  let cleared = false
   try {
     if (await exists(target))
       // the old manifest goes last, so a failed clear leaves a folder a later build may still clear
@@ -155,6 +208,7 @@ export async function buildSite(
         (x, y) => +(x === MANIFEST_FILE) - +(y === MANIFEST_FILE),
       ))
         await rm(join(target, n), { recursive: true, force: true })
+    cleared = true
     await mkdir(target, { recursive: true })
     for (const f of site.files) {
       await mkdir(dirname(join(target, f.path)), { recursive: true })
@@ -175,7 +229,7 @@ export async function buildSite(
       ok: false,
       problems: [
         bad(
-          `The build could not write "${target}": ${e instanceof Error ? e.message : String(e)}`,
+          `The build could not write "${target}": ${e instanceof Error ? e.message : String(e)}${cleared ? ` The output folder has no ${MANIFEST_FILE} now; delete it by hand before the next build.` : ''}`,
         ),
       ],
     }

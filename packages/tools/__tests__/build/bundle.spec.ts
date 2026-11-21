@@ -236,3 +236,41 @@ test('a text that merely contains "cat:inter" is not a missing font', async () =
   const r = await buildSite(await openProject(dir))
   assert.ok(r.ok)
 })
+
+test('an out is checked by its real path: other case, a symlinked parent', async () => {
+  const dir = await site()
+  await mkdir(join(dir, 'fonts'))
+  await symlink(join(dir, 'assets'), join(dir, 'al'))
+  const p = await openProject(dir)
+  for (const out of [
+    join(dir, 'Assets/dist'),
+    join(dir, 'FONTS'),
+    join(dir, 'al/dist'),
+  ]) {
+    const r = await buildSite(p, out)
+    assert.equal(r.ok, false, out)
+  }
+  assert.deepEqual(await all(join(dir, 'assets')), ['loaf.svg'])
+  assert.deepEqual(await all(join(dir, 'fonts')), [])
+})
+
+test('culm.json out in another case is refused', async () => {
+  const dir = await site()
+  await writeFile(join(dir, 'culm.json'), '{ "out": "Assets/dist" }')
+  const p = await openProject(dir)
+  assert.ok(p.loaded.problems.some(x => x.file === 'culm.json'))
+})
+
+test('a font url outside an @font-face rule is not a missing font', async () => {
+  const dir = await site()
+  const about = join(dir, 'pages/about.json')
+  await writeFile(
+    about,
+    (await readFile(about, 'utf8')).replace(
+      'A small bakery on a corner.',
+      'see /_fonts/zzz.woff2) here',
+    ),
+  )
+  const r = await buildSite(await openProject(dir))
+  assert.ok(r.ok)
+})
