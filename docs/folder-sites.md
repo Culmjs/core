@@ -55,8 +55,8 @@ All files are JSONC: JSON with comments. Culm keeps your comments, key order and
   "fonts": ["sys:sans"],
   "languages": [{ "code": "en" }],
   "pages": ["home.json", "menu.json"], // order of pages; file names in pages/
-  "header": { "block": "page-header" }, // a node, a short form or a use
-  "footer": { "block": "page-footer" },
+  "header": { "block": "pageheader" }, // a node, a short form or a use
+  "footer": { "block": "pagefooter" },
 }
 ```
 
@@ -124,7 +124,7 @@ A piece is a reusable subtree. The loader makes one component per piece file and
 
 ```jsonc
 {
-  "id": "opening-hours",
+  "id": "openinghours",
   "version": 1,
   "name": "Opening hours",
   "category": "content",
@@ -148,7 +148,7 @@ This is how a project declares a data source without TypeScript. The loader regi
 
 ### Fonts and files
 
-`fonts/` is copied to `_fonts/` in the output and `assets/` to `assets/`. Culm ships no font files. A site that names a catalogue font whose file is not in `fonts/` gets a problem from `culm build`, `culm dev` and `culm check`. A site that uses only system font stacks (`sys:sans`, `sys:serif`) needs no font file.
+`fonts/` is copied to `_fonts/` in the output and `assets/` to `assets/`. Culm ships no font files. A site that names a catalogue font whose file is not in `fonts/` gets a problem from `culm build` and `culm dev`. `culm check` does not report it as a problem: the font cannot load, the page is measured with its fallback font, and the findings say `assets: false`. A site that uses only system font stacks (`sys:sans`, `sys:serif`) needs no font file.
 
 ## Ids
 

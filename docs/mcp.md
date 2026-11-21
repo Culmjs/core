@@ -18,7 +18,7 @@ culm mcp --chrome /path/to/chrome
 
 `--port n` also opens the SDK's HTTP transport on `127.0.0.1:n`. The server then runs until standard input ends (or it gets SIGINT or SIGTERM), so a host that closes the pipe stops it, port included. `--chrome` and `CULM_CHROME` name the Chrome that `measure` opens.
 
-`culm mcp` refuses to start (exit 1, problems on standard error) when `culm.json`, a file in `blocks/` or a field declaration in `data/` has a problem, because no registry can be built. Any other problem in the files does not stop it: every tool answers with the located problems as a refusal until the files load again.
+`culm mcp` refuses to start (exit 1, problems on standard error) when `culm.json`, any file in `blocks/` (including a nested one) or any file in `data/` (a field declaration or a row) has a problem, because no registry can be built. Any other problem in the files does not stop it: every tool answers with the located problems as a refusal until the files load again.
 
 A host process builds the same server over its own storage:
 
