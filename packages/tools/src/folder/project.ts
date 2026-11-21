@@ -1,5 +1,5 @@
 import type { Links, Registry } from '@culmjs/core'
-import { loadFiles, readProject, type Loaded } from './load.ts'
+import { loadFiles, readFolder, type Loaded } from './load.ts'
 import { loadPlugins, type ProjectConfig } from './plugins.ts'
 
 export type Project = {
@@ -15,9 +15,14 @@ export type Project = {
  * are together in `loaded.problems`, each once. Writes nothing, and does not open `.culm/`.
  */
 export async function openProject(dir: string): Promise<Project> {
-  const files = await readProject(dir)
+  const { files, refused } = await readFolder(dir)
   const { registry, config, problems } = await loadPlugins(dir, files)
-  const loaded = await loadFiles(files, registry, { alreadyReported: true })
+  const loaded = await loadFiles(
+    files,
+    registry,
+    { alreadyReported: true },
+    refused,
+  )
   loaded.problems.unshift(...problems)
   return {
     dir,

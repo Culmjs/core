@@ -1,6 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { access, readdir } from 'node:fs/promises'
+import {
+  access,
+  mkdtemp,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { copyFixture } from '../fixtures.ts'
 import { openProject } from '../../src/folder/project.ts'
@@ -24,4 +32,24 @@ test('openProject returns registry, document, map, data and links, and creates n
 test('links.file("loaf.svg") is "/assets/loaf.svg"', async () => {
   const p = await openProject(await copyFixture('site-basic'))
   assert.equal(p.links.file('loaf.svg'), '/assets/loaf.svg')
+})
+
+test('a piece linked outside the project is a located refusal through openProject', async () => {
+  const dir = await copyFixture('site-basic')
+  const outside = await mkdtemp(join(tmpdir(), 'culm-outside-'))
+  try {
+    await writeFile(
+      join(outside, 's.json'),
+      '{ "root": { "id": "s", "kind": "box" } }',
+    )
+    await symlink(join(outside, 's.json'), join(dir, 'pieces/x.json'))
+    const p = await openProject(dir)
+    assert.equal(p.loaded.doc, undefined)
+    const hit = p.loaded.problems.find(q => q.file === 'pieces/x.json')
+    assert.ok(hit, JSON.stringify(p.loaded.problems))
+    assert.equal(hit.line, 1)
+    assert.match(hit.message, /leaves the project/)
+  } finally {
+    await rm(outside, { recursive: true, force: true })
+  }
 })

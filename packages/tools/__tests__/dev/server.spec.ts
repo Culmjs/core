@@ -355,6 +355,26 @@ test('a symbolic link in assets/ that leaves the project is 404', async () => {
   )
 })
 
+test('a link inside assets/ to a file inside the project is served as that file, as build copies it; ".." still is not', async () => {
+  await withDev(
+    async ({ dev }) => {
+      const r = await get(dev, '/assets/same.txt')
+      assert.equal(r.status, 200)
+      assert.equal(r.body, 'in')
+      assert.equal((await get(dev, '/assets/..%2Fsite.json')).status, 404)
+      assert.equal((await get(dev, '/assets/../site.json')).status, 404)
+    },
+    async dir => {
+      await mkdir(join(dir, 'assets'))
+      await writeFile(join(dir, 'assets/inside.txt'), 'in')
+      await symlink(
+        join(dir, 'assets/inside.txt'),
+        join(dir, 'assets/same.txt'),
+      )
+    },
+  )
+})
+
 test('the client draws the overlay with text nodes, never HTML', () => {
   assert.ok(CLIENT_SCRIPT.includes('textContent'))
   assert.ok(!CLIENT_SCRIPT.includes('innerHTML'))

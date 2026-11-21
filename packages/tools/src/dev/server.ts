@@ -2,17 +2,11 @@ import { createServer } from 'node:http'
 import type { ServerResponse } from 'node:http'
 import { watch } from 'node:fs'
 import type { FSWatcher } from 'node:fs'
-import {
-  lstat,
-  readdir,
-  readFile,
-  realpath,
-  stat,
-  writeFile,
-} from 'node:fs/promises'
-import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { extname, join, resolve } from 'node:path'
 import { compileSite } from '@culmjs/core'
-import { fileHashes, fontProblems, slugProblems } from '../build/bundle.ts'
+import { fontProblems, slugProblems } from '../build/bundle.ts'
+import { inside, media, refusal, resolveFile } from '../folder/files.ts'
 import { openProject } from '../folder/project.ts'
 import type { Located } from '../folder/plugins.ts'
 import { authoringSchema } from '../schema/authoring.ts'
@@ -40,11 +34,6 @@ const TYPES: Record<string, string> = {
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
   '.pdf': 'application/pdf',
-}
-
-const inside = (p: string, root: string) => {
-  const r = relative(root, p)
-  return r !== '' && !(r === '..' || r.startsWith(`..${sep}`) || isAbsolute(r))
 }
 
 /**
@@ -108,10 +97,12 @@ export async function startDev(
           data: loaded.data,
           links: project.links,
         })
+        const files = await media(root)
         found = [
           ...slugProblems(loaded.doc, loaded),
           ...site.problems.map(p => loaded.map.locateProblem(p)),
-          ...fontProblems(site.files, await fileHashes(root), loaded),
+          ...[...files.refused].map(([rel, why]) => refusal(rel, why)),
+          ...fontProblems(site.files, files.hashes, loaded),
         ]
         if (!found.length)
           next = new Map(
@@ -161,7 +152,7 @@ export async function startDev(
       top === 'node_modules' ||
       name === 'culm.schema.json' ||
       p === outDir ||
-      inside(p, outDir)
+      inside(outDir, p)
     )
   }
   let watcher: FSWatcher | undefined = watch(
@@ -184,17 +175,10 @@ export async function startDev(
       .end(body || (status === 404 ? 'Not found' : 'Refused'))
 
   async function file(res: ServerResponse, base: string, rest: string) {
+    // the same rule as build and check, on every request: a link can change while dev runs
+    const real = await resolveFile(root, base, rest)
+    if (!real) return end(res, 404)
     try {
-      const from = resolve(root, base)
-      const real = await realpath(resolve(from, rest))
-      const realBase = await realpath(from)
-      // the folder itself may be a link out of the project; checked on every request, as the link can change while dev runs
-      if (
-        !inside(realBase, await realpath(root)) ||
-        !inside(real, realBase) ||
-        !(await lstat(real)).isFile()
-      )
-        return end(res, 404)
       res
         .writeHead(200, {
           'content-type':

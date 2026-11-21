@@ -1,13 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  lstat,
   mkdir,
+  mkdtemp,
   readdir,
   readFile,
+  rm,
   stat,
   symlink,
   writeFile,
 } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildIdentity } from '@culmjs/core'
 import { copyFixture } from '../fixtures.ts'
@@ -274,4 +278,55 @@ test('a font url outside an @font-face rule is not a missing font', async () => 
   )
   const r = await buildSite(await openProject(dir))
   assert.ok(r.ok)
+})
+
+test('assets linked outside the project: build refuses with a located problem and writes nothing', async () => {
+  const dir = await copyFixture('site-basic')
+  const outside = await mkdtemp(join(tmpdir(), 'culm-outside-'))
+  try {
+    await writeFile(join(outside, 'a.svg'), SVG)
+    await symlink(outside, join(dir, 'assets'))
+    const r = await buildSite(await openProject(dir))
+    assert.ok(!r.ok)
+    assert.ok(
+      r.problems.some(
+        p => p.file === 'assets' && /leaves the project/.test(p.message),
+      ),
+      JSON.stringify(r.problems),
+    )
+    assert.ok(!(await exists(join(dir, 'dist'))))
+  } finally {
+    await rm(outside, { recursive: true, force: true })
+  }
+})
+
+test('a font or asset linked outside, inside assets/ or fonts/, is refused; a link to a file inside the project is a copied file in the identity', async () => {
+  const dir = await site()
+  await mkdir(join(dir, 'fonts'))
+  const outside = await mkdtemp(join(tmpdir(), 'culm-outside-'))
+  try {
+    await writeFile(join(outside, 'f.woff2'), 'font')
+    await symlink(join(outside, 'f.woff2'), join(dir, 'fonts/out.woff2'))
+    let r = await buildSite(await openProject(dir))
+    assert.ok(!r.ok)
+    assert.ok(
+      r.problems.some(p => p.file === 'fonts/out.woff2'),
+      JSON.stringify(r.problems),
+    )
+    assert.ok(!(await exists(join(dir, 'dist'))))
+    await rm(join(dir, 'fonts/out.woff2'))
+    await symlink(join(dir, 'assets/loaf.svg'), join(dir, 'assets/same.svg'))
+    assert.deepEqual(
+      (await fileHashes(dir)).map(h => h.path),
+      ['assets/loaf.svg', 'assets/same.svg'],
+    )
+    r = await buildSite(await openProject(dir))
+    assert.ok(r.ok, JSON.stringify(r))
+    const copy = join(r.out, 'assets/same.svg')
+    assert.ok(!(await lstat(copy)).isSymbolicLink())
+    assert.equal(await readFile(copy, 'utf8'), SVG)
+    assert.ok(r.files.includes('assets/same.svg'))
+  } finally {
+    await rm(outside, { recursive: true, force: true })
+  }
 })

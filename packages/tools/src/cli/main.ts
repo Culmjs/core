@@ -1,8 +1,9 @@
-import { access, readFile, writeFile } from 'node:fs/promises'
+import { access, writeFile } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 import { parseArgs } from 'node:util'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { buildSite, fileHashes } from '../build/bundle.ts'
+import { readAsset } from '../folder/files.ts'
 import { startDev } from '../dev/server.ts'
 import { expandShortForm } from '../folder/write.ts'
 import { fileStore } from '../folder/store.ts'
@@ -254,7 +255,7 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
         revision: 0,
         executable: values.chrome,
         files: await fileHashes(cwd),
-        assets: p => readFile(join(cwd, p)).catch(() => undefined),
+        assets: p => readAsset(cwd, p),
       })
       for (const f of report.findings)
         err(

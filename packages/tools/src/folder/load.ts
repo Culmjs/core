@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises'
-import { isAbsolute, join, relative } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { posix } from 'node:path'
+import { refusal, walkFiles } from './files.ts'
 import {
   SCHEMA_VERSION,
   applySetting,
@@ -78,64 +78,27 @@ const PLAIN: Look = {
 
 type Scan = { files: Map<string, string>; refused: Map<string, string> }
 
-const inside = (root: string, real: string) => {
-  const r = relative(root, real)
-  return r !== '' && !r.startsWith('..') && !isAbsolute(r)
-}
-
 /** Reads the project's JSON files. A symbolic link that leaves the folder is not read; it is listed in `refused`. */
-async function scan(dir: string): Promise<Scan> {
-  const root = await realpath(dir)
-  const files = new Map<string, string>()
-  const refused = new Map<string, string>()
-  const one = async (rel: string): Promise<void> => {
-    const abs = join(dir, rel)
-    let info
-    try {
-      info = await lstat(abs)
-    } catch {
-      return
-    }
-    if (info.isSymbolicLink()) {
-      let real: string
-      try {
-        real = await realpath(abs)
-      } catch {
-        refused.set(rel, 'its target cannot be read')
-        return
-      }
-      if (!inside(root, real)) {
-        refused.set(rel, 'it is a symbolic link that leaves the project')
-        return
-      }
-      if ((await stat(real)).isFile() && rel.endsWith('.json'))
-        files.set(rel, await readFile(real, 'utf8'))
-      return
-    }
-    if (info.isDirectory()) {
-      for (const name of (await readdir(abs)).sort())
-        await one(posix.join(rel, name))
-    } else if (info.isFile() && rel.endsWith('.json'))
-      files.set(rel, await readFile(abs, 'utf8'))
-  }
-  for (const rel of [
-    'culm.json',
-    'site.json',
-    'pages',
-    'pieces',
-    'blocks',
-    'data',
-  ])
-    await one(rel)
+export async function readFolder(dir: string): Promise<Scan> {
+  const { files, refused } = await walkFiles(
+    dir,
+    ['culm.json', 'site.json', 'pages', 'pieces', 'blocks', 'data'],
+    rel => rel.endsWith('.json'),
+  )
+  const read = await Promise.all(
+    [...files].map(
+      async ([rel, abs]) => [rel, await readFile(abs, 'utf8')] as const,
+    ),
+  )
   return {
-    files: new Map([...files].sort(([a], [b]) => (a < b ? -1 : 1))),
+    files: new Map(read.sort(([a], [b]) => (a < b ? -1 : 1))),
     refused,
   }
 }
 
 /** culm.json, site.json, pages/, pieces/, blocks/ and data/, as project-relative paths to text. Never reads outside the folder. */
 export async function readProject(dir: string): Promise<Map<string, string>> {
-  return (await scan(dir)).files
+  return (await readFolder(dir)).files
 }
 
 // ---------------------------------------------------------------- loading
@@ -273,7 +236,7 @@ async function build(
   }
 
   // symbolic links the reader refused: reported where something refers to them, or at the link
-  const refusal = (rel: string) => {
+  const refusalOf = (rel: string) => {
     for (const [p, why] of refused)
       if (rel === p || rel.startsWith(p + '/'))
         return [p, `${p} is refused: ${why}.`] as const
@@ -281,7 +244,7 @@ async function build(
   }
   const reported = new Set<string>()
   const refer = (rel: string, file: string, path: JsonPath): boolean => {
-    const hit = refusal(rel)
+    const hit = refusalOf(rel)
     if (!hit) return false
     reported.add(hit[0])
     bad(hit[1], file, path, 'POLICY_VIOLATION')
@@ -601,14 +564,7 @@ async function build(
   const footer = chrome('footer', 'Footer')
 
   for (const rel of refused.keys())
-    if (!reported.has(rel))
-      problems.push({
-        code: 'POLICY_VIOLATION',
-        message: `${rel} is refused: ${refused.get(rel)}.`,
-        file: rel,
-        line: 1,
-        column: 1,
-      })
+    if (!reported.has(rel)) problems.push(refusal(rel, refused.get(rel)!))
 
   // ---- a trigger or an opens that names a node whose id is not written in the file
   const docTrees: [TreeRef, Node][] = [
@@ -677,13 +633,14 @@ export const loadFiles = (
   files: ReadonlyMap<string, string>,
   registry: Registry,
   opts: LoadOptions = {},
-): Promise<Loaded> => build(files, registry, new Map(), opts)
+  refused: ReadonlyMap<string, string> = new Map(),
+): Promise<Loaded> => build(files, registry, refused, opts)
 
 export async function loadFolder(
   dir: string,
   registry: Registry,
   opts: LoadOptions = {},
 ): Promise<Loaded> {
-  const { files, refused } = await scan(dir)
+  const { files, refused } = await readFolder(dir)
   return build(files, registry, refused, opts)
 }

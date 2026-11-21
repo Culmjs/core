@@ -1,25 +1,16 @@
-import { createHash } from 'node:crypto'
 import {
-  cp,
+  copyFile,
   lstat,
   mkdir,
   readdir,
-  readFile,
   realpath,
   rm,
   writeFile,
 } from 'node:fs/promises'
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { FONTS, buildIdentity, compileSite } from '@culmjs/core'
 import type { Manifest, SiteDocument } from '@culmjs/core'
+import { inside, media, refusal } from '../folder/files.ts'
 import type { Loaded } from '../folder/load.ts'
 import type { Located } from '../folder/plugins.ts'
 import type { Project } from '../folder/project.ts'
@@ -32,41 +23,16 @@ const exists = (p: string) =>
     () => false,
   )
 
-/** The SHA-256 of every file under fonts/ and assets/ (project-relative, `/` separators), in path order. Symbolic links are not followed. */
-export async function fileHashes(
-  dir: string,
-): Promise<{ path: string; sha256: string }[]> {
-  const out: { path: string; sha256: string }[] = []
-  const walk = async (rel: string): Promise<void> => {
-    const entries = await readdir(join(dir, rel), {
-      withFileTypes: true,
-    }).catch(() => [])
-    for (const e of entries) {
-      const p = `${rel}/${e.name}`
-      if (e.isDirectory()) await walk(p)
-      else if (e.isFile())
-        out.push({
-          path: p,
-          sha256: createHash('sha256')
-            .update(await readFile(join(dir, p)))
-            .digest('hex'),
-        })
-    }
-  }
-  await walk('fonts')
-  await walk('assets')
-  return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
-}
+/** The SHA-256 of every file under fonts/ and assets/ (project-relative, `/` separators), in path order. Links that leave the project are not read. */
+export const fileHashes = async (dir: string) => (await media(dir)).hashes
 
 // ponytail: macOS and Windows file systems ignore case by default, so paths compare lower-cased there; a case-sensitive volume on them is refused slightly more often.
 const fold = (p: string) =>
   process.platform === 'darwin' || process.platform === 'win32'
     ? p.toLowerCase()
     : p
-const within = (inner: string, outer: string) => {
-  const r = relative(fold(outer), fold(inner))
-  return r === '' || !(r === '..' || r.startsWith(`..${sep}`) || isAbsolute(r))
-}
+const within = (inner: string, outer: string) =>
+  fold(inner) === fold(outer) || inside(fold(outer), fold(inner))
 /** The real path of a path that may not exist yet: the nearest existing ancestor's real path plus the missing segments. */
 const realish = async (p: string): Promise<string> => {
   const rest: string[] = []
@@ -207,7 +173,8 @@ export async function buildSite(
 
   problems.push(...slugProblems(doc, loaded))
 
-  const hashes = await fileHashes(dir)
+  const { files: media_, refused, hashes } = await media(dir)
+  for (const [rel, why] of refused) problems.push(refusal(rel, why))
   const site = compileSite(doc, { registry, data: loaded.data, links })
   problems.push(...site.problems.map(p => loaded.map.locateProblem(p)))
   problems.push(...fontProblems(site.files, hashes, loaded))
@@ -231,12 +198,12 @@ export async function buildSite(
       await mkdir(dirname(join(target, f.path)), { recursive: true })
       await writeFile(join(target, f.path), f.content)
     }
-    for (const [from, to] of [
-      ['assets', 'assets'],
-      ['fonts', '_fonts'],
-    ] as const)
-      if (await exists(join(dir, from)))
-        await cp(join(dir, from), join(target, to), { recursive: true })
+    // regular files only: a link in the project is copied as the file it names, never written as a link
+    for (const [rel, real] of media_) {
+      const to = join(target, rel.startsWith('fonts/') ? `_${rel}` : rel)
+      await mkdir(dirname(to), { recursive: true })
+      await copyFile(real, to)
+    }
     await writeFile(
       join(target, MANIFEST_FILE),
       JSON.stringify(manifest, null, 2) + '\n',
