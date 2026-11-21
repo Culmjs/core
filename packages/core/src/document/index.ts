@@ -8,6 +8,7 @@ export {
   previewMigration,
 } from './migrate.ts'
 export type { MigrationResult, MigrationStep } from './migrate.ts'
+export { isRequired } from './required.ts'
 export { CODES } from './problems.ts'
 export type { Code, Problem } from './problems.ts'
 export {

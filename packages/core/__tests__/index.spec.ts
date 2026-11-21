@@ -49,6 +49,7 @@ const PUBLIC_NAMES = [
   'hostStates',
   'insert',
   'insertBlock',
+  'isRequired',
   'kindSpec',
   'memoryStore',
   'migrate',
