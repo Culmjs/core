@@ -280,7 +280,7 @@ test('block files are checked: shape, tree, duplicates; a bad file is skipped al
   )
 })
 
-test('data files are checked: rows against fields, unknown field types', async () => {
+test('data files are checked: unknown field types; rows are left to the loader', async () => {
   const r = await loadPlugins(
     '/nowhere',
     files({
@@ -292,13 +292,31 @@ test('data files are checked: rows against fields, unknown field types', async (
   )
   assert.deepEqual(
     r.problems.map(p => p.file),
-    ['data/a.json', 'data/b.json'],
+    ['data/b.json'],
   )
-  assert.equal(r.problems[1]!.line, 3)
+  assert.equal(r.problems[0]!.line, 3)
+  // a source with bad rows is still declared, without them
   assert.deepEqual(
-    r.registry.sources().map(s => s.name),
-    ['c'],
+    r.registry.sources().map(s => [s.name, s.sample.length]),
+    [
+      ['a', 0],
+      ['c', 1],
+    ],
   )
+})
+
+test('a file with several syntax errors is one problem', async () => {
+  const r = await loadPlugins(
+    '/nowhere',
+    files({
+      'culm.json': '{ "plugins": [ , , ] , }}}',
+      'data/a.json': '{ "fields": ] ] ] }',
+    }),
+  )
+  assert.deepEqual(r.problems.map(p => p.file).sort(), [
+    'culm.json',
+    'data/a.json',
+  ])
 })
 
 test('out naming a source folder is refused', async () => {

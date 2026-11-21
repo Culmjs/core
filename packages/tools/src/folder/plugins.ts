@@ -136,7 +136,9 @@ export async function loadPlugins(
       const at = f.at(path)
       problems.push({ code, message, file, line: at?.line, column: at?.column })
     }
-    for (const e of f.errors)
+    // one problem for a file: the first error
+    const e = f.errors[0]
+    if (e)
       problems.push({
         code: 'INVALID_DOCUMENT',
         message: `Invalid JSON: ${e.message}.`,
@@ -154,8 +156,12 @@ export async function loadPlugins(
       file: 'culm.json',
     })
   else {
+    const syntax = problems.length
     const { value, bad } = read('culm.json')
-    if (!isObj(value)) bad('INVALID_DOCUMENT', 'culm.json must be an object.')
+    if (problems.length > syntax) {
+      // a broken culm.json is one problem; its recovered fields are not used
+    } else if (!isObj(value))
+      bad('INVALID_DOCUMENT', 'culm.json must be an object.')
     else {
       const { plugins, out } = value
       if (plugins !== undefined && !Array.isArray(plugins))
@@ -214,12 +220,18 @@ export async function loadPlugins(
       .filter(k => new RegExp(`^${dirName}/[^/]+\\.json$`).test(k))
       .sort()
   const sources: DataSource[] = []
+  // A data file that failed is already one problem; the blocks that name its source are not told again.
+  let lostSource = false
   for (const file of names('data')) {
     const syntax = problems.length
-    const { value, bad, at } = read(file)
-    if (problems.length > syntax) continue
+    const { value, bad } = read(file)
+    if (problems.length > syntax) {
+      lostSource = true
+      continue
+    }
     if (!isObj(value) || !isObj(value.fields)) {
       bad('INVALID_DOCUMENT', 'A data file needs "fields".')
+      lostSource = true
       continue
     }
     const types = Object.entries(value.fields).filter(([, t]) => !validType(t))
@@ -228,24 +240,21 @@ export async function loadPlugins(
         'fields',
         k,
       ])
-    if (types.length) continue
+    if (types.length) {
+      lostSource = true
+      continue
+    }
     const source: DataSource = {
       name: basename(file, '.json'),
       fields: value.fields as DataSource['fields'],
       sample: [],
     }
     const rows = value.rows ?? []
-    const found = checkRows(source, rows)
-    for (const p of found) {
-      // "<name>.<row>.<field>" -> ['rows', row, field]
-      const rest = (p.path ?? '').split('.').slice(1)
-      const path: JsonPath = [
-        'rows',
-        ...rest.map(x => (/^\d+$/.test(x) ? +x : x)),
-      ]
-      bad(p.code, p.message, at(path) ? path : ['rows'])
-    }
-    if (!found.length) sources.push({ ...source, sample: rows as Row[] })
+    // The rows are the loader's to report (loadFiles); a source whose rows fail is declared without them.
+    sources.push({
+      ...source,
+      sample: checkRows(source, rows).length ? [] : (rows as Row[]),
+    })
   }
   const blocks: BlockDef[] = []
   const owner = new Map<string, string>()
@@ -303,6 +312,7 @@ export async function loadPlugins(
         const doc = emptySite('x', PLAIN)
         doc.pages[0]!.root = l.tree as Node
         for (const p of validateSite(doc, withSources(registry, sources))) {
+          if (lostSource && p.code === 'UNKNOWN_SOURCE') continue
           const rest = (p.path ?? '')
             .replace(/^pages\.0\.root\.?/, '')
             .split('.')

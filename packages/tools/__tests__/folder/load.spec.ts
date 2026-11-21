@@ -10,7 +10,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { validateSite } from '@culmjs/core'
+import { compilePage, validateSite } from '@culmjs/core'
 import { copyFixture } from '../fixtures.ts'
 import { derivedId } from '../../src/folder/ids.ts'
 import { loadFiles, loadFolder, readProject } from '../../src/folder/load.ts'
@@ -84,7 +84,11 @@ test('a short form is expanded with the registered block and its settings applie
   const title = hero.children![0]!.children![0]!
   assert.equal(title.id, 'hero1.title')
   assert.equal((title.props!.runs as { text: string }[])[0]!.text.length, 40)
-  assert.deepEqual(title.style?.base, { size: 64, nowrap: true })
+  assert.deepEqual(title.style?.base, {
+    width: 'fit',
+    size: 64,
+    nowrap: true,
+  })
   assert.equal(title.required, true)
   assert.deepEqual(map.origin({ page: 'home' }, 'hero1.title'), {
     file: 'pages/home.json',
@@ -202,6 +206,14 @@ test('locateProblem places a validateSite problem: a size outside the range poin
     path: 'parts.line.props',
   })
   assert.equal(part.line, lineOf(text('pages/home.json'), '"use"'))
+  // a problem about a part named by its dotted id lands on the `use` too
+  const dotted = l.map.locateProblem({
+    code: 'INVALID_NODE' as const,
+    message: 'x',
+    nodeId: 'visit1.line',
+    path: 'props.runs',
+  })
+  assert.equal(dotted.line, lineOf(text('pages/home.json'), '"use"'))
   // a problem about the site
   const site = l.map.locateProblem({
     code: 'INVALID_DOCUMENT' as const,
@@ -354,18 +366,13 @@ test('a node that a trigger refers to but that has no written id', async () => {
   assert.deepEqual(ok.problems, [])
 })
 
-test('a JSON syntax error in any file is one problem and the load returns no document', async () => {
+test('a JSON syntax error in a file the loader owns is one problem and the load returns no document', async () => {
   for (const [file, broken] of [
     [
       'pieces/visit-card.json',
       text('pieces/visit-card.json').replace('"root": {', '"root" {'),
     ],
     ['pages/menu.json', text('pages/menu.json') + '}'],
-    [
-      'blocks/hero.json',
-      text('blocks/hero.json').replace('"version": 1,', '"version": ,'),
-    ],
-    ['data/menu.json', text('data/menu.json').replace('"fields"', 'fields')],
     ['site.json', text('site.json').replace('"Basic"', '"Basic')],
   ] as const) {
     const l = await load({ [file]: broken })
@@ -374,6 +381,68 @@ test('a JSON syntax error in any file is one problem and the load returns no doc
     assert.equal(l.problems[0]!.file, file)
     assert.ok(l.problems[0]!.line! >= 1, file)
   }
+})
+
+/** What a caller that runs loadPlugins and then loadFiles sees. */
+async function both(change: Record<string, string>) {
+  const files = new Map(base)
+  for (const [k, v] of Object.entries(change)) files.set(k, v)
+  const plugins = await loadPlugins(FIXTURE, files)
+  const loaded = await loadFiles(files, plugins.registry)
+  return { problems: [...plugins.problems, ...loaded.problems], loaded }
+}
+
+test('each file has one owner: a change to one file is reported once by loadPlugins and loadFiles together', async () => {
+  const clean = await both({})
+  assert.deepEqual(clean.problems, [])
+  for (const [file, broken] of [
+    [
+      'data/menu.json',
+      swap('data/menu.json', '"price": "3"', '"price": "3", "colour": "gold"'),
+    ],
+    [
+      'blocks/hero.json',
+      text('blocks/hero.json').replace('"version": 1,', '"version": ,'),
+    ],
+    ['data/menu.json', text('data/menu.json').replace('"fields"', 'fields')],
+    [
+      'culm.json',
+      text('culm.json').replace('"plugins": []', '"plugins": [ , ,'),
+    ],
+  ] as const) {
+    const r = await both({ [file]: broken })
+    assert.equal(r.problems.length, 1, `${file}: ${JSON.stringify(r.problems)}`)
+    assert.equal(r.problems[0]!.file, file)
+    assert.ok(r.problems[0]!.line! >= 1)
+  }
+})
+
+test('the hero title follows its text and its row stacks on a phone, so a nowrap title passes its parent', async () => {
+  const { loaded } = await both({})
+  const c = compilePage(loaded.doc!, 'home', {
+    registry,
+    data: loaded.data,
+    mode: 'measure',
+  })
+  assert.ok(c.ok)
+  const cls = (id: string) =>
+    new RegExp(`class="(c\\d+)" data-id="${id.replace('.', '\\.')}"`).exec(
+      c.html,
+    )![1]!
+  const rule = (k: string) => new RegExp(`\\.${k}\\{[^}]*\\}`).exec(c.css)![0]
+  const title = rule(cls('hero1.title'))
+  // the box is as wide as the line (a width that hugs the text), and flex does not squeeze it to the row
+  assert.match(title, /width:fit-content/)
+  assert.match(title, /font-size:64px/)
+  assert.match(title, /white-space:nowrap/)
+  // the row is a column at 600 px and below, so the title is not stretched or shrunk across the row
+  const inner = cls('hero1.inner')
+  assert.match(
+    c.css,
+    new RegExp(
+      `@media \\(max-width: 600px\\)\\{[^]*?\\.${inner}\\{flex-direction:column\\}`,
+    ),
+  )
 })
 
 test('a symbolic link in pieces/ that points outside the project is refused with file and line', async () => {
@@ -411,6 +480,47 @@ test('a symbolic link in pieces/ that points outside the project is refused with
     )
     assert.ok(!l.files.some(f => f.text.includes('"id": "s"')))
     assert.equal(l.doc, undefined)
+  } finally {
+    rmSync(outside, { recursive: true })
+  }
+})
+
+test('a link in pages/, blocks/ or data/ that leaves the project is refused at the link', async () => {
+  const dir = await copyFixture('site-basic')
+  const outside = mkdtempSync(join(tmpdir(), 'culm-outside-'))
+  try {
+    writeFileSync(join(outside, 'x.json'), '{}')
+    for (const f of ['pages/zz.json', 'blocks/zz.json', 'data/zz.json'])
+      symlinkSync(join(outside, 'x.json'), join(dir, f))
+    const l = await loadFolder(dir, registry)
+    assert.deepEqual(
+      l.problems.map(p => [p.file, p.line, p.code]),
+      ['pages/zz.json', 'blocks/zz.json', 'data/zz.json'].map(f => [
+        f,
+        1,
+        'POLICY_VIOLATION',
+      ]),
+    )
+    assert.equal(l.doc, undefined)
+  } finally {
+    rmSync(outside, { recursive: true })
+  }
+})
+
+test('site.json as a link that leaves the project is refused, not missing', async () => {
+  const dir = await copyFixture('site-basic')
+  const outside = mkdtempSync(join(tmpdir(), 'culm-outside-'))
+  try {
+    writeFileSync(join(outside, 'site.json'), '{}')
+    rmSync(join(dir, 'site.json'))
+    symlinkSync(join(outside, 'site.json'), join(dir, 'site.json'))
+    const l = await loadFolder(dir, registry)
+    assert.equal(l.problems.length, 1)
+    assert.deepEqual(
+      [l.problems[0]!.file, l.problems[0]!.line, l.problems[0]!.code],
+      ['site.json', 1, 'POLICY_VIOLATION'],
+    )
+    assert.match(l.problems[0]!.message, /symbolic link/)
   } finally {
     rmSync(outside, { recursive: true })
   }

@@ -185,8 +185,9 @@ async function build(
       message,
       ...more,
       file,
-      line: at?.line,
-      column: at?.column,
+      // a problem about a whole file is at line 1
+      line: at?.line ?? (path.length ? undefined : 1),
+      column: at?.column ?? (path.length ? undefined : 1),
     })
   }
   const bad = (
@@ -215,10 +216,14 @@ async function build(
     problems,
   })
 
-  // A JSON syntax error in any file: one problem for the file, and no document.
+  // A JSON syntax error in any file means no document. Each file has one owner of its problems: loadPlugins reports
+  // culm.json, blocks/ and the fields of data/; this reports site.json, pages/ and pieces/ (and the rows of data/).
+  let broken = false
   for (const [file] of files) {
     const e = parse(file).errors[0]
-    if (e)
+    if (!e) continue
+    broken = true
+    if (/^(site\.json|pages\/|pieces\/)/.test(file))
       problems.push({
         code: 'INVALID_DOCUMENT',
         message: `Invalid JSON: ${e.message}.`,
@@ -227,7 +232,7 @@ async function build(
         column: e.column,
       })
   }
-  if (problems.length) return finish(undefined)
+  if (broken) return finish(undefined)
 
   // data/*.json -> rows
   const data: Data = { rows: {} }
@@ -235,10 +240,7 @@ async function build(
     const m = /^data\/([^/]+)\.json$/.exec(file)
     if (!m) continue
     const v = parse(file).value
-    if (!isObj(v) || !isObj(v.fields)) {
-      bad('A data file needs "fields".', file, [])
-      continue
-    }
+    if (!isObj(v) || !isObj(v.fields)) continue // loadPlugins reports a data file without fields
     const source: DataSource = {
       name: m[1]!,
       fields: v.fields as DataSource['fields'],
@@ -262,15 +264,15 @@ async function build(
   const refusal = (rel: string) => {
     for (const [p, why] of refused)
       if (rel === p || rel.startsWith(p + '/'))
-        return `${p} is refused: ${why}.`
+        return [p, `${p} is refused: ${why}.`] as const
     return undefined
   }
   const reported = new Set<string>()
   const refer = (rel: string, file: string, path: JsonPath): boolean => {
-    const why = refusal(rel)
-    if (!why) return false
-    reported.add(rel)
-    bad(why, file, path, 'POLICY_VIOLATION')
+    const hit = refusal(rel)
+    if (!hit) return false
+    reported.add(hit[0])
+    bad(hit[1], file, path, 'POLICY_VIOLATION')
     return true
   }
 
@@ -481,7 +483,8 @@ async function build(
 
   // ---- site.json
   if (!files.has('site.json')) {
-    bad('site.json is missing.', 'site.json', [])
+    if (!refer('site.json', 'site.json', []))
+      bad('site.json is missing.', 'site.json', [])
     return finish(undefined, data)
   }
   const site = parse('site.json').value

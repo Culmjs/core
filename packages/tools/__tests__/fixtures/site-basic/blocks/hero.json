@@ -29,6 +29,8 @@
                 "name": "Title",
                 "slot": {},
                 "required": true,
+                // Fit to its text: with `nowrap` the box is as wide as the line, and a phone stacks the row, so the box is not squeezed.
+                "style": { "base": { "width": "fit" } },
                 "props": { "level": "h1", "runs": [{ "text": "Welcome" }] }
               }
             ]
