@@ -599,3 +599,26 @@ for (const withRecord of [false, true])
     assert.ok(r.ok, JSON.stringify(r))
     assert.equal((await headOf(store)).revision, h.revision + 1)
   })
+
+test('a revision record that names a path outside the project is damage; restore writes nothing', async () => {
+  const { dir, registry, store } = await open(two())
+  const n = (await headOf(store)).revision
+  assert.ok((await apply(store, registry, req(n, 'a', [set('t1', 'A')]))).ok)
+  const recFile = join(dir, '.culm', 'revisions', `${n}.json`)
+  const rec = JSON.parse(readFileSync(recFile, 'utf8'))
+  rec.files['../evil.json'] = Object.values<string>(rec.files)[0]
+  writeFileSync(recFile, JSON.stringify(rec))
+  const r = await restore(store, registry, {
+    site: SITE,
+    to: n,
+    baseRevision: n + 1,
+    key: 'b',
+  })
+  assert.ok(!r.ok, JSON.stringify(r))
+  assert.ok(
+    JSON.stringify(r.problems).includes(`.culm/revisions/${n}.json`),
+    JSON.stringify(r.problems),
+  )
+  assert.ok(!existsSync(join(dir, '..', 'evil.json')))
+  rmSync(join(dir, '..', 'evil.json'), { force: true })
+})

@@ -44,6 +44,8 @@ type Refusal = {
 /** What a revision holds: culm.json, site.json and the files under pages/, pieces/ and blocks/. */
 const covered = (p: string) =>
   p === 'culm.json' || p === 'site.json' || /^(pages|pieces|blocks)\//.test(p)
+/** A path a record or journal may name: covered, relative, no `..`. */
+const safe = (p: string) => covered(p) && !p.includes('..') && !isAbsolute(p)
 const sha = (t: string) => createHash('sha256').update(t).digest('hex')
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 const code = (e: unknown) => (e as NodeJS.ErrnoException | undefined)?.code
@@ -127,7 +129,9 @@ export async function fileStore(
         typeof r.time === 'number' &&
         typeof r.files === 'object' &&
         r.files !== null &&
-        Object.values(r.files).every(h => typeof h === 'string' && HEX.test(h))
+        Object.entries(r.files).every(
+          ([p, h]) => safe(p) && typeof h === 'string' && HEX.test(h),
+        )
       return ok ? r : undefined
     } catch {
       return undefined
@@ -297,13 +301,7 @@ export async function fileStore(
           return // a journal that does not parse is not guessed at
         }
         for (const p of Array.isArray(paths) ? paths : []) {
-          if (
-            typeof p !== 'string' ||
-            !covered(p) ||
-            p.includes('..') ||
-            isAbsolute(p)
-          )
-            continue
+          if (typeof p !== 'string' || !safe(p)) continue
           const h = now2.rec.files[p]
           if (h) await put(join(dir, p), await blobText(h))
           else await rm(join(dir, p), { force: true })
