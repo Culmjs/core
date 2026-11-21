@@ -2,8 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { transformSync } from 'esbuild'
-import { render } from '../gen-scripts.ts'
+import { render, renderProbe } from '../gen-scripts.ts'
 import { byteLength } from '../../packages/core/src/compile/budgets.ts'
+import { PROBE_SCRIPT } from '../../packages/core/src/measure/probeMin.ts'
 import {
   BASE_SCRIPT,
   EMAIL_SCRIPT,
@@ -46,3 +47,17 @@ test('the shipped scripts use no syntax newer than ES2017 and make no request an
       assert.ok(!s.includes(word), word)
   }
 })
+
+test('probeMin.ts is current', () => {
+  assert.equal(
+    readFileSync(
+      new URL('../../packages/core/src/measure/probeMin.ts', import.meta.url),
+      'utf8',
+    ),
+    renderProbe(),
+    'run `npm run gen:scripts`',
+  )
+})
+
+test('PROBE_SCRIPT is one function expression', () =>
+  assert.equal(typeof new Function(`return (${PROBE_SCRIPT})`)(), 'function'))

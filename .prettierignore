@@ -7,3 +7,4 @@ docs/stage-1-exit.md
 dist
 .pack
 docs/stage-2*-exit.md
+packages/core/src/measure/probeMin.ts
