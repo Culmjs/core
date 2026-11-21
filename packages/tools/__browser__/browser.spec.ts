@@ -200,7 +200,55 @@ test('a window opened by a click or a form, not by script, is closed and listed 
     await page.goto('https://site.culm.invalid/a', 5000)
     await settle()
     assert.equal(out.count(), 0)
-    assert.equal(page.blocked.length, 2)
+    assert.ok(page.blocked.length >= 2, JSON.stringify(page.blocked))
+  } finally {
+    await page.close()
+    out.close()
+  }
+})
+
+test('a dedicated worker runs, and what it fetches outside is listed and never connects', async () => {
+  const out = await counting()
+  const page = await browser.newPage()
+  try {
+    await page.answer(async url =>
+      url === 'https://site.culm.invalid/d'
+        ? HTML(
+            `<script>const w=new Worker(URL.createObjectURL(new Blob(["postMessage('up');fetch('${out.url}').catch(()=>{})"])));w.onmessage=e=>{document.title=e.data}</script>`,
+          )
+        : undefined,
+    )
+    await page.goto('https://site.culm.invalid/d', 5000)
+    await settle()
+    assert.equal(await page.evaluate('document.title'), 'up')
+    assert.equal(out.count(), 0)
+    assert.ok(page.blocked.includes(out.url), JSON.stringify(page.blocked))
+  } finally {
+    await page.close()
+    out.close()
+  }
+})
+
+test('a popup that keeps its opener (a named target) does not freeze the page, and is listed', async () => {
+  const out = await counting()
+  const page = await browser.newPage()
+  try {
+    await page.answer(async url =>
+      url === 'https://site.culm.invalid/n'
+        ? HTML(
+            `<a target=foo href="${out.url}">x</a><script>document.querySelector('a').click()</script>`,
+          )
+        : undefined,
+    )
+    const t = Date.now()
+    assert.deepEqual(await page.goto('https://site.culm.invalid/n', 5000), {
+      ok: true,
+    })
+    assert.equal(await page.evaluate('1+1'), 2)
+    assert.ok(Date.now() - t < 4000)
+    await settle()
+    assert.equal(out.count(), 0)
+    assert.ok(page.blocked.length >= 1, JSON.stringify(page.blocked))
   } finally {
     await page.close()
     out.close()

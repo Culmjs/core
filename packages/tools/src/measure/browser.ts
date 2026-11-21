@@ -348,6 +348,7 @@ type Hub = {
   owners: Map<string, Owner>
   /** The session of a top-level page, by target id, once Chrome has attached it. */
   slot(targetId: string): { p: Promise<string>; ok(s: string): void }
+  forget(targetId: string): void
   /** Attaches what the session's target starts (frames, workers) to the owner's answer. */
   adopt(owner: Owner, session: string): Promise<void>
   /** The page that answered last: a shared or service worker has no opener to ask. ponytail: pages are measured one at a time. */
@@ -367,6 +368,7 @@ function watch(cdp: Cdp): Hub {
       cdp.on(session, 'Target.attachedToTarget', ev => void attached(ev, owner))
       await cdp.send('Target.setAutoAttach', AUTO, session)
     },
+    forget: id => void slots.delete(id),
     slot(id) {
       let d = slots.get(id)
       if (!d) {
@@ -377,29 +379,41 @@ function watch(cdp: Cdp): Hub {
       return d
     },
   }
+  // Whatever happens, an attached target is resumed (or closed): a failed setup must not leave it paused.
   const attached = async (ev: Json, parent?: Owner) => {
     const { sessionId, targetInfo: t, waitingForDebugger } = ev
+    const resume = () =>
+      waitingForDebugger
+        ? cdp
+            .send('Runtime.runIfWaitingForDebugger', {}, sessionId)
+            .catch(() => {})
+        : Promise.resolve()
+    const close = () =>
+      cdp.send('Target.closeTarget', { targetId: t.targetId }).catch(() => {})
+    const mine = !parent && t.type === 'page' && !t.openerId
+    if (mine) return hub.slot(t.targetId).ok(sessionId) // newPage sets it up and resumes it
     try {
       if (!parent && t.type === 'page') {
-        if (!t.openerId) return hub.slot(t.targetId).ok(sessionId)
-        ;(hub.owners.get(t.openerId) ?? hub.last)?.blocked.push(
-          t.url || 'a window opened by the page',
-        )
-        return void (await cdp.send('Target.closeTarget', {
-          targetId: t.targetId,
-        }))
+        // A window the page opened: its requests fail and are listed, it runs just long enough that its opener is not left waiting, then it goes.
+        const opener = hub.owners.get(t.openerId) ?? hub.last
+        opener?.blocked.push(t.url || 'a window opened by the page')
+        const popup: Owner = {
+          blocked: opener?.blocked ?? [],
+          hooked: new Set(),
+        }
+        await hook(cdp, popup, sessionId).catch(() => {})
+        await resume()
+        return void (await close())
       }
       const owner = parent ?? hub.last
-      if (!owner)
-        return void (await cdp.send('Target.closeTarget', {
-          targetId: t.targetId,
-        }))
-      await hook(cdp, owner, sessionId)
+      if (!owner) return void (await close())
+      // A dedicated worker has no Fetch of its own: its requests go through its frame's.
+      if (t.type !== 'worker') await hook(cdp, owner, sessionId)
       await hub.adopt(owner, sessionId)
-      if (waitingForDebugger)
-        await cdp.send('Runtime.runIfWaitingForDebugger', {}, sessionId)
     } catch {
       // a target that went away while it was being set up
+    } finally {
+      await resume()
     }
   }
   cdp.on('', 'Target.attachedToTarget', ev => void attached(ev))
@@ -451,34 +465,48 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
   const { targetId } = await cdp.send('Target.createTarget', {
     url: 'about:blank',
   })
+  let timer: NodeJS.Timeout | undefined
   const sessionId = await Promise.race([
     hub.slot(targetId).p,
-    new Promise<never>((_, no) =>
-      setTimeout(
+    new Promise<never>((_, no) => {
+      timer = setTimeout(
         () => no(new Error('Chrome did not attach the new page')),
         15000,
-      ),
-    ),
-  ])
+      )
+    }),
+  ]).finally(() => {
+    clearTimeout(timer)
+    hub.forget(targetId)
+  })
   const s = (method: string, params?: object, ms?: number) =>
     cdp.send(method, params, sessionId, ms)
   const owner: Owner = { blocked: [], hooked: new Set() }
   hub.owners.set(targetId, owner)
   hub.last = owner
-  await s('Page.enable')
-  // Sockets and WebRTC are not requests the interception sees: the page has none. A window the page opens is not made; the address is listed.
-  await s('Runtime.enable')
-  await s('Runtime.addBinding', { name: 'culmBlocked' })
-  cdp.on(sessionId, 'Runtime.bindingCalled', ({ name, payload }: Json) => {
-    if (name === 'culmBlocked') owner.blocked.push(String(payload))
-  })
-  await s('Page.addScriptToEvaluateOnNewDocument', {
-    source:
-      "for (const k of ['RTCPeerConnection','webkitRTCPeerConnection','WebSocket','WebSocketStream','EventSource']) delete window[k];" +
-      'window.open = u => { window.culmBlocked(String(u)); return null }',
-  })
-  await hub.adopt(owner, sessionId)
-  await s('Runtime.runIfWaitingForDebugger')
+  try {
+    await s('Page.enable')
+    // Sockets and WebRTC are not requests the interception sees: the page has none. A window the page opens is not made; the address is listed.
+    await s('Runtime.enable')
+    await s('Runtime.addBinding', { name: 'culmBlocked' })
+    cdp.on(sessionId, 'Runtime.bindingCalled', ({ name, payload }: Json) => {
+      if (name === 'culmBlocked') owner.blocked.push(String(payload))
+    })
+    await s('Page.addScriptToEvaluateOnNewDocument', {
+      source:
+        "for (const k of ['RTCPeerConnection','webkitRTCPeerConnection','WebSocket','WebSocketStream','EventSource']) delete window[k];" +
+        'window.open = u => { window.culmBlocked(String(u)); return null }',
+    })
+    await hub.adopt(owner, sessionId)
+    await s('Runtime.runIfWaitingForDebugger')
+  } catch (e) {
+    for (const h of owner.hooked) cdp.drop(h)
+    cdp.drop(sessionId)
+    hub.owners.delete(targetId)
+    if (hub.last === owner) hub.last = undefined
+    await s('Runtime.runIfWaitingForDebugger').catch(() => {})
+    await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+    throw e
+  }
   return {
     blocked: owner.blocked,
     setViewport: (width, height) =>

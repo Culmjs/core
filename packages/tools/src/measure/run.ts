@@ -77,19 +77,29 @@ const why = (e: unknown) => (e instanceof Error ? e.message : String(e))
 /** The states the profile leaves out: each declared value that is not the initial one. */
 function skippedStates(doc: SiteDocument, pageId: string): string[] {
   const out: string[] = []
-  const root = doc.pages.find(p => p.id === pageId)?.root
-  for (const r of [
-    root,
+  const done = new Set<string>()
+  // The page, its header and footer, and each component an instance in them (or in such a component) draws.
+  const todo = [
+    doc.pages.find(p => p.id === pageId)?.root,
     doc.header,
     doc.footer,
-    ...doc.components.map(c => c.root),
-  ])
-    if (r)
-      walk(r, n => {
-        for (const s of n.state ?? [])
-          for (const v of s.values === 'on-off' ? ['on', 'off'] : s.values)
-            if (v !== s.initial) out.push(`state:${s.name}=${v}`)
-      })
+  ]
+  for (let r = todo.pop(); r || todo.length; r = todo.pop()) {
+    if (!r) continue
+    walk(r, n => {
+      for (const s of n.state ?? [])
+        for (const v of s.values === 'on-off' ? ['on', 'off'] : s.values)
+          if (v !== s.initial) out.push(`state:${s.name}=${v}`)
+      const c =
+        n.kind === 'instance' && n.component && !done.has(n.component)
+          ? doc.components.find(x => x.id === n.component)
+          : undefined
+      if (c) {
+        done.add(c.id)
+        todo.push(c.root)
+      }
+    })
+  }
   return out
 }
 
@@ -276,7 +286,7 @@ export async function runMeasure(input: MeasureInput): Promise<Report> {
       browser: '',
       findings: [],
       measured: [],
-      incomplete: (input.pages?.length ? input.pages : ['']).map(page => ({
+      incomplete: ids(input).map(page => ({
         page,
         problem: incomplete(`The document could not be measured: ${why(e)}`),
       })),
@@ -284,6 +294,16 @@ export async function runMeasure(input: MeasureInput): Promise<Report> {
       skipped: [],
     }
   }
+}
+
+/** The pages a broken document was asked to measure, or its page ids as far as they can be read. */
+function ids(input: MeasureInput): string[] {
+  if (input.pages?.length) return input.pages
+  const ps = (input.doc as { pages?: unknown } | undefined)?.pages
+  const found = Array.isArray(ps)
+    ? ps.flatMap(p => (typeof p?.id === 'string' ? [p.id as string] : []))
+    : []
+  return found.length ? found : ['']
 }
 
 async function measureAll(input: MeasureInput): Promise<Report> {
