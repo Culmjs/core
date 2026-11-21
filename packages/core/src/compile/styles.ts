@@ -303,7 +303,7 @@ export function compileStyles(
       // The divider's border is its top edge, so a `sides` list has no meaning there.
       if (w.kind === 'divider' && d.border)
         d.border = { ...d.border, sides: undefined }
-      let s = declCss(d, ctx.style)
+      let s = declCss(d, ctx.style, v !== 'base')
       // A divider is one rule: its border is the top edge only, or an hr draws it twice as thick.
       if (w.kind === 'divider')
         s = s.replace(/(^|;)border:/, '$1border:0;border-top:')
@@ -518,7 +518,7 @@ export function compileStyles(
         // Like a state layer, a layer that sets part of a transform restates the parts it inherits from base.
         if (TF.some(k => d[k] !== undefined))
           Object.assign(d, pick(st.base, TF), pick(x.decl, TF))
-        const css = declCss(d, ctx.style),
+        const css = declCss(d, ctx.style, true),
           at = `[data-s-${x.state}="${x.is}"]`
         // Showing and hiding go after the phone block, so a state hides or shows on every layout.
         return [
@@ -720,6 +720,7 @@ export function compileStyles(
         const s = declCss(
           pick(st[v], [...STYLE_GROUPS.PAINT, 'nowrap']),
           ctx.style,
+          v !== 'base',
         )
         if (s) control[v].push(s)
       }

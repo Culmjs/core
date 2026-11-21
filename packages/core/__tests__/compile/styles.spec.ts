@@ -2134,3 +2134,16 @@ test('a kind such as constructor or toString is not read as a default rule', () 
 test('the base rules hold nothing for a kind core does not have', () => {
   assert.ok(!BASE_CSS.includes('.s-search'))
 })
+
+test('a phone layer with nowrap false undoes a base nowrap; a base nowrap false writes nothing', () => {
+  const css = (style: object) =>
+    compileFor({
+      kind: 'text',
+      props: { level: 'p', runs: [{ text: 'x' }] },
+      style,
+    })
+  const on = css({ base: { nowrap: true }, phone: { nowrap: false, size: 28 } })
+  assert.match(on, /white-space:nowrap/)
+  assert.match(on, /@media \(max-width: 600px\)\{[^]*white-space:normal/)
+  assert.doesNotMatch(css({ base: { nowrap: false } }), /white-space/)
+})

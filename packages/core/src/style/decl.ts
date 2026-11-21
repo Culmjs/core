@@ -1090,7 +1090,22 @@ function transformCss(d: Decl): string {
   return `transform:${f.join(' ')}${d.flip?.blur && !d.filter ? `;filter:blur(${d.flip.blur}px)` : ''}`
 }
 
-export function declCss(d: Decl, ctx: StyleCtx): string {
+/**
+ * What a flag set to `false` writes on a layer after base, to undo the `true` of an earlier layer. A flag that is not here
+ * (`strike`, which shares one property with `underline`; `hidden`; `fitWidth`, which does more than set `white-space`) writes nothing.
+ */
+const FLAG_OFF: Partial<Record<keyof Decl, string>> = {
+  nowrap: 'white-space:normal',
+  wrap: 'flex-wrap:nowrap',
+  italic: 'font-style:normal',
+  smallCaps: 'font-variant-caps:normal',
+  upper: 'text-transform:none',
+  snap: 'scroll-snap-type:none',
+  balance: 'text-wrap:wrap',
+}
+
+/** `later`: the declaration is on a layer after base, where `false` on a flag is written as its off value. */
+export function declCss(d: Decl, ctx: StyleCtx, later = false): string {
   const out: string[] = []
   let moved = false
   for (const k of KEYS) {
@@ -1104,6 +1119,7 @@ export function declCss(d: Decl, ctx: StyleCtx): string {
     if (k === 'strike' && d.underline && s)
       s = 'text-decoration-line:underline line-through'
     if (k === 'filter' && d.flip?.blur) s += ` blur(${d.flip.blur}px)`
+    if (!s && later && d[k] === false && FLAG_OFF[k]) s = FLAG_OFF[k]!
     if (s) out.push(s)
   }
   return out.join(';')

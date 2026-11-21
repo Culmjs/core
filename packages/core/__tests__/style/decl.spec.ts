@@ -903,3 +903,24 @@ test('a kind the core does not hold is reported, never thrown', () => {
     'nope is not a known kind',
   ])
 })
+
+test('false on a later layer undoes a flag; false on the base layer writes nothing', () => {
+  const OFF: [keyof Parameters<typeof declCss>[0], string][] = [
+    ['nowrap', 'white-space:normal'],
+    ['wrap', 'flex-wrap:nowrap'],
+    ['italic', 'font-style:normal'],
+    ['smallCaps', 'font-variant-caps:normal'],
+    ['upper', 'text-transform:none'],
+    ['snap', 'scroll-snap-type:none'],
+    ['balance', 'text-wrap:wrap'],
+  ]
+  for (const [k, off] of OFF) {
+    assert.equal(declCss({ [k]: false }, ctx), '', `${k} on base`)
+    assert.equal(declCss({ [k]: false }, ctx, true), off, `${k} later`)
+  }
+  assert.equal(declCss({ nowrap: true }, ctx, true), 'white-space:nowrap')
+  assert.equal(
+    declCss({ size: 28, nowrap: false }, ctx, true),
+    'font-size:28px;white-space:normal',
+  )
+})
