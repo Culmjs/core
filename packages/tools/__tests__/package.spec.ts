@@ -18,19 +18,12 @@ test('the two dependencies are pinned to exact versions, and playwright is not o
   assert.equal(pkg.peerDependencies?.playwright, undefined)
 })
 
-const lint = (code: string) => {
+const lint = (code: string, file = 'packages/tools/src/probe.ts') => {
   let out = ''
   try {
     out = execFileSync(
       'npx',
-      [
-        'eslint',
-        '--stdin',
-        '--stdin-filename',
-        'packages/tools/src/probe.ts',
-        '--format',
-        'json',
-      ],
+      ['eslint', '--stdin', '--stdin-filename', file, '--format', 'json'],
       { cwd: root, input: code, encoding: 'utf8', stdio: 'pipe' },
     )
   } catch (e) {
@@ -50,4 +43,33 @@ test('tools src imports nothing by a relative path into another package', () => 
     `import { readFileSync } from 'node:fs'\nimport { parse } from 'jsonc-parser'\nimport { applyOps } from '@culmjs/core/ops'\nexport { readFileSync, parse, applyOps }\n`,
   )
   assert.ok(!ok.includes('no-restricted-imports'))
+})
+
+test('the boundary also refuses ./../.. paths and dynamic imports, and allows an inner folder named core', () => {
+  const bad = (code: string, file?: string) =>
+    lint(code, file).some(
+      r => r === 'no-restricted-imports' || r === 'no-restricted-syntax',
+    )
+  assert.ok(
+    bad(`import { x } from './../../core/src/index.ts'\nexport { x }\n`),
+  )
+  assert.ok(bad(`export const m = import('../../core/src/index.ts')\n`))
+  assert.ok(
+    bad(
+      `import { x } from '../../../core/src/index.ts'\nexport { x }\n`,
+      'packages/tools/src/a/probe.ts',
+    ),
+  )
+  assert.ok(
+    !bad(
+      `import { x } from '../core/helper.ts'\nexport { x }\n`,
+      'packages/tools/src/a/probe.ts',
+    ),
+  )
+  assert.ok(
+    !bad(
+      `import { x } from '../../core/helper.ts'\nexport { x }\n`,
+      'packages/tools/src/a/b/probe.ts',
+    ),
+  )
 })

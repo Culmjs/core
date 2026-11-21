@@ -46,22 +46,37 @@ export default tseslint.config(
       ],
     },
   },
-  {
-    files: ['packages/tools/src/**'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              // other packages by folder name; core is imported as @culmjs/core/<sub-path>
-              regex: '^(\\.\\./)+(core|starter|packages)/',
-              message:
-                'tools src may not import by a relative path into another package',
-            },
-          ],
-        },
-      ],
-    },
-  },
+  // tools src may not import by a relative path that resolves outside
+  // packages/tools/ (core is imported as @culmjs/core/<sub-path>). A file
+  // `depth` folders under src needs depth + 2 climbs to leave the package.
+  // ponytail: one block per depth, 0..7; deeper files are unchecked.
+  ...Array.from({ length: 8 }, (_, depth) => {
+    const out = `^(\\./)*(\\.\\./(\\./)*){${depth + 2},}`
+    return {
+      files: [`packages/tools/src/${'*/'.repeat(depth)}*.ts`],
+      rules: {
+        'no-restricted-imports': [
+          'error',
+          {
+            patterns: [
+              {
+                regex: out,
+                message:
+                  'tools src may not import by a relative path outside packages/tools',
+              },
+            ],
+          },
+        ],
+        // no-restricted-imports does not see import()
+        'no-restricted-syntax': [
+          'error',
+          {
+            selector: `ImportExpression > Literal[value=/${out.replaceAll('/', '\\x2f')}/]`,
+            message:
+              'tools src may not import by a relative path outside packages/tools',
+          },
+        ],
+      },
+    }
+  }),
 )
