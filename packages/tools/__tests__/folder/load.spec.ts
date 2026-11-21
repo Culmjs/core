@@ -602,3 +602,62 @@ test('load and write-back with no change leaves every file byte for byte the sam
     assert.equal(readFileSync(join(dir, f.path), 'utf8'), f.text, f.path)
   assert.match(l.files[0]!.sha256, /^[0-9a-f]{64}$/)
 })
+
+test('a piece file may name its id and name, and a use may name itself', async () => {
+  const piece = text('pieces/visit-card.json').replace(
+    '"settings"',
+    '"id": "visit", "name": "Visit card", "settings"',
+  )
+  const l = await load({
+    'pieces/visit-card.json': piece,
+    'pages/about.json': swap(
+      'pages/about.json',
+      '"id": "visit3",',
+      '"id": "visit3", "name": "Our visit",',
+    ),
+  })
+  assert.deepEqual(l.problems, [])
+  assert.deepEqual(
+    l.doc!.components.map(c => [c.id, c.name]),
+    [['visit', 'Visit card']],
+  )
+  assert.equal(l.map.pieceFile('visit'), 'pieces/visit-card.json')
+  const use = l.doc!.pages[2]!.root.children![2]!
+  assert.equal(use.name, 'Our visit')
+  assert.equal(use.component, 'visit')
+  assert.equal(l.doc!.pages[0]!.root.children![2]!.name, 'Component')
+})
+
+test('a piece id that breaks the id rule is a problem at the id', async () => {
+  const l = await load({
+    'pieces/visit-card.json': text('pieces/visit-card.json').replace(
+      '"settings"',
+      '"id": "Not Valid", "settings"',
+    ),
+  })
+  assert.equal(l.doc, undefined)
+  const p = l.problems.find(x => x.file === 'pieces/visit-card.json')!
+  assert.ok(p)
+  assert.equal(p.line, 4)
+})
+
+test('two pieces with the same id are refused, with file and line for both', async () => {
+  const piece = (id: string) =>
+    text('pieces/visit-card.json').replace(
+      '"settings"',
+      `"id": "${id}", "settings"`,
+    )
+  const l = await load({
+    'pieces/visit-card.json': piece('same'),
+    'pieces/other.json': piece('same'),
+    'pages/menu.json': swap(
+      'pages/menu.json',
+      '../pieces/visit-card.json',
+      '../pieces/other.json',
+    ),
+  })
+  assert.equal(l.doc, undefined)
+  const files = l.problems.map(p => p.file).sort()
+  assert.deepEqual(files, ['pieces/other.json', 'pieces/visit-card.json'])
+  assert.ok(l.problems.every(p => p.line === 4))
+})

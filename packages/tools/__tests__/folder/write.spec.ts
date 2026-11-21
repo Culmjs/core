@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { plan } from '@culmjs/core/ops'
 import type { Op } from '@culmjs/core/ops'
+import type { SiteDocument } from '@culmjs/core'
 import { copyFixture } from '../fixtures.ts'
 import { derivedId } from '../../src/folder/ids.ts'
 import { loadFiles, loadFolder, readProject } from '../../src/folder/load.ts'
@@ -224,22 +225,17 @@ test('the table has one case for each of the 26 operations', () => {
   assert.equal(new Set(CASES.map(c => c[0])).size, 26)
 })
 
-// BLOCKED (owner decision, see the Task 10 report): a piece file carries neither the component's id nor its name, and a use not the
-// instance's name, so after makeComponent the loaded document differs from the planned one in exactly those fields (and the component order).
-const BLOCKED: Record<string, string> = {
-  makeComponent:
-    'a piece file has no place for the component id, the component name or the instance name',
-}
+// The order of `components` is not meaningful (the loader lists pieces by path order of first use), so both sides are sorted by id.
+const byId = (d: SiteDocument) => ({
+  ...d,
+  components: [...d.components].sort((a, b) => (a.id < b.id ? -1 : 1)),
+})
 for (const [name, ops] of CASES)
-  test(
-    `${name}: plan, write, load again gives the planned document`,
-    { todo: BLOCKED[name] },
-    async () => {
-      const r = await run(ops)
-      assert.deepEqual(r.again.problems, [])
-      assert.deepEqual(r.again.doc, r.planned.doc)
-    },
-  )
+  test(`${name}: plan, write, load again gives the planned document`, async () => {
+    const r = await run(ops)
+    assert.deepEqual(r.again.problems, [])
+    assert.deepEqual(byId(r.again.doc!), byId(r.planned.doc as SiteDocument))
+  })
 
 test('a load and write with no change returns no edits', () => {
   const e = fileEdits(doc0, doc0, first, registry)

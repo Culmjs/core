@@ -55,6 +55,9 @@ export type Loaded = {
   problems: Located[]
 }
 
+// core's id rule, not exported by core
+const ID_RE = /^[a-z0-9]{1,20}$/
+
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
@@ -342,14 +345,29 @@ async function build(
     let comp = pieces.get(rel)
     if (!comp) {
       const v = parse(rel).value
-      const id = derivedId(rel, [])
+      let id = derivedId(rel, [])
       if (!isObj(v) || !isObj(v.root)) {
         bad('A piece file needs a "root".', rel, [])
         return undefined
       }
+      if (v.id !== undefined) {
+        if (typeof v.id === 'string' && ID_RE.test(v.id)) id = v.id
+        else {
+          bad('A piece "id" is 1 to 20 lowercase letters and digits.', rel, [
+            'id',
+          ])
+          return undefined
+        }
+      }
+      const twin = [...pieces.entries()].find(([, c]) => c.id === id)
+      if (twin) {
+        bad(`The piece id "${id}" is also used by ${twin[0]}.`, rel, ['id'])
+        bad(`The piece id "${id}" is also used by ${rel}.`, twin[0], ['id'])
+        return undefined
+      }
       comp = {
         id,
-        name: rel,
+        name: typeof v.name === 'string' && v.name ? v.name : rel,
         root: undefined as unknown as Node,
         props: Array.isArray(v.settings) ? (v.settings as ComponentProp[]) : [],
         variants: [],
@@ -365,8 +383,14 @@ async function build(
     const id = written(file, path, raw)
     const nodeId = id ?? derivedId(file, path)
     const set: Record<string, PropValue> = {}
+    let useName: string | undefined
     for (const [k, v] of Object.entries(raw)) {
       if (k === 'use' || k === 'id') continue
+      if (k === 'name' && !comp.props.some(p => p.key === 'name')) {
+        if (typeof v === 'string' && v) useName = v
+        else bad('"name" must be text.', file, [...path, k])
+        continue
+      }
       if (!comp.props.some(p => p.key === k)) {
         bad(
           `${rel} has no setting "${k}".`,
@@ -387,7 +411,8 @@ async function build(
     return {
       id: nodeId,
       kind: 'instance',
-      name: kindSpec('instance', registry.kinds())?.label ?? 'Component',
+      name:
+        useName ?? kindSpec('instance', registry.kinds())?.label ?? 'Component',
       slot: defaultSlot(parent),
       component: comp.id,
       ...(Object.keys(set).length ? { set } : {}),

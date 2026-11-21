@@ -4,6 +4,7 @@ import {
   applySetting,
   defaultSiteStyles,
   insertBlock,
+  kindSpec,
   readSettings,
 } from '@culmjs/core'
 import type { Node, Note, Page, Registry, SiteDocument } from '@culmjs/core'
@@ -239,9 +240,11 @@ export function fileEdits(
     }
     return raw
   }
+  const useLabel = () =>
+    kindSpec('instance', registry.kinds())?.label ?? 'Component'
   function rawNew(n: Node, parent: Node | undefined, file: string): Raw {
     const pf = n.component ? pieceFiles.get(n.component) : undefined
-    const { id, slot, set } = n
+    const { id, slot, set, name } = n
     const extra = omit(n, 'id', 'kind', 'name', 'slot', 'component', 'set')
     if (
       pf &&
@@ -252,6 +255,7 @@ export function fileEdits(
       return {
         use: posix.relative(posix.dirname(file), pf),
         id,
+        ...(name === useLabel() ? {} : { name }),
         ...(set ?? {}),
       }
     const short = shortRaw(n, parent)
@@ -356,7 +360,7 @@ export function fileEdits(
     parent: Node | undefined,
     raw: Raw,
   ) {
-    const fixed = (n: Node) => omit(n, 'id', 'set')
+    const fixed = (n: Node) => omit(n, 'id', 'set', 'name')
     if (!eq(fixed(b), fixed(a)) || !eq(a.slot, defaultSlot(parent?.kind)))
       return bad(
         file,
@@ -365,6 +369,7 @@ export function fileEdits(
       )
     const next: Raw = { use: raw.use }
     if (raw.id !== undefined) next.id = raw.id
+    if (a.name !== useLabel()) next.name = a.name
     Object.assign(next, a.set ?? {})
     sync(file, path, raw, next)
   }
@@ -467,6 +472,8 @@ export function fileEdits(
         whole(
           {
             ...schemaFor(file),
+            id: c.id,
+            name: c.name,
             settings: c.props,
             root: rawNew(c.root, undefined, file),
           },
