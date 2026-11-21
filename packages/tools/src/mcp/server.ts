@@ -51,6 +51,10 @@ export type McpOptions = {
   /** The Chrome `measure` opens when no `browser` is given. */
   executable?: string
   out?: string
+  /** Folder sites: the SHA-256 of every asset and font file, read for each measure (the build identity); absent: none. */
+  files?(): Promise<{ path: string; sha256: string }[]>
+  /** Folder sites: the bytes of a project file the measured page asks for (`assets/…`, `fonts/…`), or undefined. */
+  assets?(path: string): Promise<Uint8Array | undefined>
   /** Folder sites: adds file and line to a problem. */
   locate?<P extends Problem>(p: P): P
   /** Folder sites: the file of a page, for a finding whose node cannot be placed. */
@@ -532,6 +536,8 @@ export function createMcpServer(o: McpOptions): Server {
           ...(a.classes ? { classes: a.classes as (1 | 2 | 3)[] } : {}),
           ...(o.browser ? { browser: o.browser } : {}),
           ...(o.executable ? { executable: o.executable } : {}),
+          ...(o.files ? { files: await o.files() } : {}),
+          ...(o.assets ? { assets: o.assets } : {}),
         }
         const m =
           a.since === undefined

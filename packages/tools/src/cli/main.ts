@@ -94,6 +94,9 @@ export async function folderMcpOptions(
     allow: protect,
     folder: true,
     executable,
+    // the same files and rule as `culm check`, read for each measure
+    files: () => fileHashes(cwd),
+    assets: (p: string) => readAsset(cwd, p),
     // a problem the store already located stays as it is
     locate: <P extends Problem>(p: P): P =>
       (p as { file?: string }).file ? p : (map.locateProblem(p) as P),
