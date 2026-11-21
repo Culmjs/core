@@ -734,6 +734,11 @@ test('a veto from allow is bound: only text fields are copied, a hostile result 
     })
   // a long text is cut
   assert.ok(one({ message: 'x'.repeat(5000) }).message.length <= 500)
+  // and a cut message ends with an ellipsis, so the cut shows; one that fits is kept whole
+  const cut = one({ message: 'x'.repeat(5000) }).message
+  assert.equal(cut.length, 500)
+  assert.ok(cut.endsWith('\u2026'))
+  assert.equal(one({ message: 'y'.repeat(500) }).message, 'y'.repeat(500))
 })
 
 test('an allow that throws a value with no message says so in words', () => {

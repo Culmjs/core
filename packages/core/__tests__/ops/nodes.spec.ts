@@ -191,10 +191,8 @@ test('add names the nested node a refusal is about: the path leads to it', () =>
 test('add refuses a name or a slot of the wrong type on a given node, and says where', () => {
   for (const [field, value] of [
     ['name', 3],
-    ['name', null],
     ['name', {}],
     ['slot', 'x'],
-    ['slot', null],
     ['slot', []],
     ['slot', 3],
   ] as const) {
@@ -896,4 +894,15 @@ test('no operation changes its input', () => {
     ok(run(name, doc, op))
     assert.deepEqual(doc, before, name)
   }
+})
+
+test('add treats a null name or slot as not given and fills it in; a present value of the wrong type is refused', () => {
+  const r = ok(add({ node: { kind: 'box', id: 'nb', name: null, slot: null } }))
+  const n = nodeOf(r.doc!, 'nb')
+  assert.equal(typeof n.name, 'string')
+  assert.ok(n.name.length > 0)
+  assert.equal(typeof n.slot, 'object')
+  assert.notEqual(n.slot, null)
+  invalid(add({ node: { kind: 'box', name: 7 } }), { path: 'node.name' })
+  invalid(add({ node: { kind: 'box', slot: 'x' } }), { path: 'node.slot' })
 })

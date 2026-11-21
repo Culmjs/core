@@ -30,7 +30,7 @@ const VETO_TEXT = 500
 const VETO_ALLOWED = 50
 /**
  * The refusal an `allow` result becomes: POLICY_VIOLATION, with the veto's `message`, `rule`, `nodeId` and `path` when they are text
- * (cut at 500 characters) and its `allowed` when it is a list of texts (the first 50). Any other field, any value of the wrong type
+ * (cut at 500 characters; a cut message ends with an ellipsis) and its `allowed` when it is a list of texts (the first 50). Any other field, any value of the wrong type
  * and a result that cannot be read are left out; the message is then "Not allowed.". Never throws, so a hostile `allow` is still a
  * policy refusal.
  */
@@ -41,7 +41,11 @@ export function vetoProblem(veto: unknown): Problem {
     const text = (v: unknown) =>
       typeof v === 'string' ? v.slice(0, VETO_TEXT) : undefined
     const { message, rule, nodeId, path, allowed } = veto
-    out.message = text(message) || out.message
+    // a cut message ends with an ellipsis, so the cut shows
+    out.message =
+      (typeof message === 'string' && message.length > VETO_TEXT
+        ? `${message.slice(0, VETO_TEXT - 1)}\u2026`
+        : text(message)) || out.message
     const keep = { rule: text(rule), nodeId: text(nodeId), path: text(path) }
     for (const [k, v] of Object.entries(keep))
       if (v !== undefined) (out as Record<string, unknown>)[k] = v

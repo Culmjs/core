@@ -185,11 +185,12 @@ export const add: OpFn<'add'> = (doc, registry, op) => {
       problem = bad('children must be a list.', { path: `${at}.children` })
       return
     }
-    if (n.name !== undefined && typeof n.name !== 'string') {
+    // null and a missing key are both "not given", and are filled in below
+    if (n.name != null && typeof n.name !== 'string') {
       problem = bad('name must be a string.', { path: `${at}.name` })
       return
     }
-    if (n.slot !== undefined && !isObj(n.slot)) {
+    if (n.slot != null && !isObj(n.slot)) {
       problem = bad('slot must be an object.', { path: `${at}.slot` })
       return
     }
