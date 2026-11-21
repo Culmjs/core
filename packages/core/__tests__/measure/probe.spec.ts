@@ -201,6 +201,49 @@ test('repeated rows roll up to their list id as the union of their boxes', () =>
   assert.deepEqual(raw.nodes[0].box, { x: 0, y: 0, w: 100, h: 110 })
 })
 
+test('merged rows keep the first background, the longer text and the first tap, and any clip', () => {
+  const { doc, win } = page(root => {
+    const a = new El('a', { 'data-id': 'l~1' }, rect(0, 0, 100, 20), root, 'ab')
+    a.style = { backgroundColor: 'rgb(0, 0, 0)' }
+    const b = new El(
+      'a',
+      { 'data-id': 'l~2' },
+      rect(0, 30, 90, 20),
+      root,
+      'abcd',
+    )
+    b.style = { backgroundColor: 'rgb(255, 255, 255)', overflowY: 'clip' }
+  })
+  const [n] = measureNodes(doc, win, 1000).nodes
+  assert.equal(n.bg, '#000000')
+  assert.equal(n.clip, true)
+  assert.deepEqual(n.tap, { w: 100, h: 20 })
+  assert.equal(n.text?.longest, 4)
+})
+
+test('background formats: color(srgb), transparent alpha and unread formats', () => {
+  const { doc, win } = page(root => {
+    const bgs = [
+      'color(srgb 1 0.5 0)',
+      'rgba(10, 20, 30, 0)',
+      'oklch(0.5 0.1 200)',
+    ]
+    bgs.forEach((c, i) => {
+      const e = new El(
+        'div',
+        { 'data-id': 'n' + i },
+        rect(0, i * 30, 50, 20),
+        root,
+      )
+      e.style = { backgroundColor: c }
+    })
+  })
+  assert.deepEqual(
+    measureNodes(doc, win, 1000).nodes.map(n => n.bg),
+    ['#ff8000', null, 'unreadable'],
+  )
+})
+
 test('wide lists what reaches past the window, unless fixed or cut by a clipping ancestor', () => {
   const { doc, win } = page(root => {
     new El('div', { 'data-id': 'out' }, rect(100, 0, 1000, 20), root) // right = 1100
@@ -224,11 +267,12 @@ test('PROBE_SCRIPT is measureNodes shipped as a function of (document, window, w
 
 test('pixelsUnder gives the distinct colours of a 9 by 3 grid under each rect', async () => {
   const g = globalThis as unknown as Record<string, unknown>
-  const was = {
-    fetch: g.fetch,
-    createImageBitmap: g.createImageBitmap,
-    OffscreenCanvas: g.OffscreenCanvas,
-  }
+  const was: Record<string, unknown> = {}
+  for (const k of ['fetch', 'createImageBitmap', 'OffscreenCanvas'])
+    if (k in g) was[k] = g[k]
+  const absent = ['fetch', 'createImageBitmap', 'OffscreenCanvas'].filter(
+    k => !(k in was),
+  )
   const asked: string[] = []
   g.fetch = async (u: string) => {
     asked.push(u)
@@ -258,6 +302,7 @@ test('pixelsUnder gives the distinct colours of a 9 by 3 grid under each rect', 
     assert.deepEqual(asked, ['data:image/png;base64,AAAA'])
     assert.deepEqual(out, [['#ff0000'], ['#ff0000', '#0000ff'], ['#0000ff']])
   } finally {
+    for (const k of absent) delete g[k]
     Object.assign(g, was)
   }
 })

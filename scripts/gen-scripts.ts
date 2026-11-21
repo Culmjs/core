@@ -50,9 +50,10 @@ export function render(): string {
 
 const measureDir = new URL('../packages/core/src/measure/', import.meta.url)
 
-/** measureNodes (typed, in probe.ts) as PROBE_SCRIPT: the function minified for ES2017, a function expression `(document, window, width) => raw`. */
+/** measureNodes (typed, in probe.ts) as PROBE_SCRIPT: the function minified for ES2018, a function expression `(document, window, width) => raw`. */
 export function renderProbe(): string {
   const src = readFileSync(new URL('probe.ts', measureDir), 'utf8')
+  // measureNodes must end at the first line that is a lone `}` (the function's last line)
   const from = src.indexOf('export function measureNodes')
   const fn = transformSync(src.slice(from, src.indexOf('\n}\n', from) + 3), {
     loader: 'ts',

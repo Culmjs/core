@@ -1,4 +1,4 @@
-import type { LayoutRaw, NodeRaw } from './types.ts'
+import type { NodeRaw, ProbeRaw } from './types.ts'
 
 export type Rect = [number, number, number, number]
 
@@ -12,7 +12,7 @@ export function measureNodes(
   doc: Document,
   win: Window,
   width: number,
-): Omit<LayoutRaw, 'layout'> {
+): ProbeRaw {
   const TEXT = (win as unknown as { Node: { TEXT_NODE: number } }).Node
     .TEXT_NODE
   const MEDIA = 'img,video,canvas,svg,picture,iframe,object,embed'

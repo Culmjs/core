@@ -64,10 +64,18 @@ const switchHeader = (): Node => ({
   ...node('header', 'column', [withProps('hb', 'button', { label: 'Dark' })]),
   state: [{ name: 'mode', values: ['light', 'dark'], initial: 'light' }],
 })
-const withHeader = siteWith([text('t', 'Hello')])
+const react = (id: string): Node =>
+  text(id, id, {
+    style: { when: [{ state: 'mode', is: 'dark', decl: { color: 'brand' } }] },
+  })
+const withHeader = siteWith([react('pr')])
 withHeader.header = switchHeader()
+withHeader.header.children!.push(react('hr'))
 withHeader.header.children![0].on = [
   { on: 'click', do: { set: 'mode', to: 'dark' } },
+]
+withHeader.pages[0].root.state = [
+  { name: 'pg', values: ['a', 'b'], initial: 'b' },
 ]
 const formDoc = siteWith([
   node('fm', 'form', [

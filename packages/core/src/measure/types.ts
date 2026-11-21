@@ -28,6 +28,9 @@ export type LayoutRaw = {
   wide: { id: string; by: number }[]
 }
 
+/** What the in-page probe returns: the runner adds `layout`. */
+export type ProbeRaw = Omit<LayoutRaw, 'layout'>
+
 export type ContrastRaw = {
   id: string
   scheme: 'light' | 'dark'
