@@ -75,6 +75,26 @@ test('a page is answered from memory, a request it does not answer fails and is 
   }
 })
 
+test('a frame by an outside address is blocked too, and the page has no WebRTC or socket', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.answer(async url =>
+      url === 'https://site.culm.invalid/f'
+        ? HTML(`<iframe src="${outside}"></iframe>`)
+        : undefined,
+    )
+    await page.goto('https://site.culm.invalid/f', 5000)
+    assert.deepEqual(page.blocked, [outside])
+    assert.equal(hits, 0)
+    assert.equal(
+      await page.evaluate('typeof RTCPeerConnection + typeof WebSocket'),
+      'undefinedundefined',
+    )
+  } finally {
+    await page.close()
+  }
+})
+
 test("the window width and the colour scheme are the page's", async () => {
   const page = await browser.newPage()
   try {
