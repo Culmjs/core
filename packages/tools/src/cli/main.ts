@@ -8,7 +8,7 @@ import { startDev } from '../dev/server.ts'
 import { expandShortForm } from '../folder/write.ts'
 import { fileStore } from '../folder/store.ts'
 import { loadFolder } from '../folder/load.ts'
-import type { Problem } from '@culmjs/core'
+import type { Problem, TreeRef } from '@culmjs/core'
 import { openProject, type Project } from '../folder/project.ts'
 import type { Located } from '../folder/plugins.ts'
 import { runMeasure } from '../measure/run.ts'
@@ -223,7 +223,9 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
       const [file, id] = args as [string, string]
       const rel = relative(cwd, resolve(cwd, file)).split(sep).join('/')
       const doc = loaded.doc!
-      const trees = [
+      const trees: TreeRef[] = [
+        'header',
+        'footer',
         ...doc.pages.map(p => ({ page: p.id })),
         ...doc.components.map(c => ({ component: c.id })),
       ]

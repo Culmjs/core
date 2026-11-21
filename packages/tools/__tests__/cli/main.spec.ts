@@ -140,6 +140,21 @@ test('expand pages/home.json hero1: the short form is now nodes and the folder l
   assert.equal(await readFile(join(dir, 'pages', 'home.json'), 'utf8'), text)
 })
 
+test('expand site.json <header id>: the header short form is expanded and the folder loads to the same document', async () => {
+  const dir = await copyFixture('site-basic')
+  const before = (await openProject(dir)).loaded
+  assert.ok(before.doc)
+  const r = await run(['expand', 'site.json', before.doc.header.id], dir)
+  assert.equal(r.code, 0, r.err)
+  assert.doesNotMatch(
+    await readFile(join(dir, 'site.json'), 'utf8'),
+    /"header":\s*\{\s*"block": "top"\s*\}/,
+  )
+  const after = (await openProject(dir)).loaded
+  assert.deepEqual(after.problems, [])
+  assert.deepEqual(after.doc, before.doc)
+})
+
 test('dev --port 0: prints the address, serves, and closes on SIGINT', async () => {
   const dir = await copyFixture('site-basic')
   const c = child(dir, 'dev', '--port', '0')

@@ -8,11 +8,11 @@ import { openBrowser, type Browser } from '../src/measure/browser.ts'
 import { decodePng } from '../src/measure/png.ts'
 import { BASE_SCRIPT, STATES_SCRIPT } from '@culmjs/core/scripts'
 
-const left = () => {
-  const dirs = readdirSync(tmpdir()).filter(d => d.startsWith('culm-chrome-'))
+const left = (what = 'culm-chrome-') => {
+  const dirs = readdirSync(tmpdir()).filter(d => d.startsWith(what))
   let procs = ''
   try {
-    procs = execFileSync('pgrep', ['-f', 'culm-chrome-']).toString()
+    procs = execFileSync('pgrep', ['-f', what]).toString()
   } catch {
     // pgrep exits 1 when nothing matches
   }
@@ -412,9 +412,13 @@ test('a second answer replaces the first, and a call after Chrome has gone fails
 })
 
 test('closing leaves no Chrome and no profile folder', async () => {
+  // only the profile this run creates: another run's folder, or the shared browser's, is not this test's to judge
+  const before = left().dirs
   const o = await openBrowser()
   assert.ok(o.ok)
+  const mine = left().dirs.filter(d => !before.includes(d))
+  assert.equal(mine.length, 1, JSON.stringify(mine))
   await o.browser.close()
-  await browser.close()
-  assert.deepEqual(left(), { dirs: [], procs: '' })
+  assert.ok(!left().dirs.includes(mine[0]!))
+  assert.equal(left(mine[0]).procs, '')
 })

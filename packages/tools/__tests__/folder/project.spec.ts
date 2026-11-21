@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { copyFixture } from '../fixtures.ts'
+import { loadFolder } from '../../src/folder/load.ts'
 import { openProject } from '../../src/folder/project.ts'
 
 test('openProject returns registry, document, map, data and links, and creates no .culm/', async () => {
@@ -52,4 +53,21 @@ test('a piece linked outside the project is a located refusal through openProjec
   } finally {
     await rm(outside, { recursive: true, force: true })
   }
+})
+
+test('a missing folder is a problem that names the folder, through openProject and loadFolder', async () => {
+  const dir = join(tmpdir(), 'culm-no-such-folder-xyz')
+  const p = await openProject(dir)
+  assert.equal(p.loaded.doc, undefined)
+  assert.ok(
+    p.loaded.problems.some(q => q.message.includes(dir)),
+    JSON.stringify(p.loaded.problems),
+  )
+  await assert.doesNotReject(loadFolder(dir, p.registry))
+  const l = await loadFolder(dir, p.registry)
+  assert.equal(l.doc, undefined)
+  assert.ok(
+    l.problems.some(q => q.message.includes(dir)),
+    JSON.stringify(l.problems),
+  )
 })

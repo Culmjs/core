@@ -40,6 +40,7 @@ import type { Browser } from '../measure/browser.ts'
 import type { Finding } from '@culmjs/core/measure'
 import { locateFinding } from '../folder/locateFinding.ts'
 import { measureSince, runMeasure } from '../measure/run.ts'
+import { isObj } from '../shared.ts'
 
 export type McpOptions = {
   store: SiteStore
@@ -74,8 +75,6 @@ type Head = Exclude<
 >
 type Tree = Parameters<typeof pageOutline>[1]
 
-const isObj = (v: unknown): v is Obj =>
-  typeof v === 'object' && v !== null && !Array.isArray(v)
 const bad = (message: string, path?: string): Problem => ({
   code: 'INVALID_OPERATION',
   message,

@@ -13,10 +13,9 @@ import { derivedId } from './ids.ts'
 import { editFile, parseFile, removeAt, type JsonPath } from './jsonc.ts'
 import { defaultSlot, type Loaded } from './load.ts'
 import type { Located } from './plugins.ts'
+import { isObj } from '../shared.ts'
 
 type Raw = Record<string, unknown>
-const isObj = (v: unknown): v is Raw =>
-  typeof v === 'object' && v !== null && !Array.isArray(v)
 /** The value as JSON holds it: no `undefined`, no key order that matters. */
 const norm = (v: unknown): unknown =>
   v === undefined ? undefined : JSON.parse(JSON.stringify(v))

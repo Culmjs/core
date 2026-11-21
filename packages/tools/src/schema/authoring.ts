@@ -128,7 +128,7 @@ const fieldType: Schema = {
 /**
  * One JSON Schema (draft 2020-12) of the folder authoring format: site.json, a page, a piece, a block file and a data file.
  * It is open wherever the loader is open, has no depth or count limit, and holds no reference between nodes.
- * One known place it is stricter than the loader: `site` refuses a file with `root`, `fields` or `looks`, which the loader
+ * One known place it is stricter than the loader: `site` refuses a file with `root`, `fields`, `looks`, `plugins` or `out`, which the loader
  * ignores in site.json. Without it a broken page, piece, data or block file would match `site` under the root `anyOf`
  * and no error would show.
  */
@@ -160,7 +160,21 @@ export function authoringSchema(registry: Registry): Record<string, unknown> {
         footer: ref('node'),
       },
       // what tells a site from the other four shapes, so a broken page is not read as a site
-      not: { anyOf: ['root', 'fields', 'looks'].map(k => ({ required: [k] })) },
+      not: {
+        anyOf: ['root', 'fields', 'looks', 'plugins', 'out'].map(k => ({
+          required: [k],
+        })),
+      },
+    },
+    culm: {
+      type: 'object',
+      properties: {
+        $schema: str,
+        plugins: { type: 'array', items: str },
+        out: str,
+      },
+      // what tells culm.json from the others, so a broken page is not read as one
+      anyOf: [{ required: ['plugins'] }, { required: ['out'] }],
     },
     page: {
       type: 'object',
@@ -276,7 +290,7 @@ export function authoringSchema(registry: Registry): Record<string, unknown> {
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     title: 'Culm authoring format',
-    anyOf: ['site', 'page', 'piece', 'block', 'data'].map(ref),
+    anyOf: ['site', 'culm', 'page', 'piece', 'block', 'data'].map(ref),
     $defs: defs,
   }
 }

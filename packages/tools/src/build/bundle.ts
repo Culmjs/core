@@ -10,6 +10,7 @@ import {
 import { basename, dirname, join, resolve } from 'node:path'
 import { FONTS, buildIdentity, compileSite } from '@culmjs/core'
 import type { Manifest, SiteDocument } from '@culmjs/core'
+import { SOURCES } from '../shared.ts'
 import { inside, media, refusal } from '../folder/files.ts'
 import type { Loaded } from '../folder/load.ts'
 import type { Located } from '../folder/plugins.ts'
@@ -45,18 +46,6 @@ const realish = async (p: string): Promise<string> => {
     }
   }
 }
-const SOURCES = [
-  'assets',
-  'fonts',
-  'pages',
-  'pieces',
-  'blocks',
-  'data',
-  'node_modules',
-  '.culm',
-  'site.json',
-  'culm.json',
-]
 /** True when the output folder, by real path, is, holds or lies inside the project folder or one of its source folders. */
 async function outRefused(dir: string, target: string): Promise<boolean> {
   const out = await realish(target)

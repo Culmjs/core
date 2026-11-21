@@ -16,13 +16,13 @@ import type {
   Registry,
   Row,
 } from '@culmjs/core'
+import { ID_RE, PLAIN, SOURCES, isObj } from '../shared.ts'
 import { parseFile, type JsonPath } from './jsonc.ts'
 
 /** The files loadPlugins reads, and so owns the problems of: culm.json and the top-level blocks/ and data/ files. */
 export const readByPlugins = (file: string): boolean =>
   /^(culm\.json|(blocks|data)\/[^/]+\.json)$/.test(file)
 
-const ID_RE = /^[a-z0-9]{1,20}$/
 const LOCAL = {
   name: 'local',
   version: 1,
@@ -30,21 +30,11 @@ const LOCAL = {
   runs: ['load', 'edit', 'build'],
   trust: 'declarative',
 } as const satisfies Plugin
-const PLAIN = {
-  id: 'plain',
-  name: 'Plain',
-  family: 'Minimal',
-  brand: '#2255aa',
-  ink: '#111111',
-  bg: '#ffffff',
-  headingFont: 'sys:serif',
-  bodyFont: 'sys:sans',
-  corners: 4,
-  dark: 'auto',
-} as const
 /** Project sources: an output folder may not be one of these or lie inside one. */
-export const RESERVED =
-  /^(blocks|pages|pieces|data|assets|fonts|node_modules|\.culm|site\.json|culm\.json)([\\/]|$)/i
+export const RESERVED = new RegExp(
+  `^(${SOURCES.map(n => n.replace('.', '\\.')).join('|')})([\\\\/]|$)`,
+  'i',
+)
 const NAME_RE = /^(@[a-z0-9._~-]+\/)?[a-z0-9._~-]+$/
 const SCALARS = ['text', 'number', 'boolean', 'list']
 const validType = (t: unknown): boolean =>
@@ -166,9 +156,6 @@ export type Located = Problem & {
   column?: number
 }
 export type ProjectConfig = { plugins: string[]; out: string }
-
-const isObj = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v)
 
 export async function loadPlugins(
   dir: string,

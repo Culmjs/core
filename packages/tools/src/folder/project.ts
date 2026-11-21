@@ -15,7 +15,7 @@ export type Project = {
  * are together in `loaded.problems`, each once. Writes nothing, and does not open `.culm/`.
  */
 export async function openProject(dir: string): Promise<Project> {
-  const { files, refused } = await readFolder(dir)
+  const { files, refused, unreadable } = await readFolder(dir)
   const { registry, config, problems } = await loadPlugins(dir, files)
   const loaded = await loadFiles(
     files,
@@ -23,7 +23,7 @@ export async function openProject(dir: string): Promise<Project> {
     { alreadyReported: true },
     refused,
   )
-  loaded.problems.unshift(...problems)
+  loaded.problems.unshift(...(unreadable ? [unreadable] : []), ...problems)
   return {
     dir,
     registry,

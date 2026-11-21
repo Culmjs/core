@@ -10,31 +10,10 @@ import { inside, media, refusal, resolveFile } from '../folder/files.ts'
 import { openProject } from '../folder/project.ts'
 import type { Located } from '../folder/plugins.ts'
 import { authoringSchema } from '../schema/authoring.ts'
+import { MIME } from '../shared.ts'
 import { CLIENT_SCRIPT } from './client.ts'
 
 const PAUSE_MS = 50
-const TYPES: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.json': 'application/json',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.avif': 'image/avif',
-  '.ico': 'image/x-icon',
-  '.woff2': 'font/woff2',
-  '.woff': 'font/woff',
-  '.ttf': 'font/ttf',
-  '.otf': 'font/otf',
-  '.txt': 'text/plain; charset=utf-8',
-  '.mp4': 'video/mp4',
-  '.webm': 'video/webm',
-  '.pdf': 'application/pdf',
-}
 
 /**
  * Serves the project on 127.0.0.1 (no other address, no option). Pages come from the last good compile held in memory; a save that
@@ -182,7 +161,7 @@ export async function startDev(
       res
         .writeHead(200, {
           'content-type':
-            TYPES[extname(real).toLowerCase()] ?? 'application/octet-stream',
+            MIME[extname(real).toLowerCase()] ?? 'application/octet-stream',
           'x-content-type-options': 'nosniff',
           'cache-control': 'no-cache',
         })
@@ -229,13 +208,13 @@ export async function startDev(
     if (html !== undefined)
       return void res
         .writeHead(200, {
-          'content-type': TYPES['.html']!,
+          'content-type': MIME['.html']!,
           'cache-control': 'no-cache',
         })
         .end(page(html))
     if (pages.size === 0)
       return void res
-        .writeHead(503, { 'content-type': TYPES['.html']! })
+        .writeHead(503, { 'content-type': MIME['.html']! })
         .end(
           page(
             '<!doctype html><title>Culm</title><body>The project has problems.</body>',

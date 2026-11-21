@@ -22,6 +22,7 @@ import {
 import type { SiteStore } from '@culmjs/core/ops'
 import { openBrowser, type Answer, type Browser, type Page } from './browser.ts'
 import { contrastOf } from './contrast.ts'
+import { MIME } from '../shared.ts'
 
 export type MeasureInput = {
   doc: SiteDocument
@@ -52,21 +53,6 @@ const ORIGIN = 'https://site.culm.invalid'
 const HEIGHT = 900
 const LOAD_MS = 15000
 const FONTS_MS = 5000
-const TYPES: Record<string, string> = {
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.avif': 'image/avif',
-  '.mp4': 'video/mp4',
-  '.webm': 'video/webm',
-  '.woff2': 'font/woff2',
-  '.woff': 'font/woff',
-  '.ttf': 'font/ttf',
-  '.otf': 'font/otf',
-}
 
 const incomplete = (message: string): Problem => ({
   code: 'MEASUREMENT_INCOMPLETE',
@@ -137,7 +123,7 @@ function answers(
       return undefined
     }
     return {
-      type: TYPES[extname(rest).toLowerCase()] ?? 'application/octet-stream',
+      type: MIME[extname(rest).toLowerCase()] ?? 'application/octet-stream',
       body,
     }
   }

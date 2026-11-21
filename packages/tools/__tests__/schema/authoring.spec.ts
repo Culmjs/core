@@ -228,3 +228,12 @@ test('authoringSchema never throws for a block whose settings or options are mal
   } as Plugin)
   assert.doesNotThrow(() => authoringSchema(r))
 })
+
+test('culm.json has a shape: plugins is a list of names, out a string', () => {
+  const ok = check(createRegistry())
+  assert.ok(ok({ plugins: ['a', '@b/c'], out: 'dist' }).ok)
+  assert.ok(ok({}).ok)
+  assert.ok(!ok({ plugins: [1] }).ok)
+  assert.ok(!ok({ plugins: 'a' }).ok)
+  assert.ok(!ok({ out: 1 }).ok)
+})

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { posix } from 'node:path'
+import { ID_RE, PLAIN, isObj } from '../shared.ts'
 import { refusal, walkFiles } from './files.ts'
 import {
   SCHEMA_VERSION,
@@ -55,36 +56,35 @@ export type Loaded = {
   problems: Located[]
 }
 
-// core's id rule, not exported by core
-const ID_RE = /^[a-z0-9]{1,20}$/
-
-const isObj = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v)
-
-const PLAIN: Look = {
-  id: 'plain',
-  name: 'Plain',
-  family: 'Minimal',
-  brand: '#2255aa',
-  ink: '#111111',
-  bg: '#ffffff',
-  headingFont: 'sys:serif',
-  bodyFont: 'sys:sans',
-  corners: 4,
-  dark: 'auto',
-}
-
 // ---------------------------------------------------------------- reading
 
-type Scan = { files: Map<string, string>; refused: Map<string, string> }
+type Scan = {
+  files: Map<string, string>
+  refused: Map<string, string>
+  /** The folder could not be read at all: the one problem, and no files. */
+  unreadable?: Located
+}
 
 /** Reads the project's JSON files. A symbolic link that leaves the folder is not read; it is listed in `refused`. */
 export async function readFolder(dir: string): Promise<Scan> {
-  const { files, refused } = await walkFiles(
-    dir,
-    ['culm.json', 'site.json', 'pages', 'pieces', 'blocks', 'data'],
-    rel => rel.endsWith('.json'),
-  )
+  let walked
+  try {
+    walked = await walkFiles(
+      dir,
+      ['culm.json', 'site.json', 'pages', 'pieces', 'blocks', 'data'],
+      rel => rel.endsWith('.json'),
+    )
+  } catch (e) {
+    return {
+      files: new Map(),
+      refused: new Map(),
+      unreadable: {
+        code: 'INVALID_DOCUMENT',
+        message: `The folder "${dir}" cannot be read: ${e instanceof Error ? e.message : String(e)}`,
+      },
+    }
+  }
+  const { files, refused } = walked
   const read = await Promise.all(
     [...files].map(
       async ([rel, abs]) => [rel, await readFile(abs, 'utf8')] as const,
@@ -641,6 +641,8 @@ export async function loadFolder(
   registry: Registry,
   opts: LoadOptions = {},
 ): Promise<Loaded> {
-  const { files, refused } = await readFolder(dir)
-  return build(files, registry, refused, opts)
+  const { files, refused, unreadable } = await readFolder(dir)
+  const loaded = await build(files, registry, refused, opts)
+  if (unreadable) loaded.problems.unshift(unreadable)
+  return loaded
 }
