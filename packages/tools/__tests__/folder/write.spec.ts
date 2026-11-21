@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { plan } from '@culmjs/core/ops'
 import type { Op } from '@culmjs/core/ops'
-import type { SiteDocument } from '@culmjs/core'
+import type { Registry, SiteDocument } from '@culmjs/core'
 import { copyFixture } from '../fixtures.ts'
 import { derivedId } from '../../src/folder/ids.ts'
 import { loadFiles, loadFolder, readProject } from '../../src/folder/load.ts'
@@ -19,6 +19,16 @@ const FIXTURE = resolve(
 )
 const base = await readProject(FIXTURE)
 const { registry } = await loadPlugins(FIXTURE, base)
+// The same project with version 2 of the hero block: its lead is a level 3 heading.
+const v2files = new Map(base)
+v2files.set(
+  'blocks/hero.json',
+  base
+    .get('blocks/hero.json')!
+    .replace('"version": 1', '"version": 2')
+    .replace('"level": "p"', '"level": "h3"'),
+)
+const registryV2 = (await loadPlugins(FIXTURE, v2files)).registry
 const first = await loadFiles(base, registry)
 const doc0 = first.doc!
 const cid = doc0.components[0]!.id
@@ -36,22 +46,27 @@ async function put(dir: string, e: Edits) {
   for (const f of e.remove) await rm(join(dir, f))
 }
 /** Copies the fixture, plans the operations, writes the edits, loads again. */
-async function run(ops: Op[], prep?: (dir: string) => Promise<void>) {
+async function run(
+  ops: Op[],
+  prep?: (dir: string) => Promise<void>,
+  /** the registry the batch is planned and written with; the folder is loaded with `registry` first */
+  reg: Registry = registry,
+) {
   const dir = await copyFixture('site-basic')
   await prep?.(dir)
   const loaded = await loadFolder(dir, registry)
   assert.deepEqual(loaded.problems, [])
-  const planned = plan(loaded.doc!, registry, {
+  const planned = plan(loaded.doc!, reg, {
     site: 'site',
     baseRevision: 0,
     key: 'k',
     ops,
   })
   assert.ok(planned.ok, JSON.stringify(planned))
-  const edits = fileEdits(loaded.doc!, planned.doc, loaded, registry)
+  const edits = fileEdits(loaded.doc!, planned.doc, loaded, reg)
   assert.deepEqual(edits.problems, [])
   await put(dir, edits)
-  const again = await loadFolder(dir, registry)
+  const again = await loadFolder(dir, reg)
   return { dir, loaded, planned, edits, again }
 }
 const read = (dir: string, f: string) => readFile(join(dir, f), 'utf8')
@@ -232,7 +247,17 @@ const byId = (d: SiteDocument) => ({
 })
 for (const [name, ops] of CASES)
   test(`${name}: plan, write, load again gives the planned document`, async () => {
-    const r = await run(ops)
+    const r = await run(
+      ops,
+      undefined,
+      name === 'updateBlock' ? registryV2 : registry,
+    )
+    if (name === 'updateBlock')
+      assert.notDeepEqual(
+        r.planned.doc,
+        r.loaded.doc,
+        'the case changes the document',
+      )
     assert.deepEqual(r.again.problems, [])
     assert.deepEqual(byId(r.again.doc!), byId(r.planned.doc as SiteDocument))
   })
@@ -446,7 +471,7 @@ test('comments and key order of every untouched part of an edited file are uncha
   assert.deepEqual(root(now), root(was))
 })
 
-test('CRLF line endings and tab indentation are kept', async () => {
+test('CRLF line endings are kept', async () => {
   const crlf = (t: string) => t.replace(/\n/g, '\r\n')
   const files = new Map(base)
   files.set('pages/home.json', crlf(base.get('pages/home.json')!))
@@ -528,4 +553,96 @@ test('expandShortForm rewrites one short form as nodes and leaves the rest of th
     expandShortForm(text, ['root', 'children', 1], registry),
     undefined,
   )
+})
+
+test('a node name on a use of a piece with a setting called name is a located problem, and nothing is written', async () => {
+  const dir = await copyFixture('site-basic')
+  const piece = base
+    .get('pieces/visit-card.json')!
+    .replace(
+      '"settings": [',
+      '"settings": [\n    { "key": "name", "label": "Name", "type": "text", "part": "heading", "field": "text" },',
+    )
+  await writeFile(join(dir, 'pieces/visit-card.json'), piece)
+  const loaded = await loadFolder(dir, registry)
+  assert.deepEqual(loaded.problems, [])
+  const p = plan(loaded.doc!, registry, {
+    site: 's',
+    baseRevision: 0,
+    key: 'k',
+    ops: [
+      {
+        op: 'setProps',
+        tree: home,
+        id: 'visit1',
+        props: {},
+        name: 'Front card',
+      },
+    ],
+  })
+  assert.ok(p.ok, JSON.stringify(p))
+  const e = fileEdits(loaded.doc!, p.doc, loaded, registry)
+  assert.deepEqual(e.write, {})
+  assert.equal(e.problems.length, 1)
+  assert.equal(e.problems[0]!.file, 'pages/home.json')
+  assert.match(e.problems[0]!.message, /setting called name/)
+  // a value of that setting still goes to its key
+  const q = plan(loaded.doc!, registry, {
+    site: 's',
+    baseRevision: 0,
+    key: 'k',
+    ops: [{ op: 'setInstance', tree: home, id: 'visit1', set: { name: 'Hi' } }],
+  })
+  assert.ok(q.ok)
+  const f = fileEdits(loaded.doc!, q.doc, loaded, registry)
+  assert.deepEqual(f.problems, [])
+  assert.ok(f.write['pages/home.json']!.includes('"name": "Hi"'))
+})
+
+test('moving one element leaves every other sibling and every comment where it was', async () => {
+  const wasMenu = base.get('pages/menu.json')!
+  // to the end
+  const end = await run([
+    { op: 'move', tree: menu, id: 'cards1', parent: 'menuroot', index: 2 },
+  ])
+  const a = end.edits.write['pages/menu.json']!
+  const note =
+    '// This node has no written id: the loader derives one and reports a notice.'
+  assert.ok(
+    a.includes('{ "use": "../pieces/visit-card.json", "id": "visit2" },'),
+  )
+  assert.match(
+    a,
+    new RegExp(
+      note.replace(/[/.:]/g, '\\$&') + '\\n\\s*\\{\\n\\s*"kind": "text"',
+    ),
+  )
+  assert.equal(a.split(note).length, 2)
+  // the moved element keeps its own formatting
+  assert.ok(
+    a.includes(
+      '"block": "cards",\n        "id": "cards1",\n        "source": "menu",',
+    ),
+  )
+  // to the front: the one with the comment moves
+  const front = await run([
+    { op: 'move', tree: menu, id: allergens, parent: 'menuroot', index: 0 },
+  ])
+  const b = front.edits.write['pages/menu.json']!
+  assert.match(
+    b,
+    new RegExp(
+      note.replace(/[/.:]/g, '\\$&') + '\\n\\s*\\{\\n\\s*"kind": "text"',
+    ),
+  )
+  assert.ok(b.indexOf(note) < b.indexOf('"block": "cards"'))
+  assert.ok(
+    b.includes('{ "use": "../pieces/visit-card.json", "id": "visit2" },') ||
+      b.includes('{ "use": "../pieces/visit-card.json", "id": "visit2" }'),
+  )
+  assert.ok(
+    b.includes('"source": "menu",\n        "heading": "Today\'s bakes"'),
+  )
+  assert.deepEqual(front.again.doc, front.planned.doc)
+  assert.equal(linesChanged(wasMenu, b) > 0, true)
 })

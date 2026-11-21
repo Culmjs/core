@@ -1,5 +1,6 @@
 import { posix } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
+import { findNodeAtLocation, parseTree, type ParseError } from 'jsonc-parser'
 import {
   applySetting,
   defaultSiteStyles,
@@ -186,7 +187,66 @@ export function fileEdits(
     } else put(file, path, b)
   }
 
-  /** Makes the list at `path` hold `aKeys` in order: removes, moves and inserts, keeping what stays. */
+  /**
+   * The text of the list element at `path` with the whole-line `//` comments above it, which are cut out of the file (the element
+   * itself stays for `drop`). Undefined when the text cannot be sliced; the caller then re-serialises the value.
+   */
+  function cutOut(file: string, path: JsonPath): string | undefined {
+    const t = texts.get(file)
+    if (t === undefined || t.startsWith('\uFEFF') || poisoned.has(file))
+      return undefined
+    const errs: ParseError[] = []
+    const tree = parseTree(t, errs, { allowTrailingComma: true })
+    const node =
+      !errs.length && tree ? findNodeAtLocation(tree, path) : undefined
+    if (!node) return undefined
+    const lineStart = t.lastIndexOf('\n', node.offset - 1) + 1
+    let from = node.offset
+    if (/^[ \t]*$/.test(t.slice(lineStart, node.offset))) {
+      let ls = lineStart
+      while (ls > 0) {
+        const ps = t.lastIndexOf('\n', ls - 2) + 1
+        if (!/^\s*\/\//.test(t.slice(ps, ls))) break
+        ls = ps
+      }
+      if (ls < lineStart) {
+        from = ls + /^[ \t]*/.exec(t.slice(ls))![0].length
+        texts.set(file, t.slice(0, ls) + t.slice(lineStart))
+        return t.slice(from, node.offset + node.length)
+      }
+    }
+    return t.slice(from, node.offset + node.length)
+  }
+
+  /** Positions of one longest increasing run of `xs`: the elements of a list that need not move. */
+  const stay = (xs: number[]): Set<number> => {
+    const tails: number[] = []
+    const prev: number[] = []
+    xs.forEach((v, i) => {
+      let lo = 0
+      let hi = tails.length
+      while (lo < hi) {
+        const m = (lo + hi) >> 1
+        if (xs[tails[m]!]! < v) lo = m + 1
+        else hi = m
+      }
+      prev[i] = lo ? tails[lo - 1]! : -1
+      tails[lo] = i
+    })
+    const keep = new Set<number>()
+    for (
+      let i = tails.length ? tails[tails.length - 1]! : -1;
+      i >= 0;
+      i = prev[i]!
+    )
+      keep.add(i)
+    return keep
+  }
+
+  /**
+   * Makes the list at `path` hold `aKeys` in order: removes, inserts, and moves only the elements outside one longest run that keeps
+   * its order. A moved element goes as its own text with its comments above it, so nothing in it or beside it is rewritten.
+   */
   function seq(
     file: string,
     path: JsonPath,
@@ -197,18 +257,34 @@ export function fileEdits(
     for (let j = bKeys.length - 1; j >= 0; j--)
       if (!aKeys.includes(bKeys[j]!)) drop(file, [...path, j])
     const cur = bKeys.filter(k => aKeys.includes(k))
+    const keep = stay(cur.map(k => aKeys.indexOf(k)))
+    const moved = new Map<string, { slice?: string; value: unknown }>()
+    for (let m = cur.length - 1; m >= 0; m--) {
+      if (keep.has(m)) continue
+      const value = rawAt(file, [...path, m])
+      moved.set(cur[m]!, { value, slice: cutOut(file, [...path, m]) })
+      drop(file, [...path, m])
+      cur.splice(m, 1)
+    }
     aKeys.forEach((k, i) => {
-      if (cur[i] === k) return
-      const m = cur.indexOf(k)
-      if (m > i) {
-        const v = rawAt(file, [...path, m])
-        drop(file, [...path, m])
-        put(file, [...path, i], v, true)
-        cur.splice(m, 1)
-      } else put(file, [...path, i], make(k), true)
-      cur.splice(i, 0, k)
+      if (cur[i] !== k) {
+        const mv = moved.get(k)
+        if (mv?.slice === undefined)
+          put(file, [...path, i], mv ? mv.value : make(k), true)
+        else {
+          put(file, [...path, i], HOLE, true)
+          const t = texts.get(file)
+          if (t !== undefined && !poisoned.has(file))
+            texts.set(
+              file,
+              t.replace(JSON.stringify(HOLE), () => mv.slice!),
+            )
+        }
+        cur.splice(i, 0, k)
+      }
     })
   }
+  const HOLE = '__culm_moved_element__'
 
   // ---- files of pieces and pages: where each lives, including the ones this batch creates
   const pieceFiles = new Map<string, string>()
@@ -240,6 +316,11 @@ export function fileEdits(
     }
     return raw
   }
+  // a piece that declares a setting called `name` keeps that key of a use for the setting
+  const declaresName = (component: string | undefined) =>
+    after.components
+      .find(c => c.id === component)
+      ?.props.some(p => p.key === 'name') ?? false
   const useLabel = () =>
     kindSpec('instance', registry.kinds())?.label ?? 'Component'
   function rawNew(n: Node, parent: Node | undefined, file: string): Raw {
@@ -249,6 +330,7 @@ export function fileEdits(
     if (
       pf &&
       n.kind === 'instance' &&
+      (n.name === useLabel() || !declaresName(n.component)) &&
       !Object.keys(extra).length &&
       eq(slot, defaultSlot(parent?.kind))
     )
@@ -369,7 +451,14 @@ export function fileEdits(
       )
     const next: Raw = { use: raw.use }
     if (raw.id !== undefined) next.id = raw.id
-    if (a.name !== useLabel()) next.name = a.name
+    if (a.name !== useLabel())
+      if (declaresName(a.component))
+        return bad(
+          file,
+          path,
+          `${a.id} is a use of a piece that has a setting called name, so a use cannot carry a node name.`,
+        )
+      else next.name = a.name
     Object.assign(next, a.set ?? {})
     sync(file, path, raw, next)
   }
@@ -537,8 +626,7 @@ export function fileEdits(
     const own = omit(raw, 'root', '$schema')
     const { root: bRoot, ...bFields } = was
     const { root: aRoot, ...aFields } = p
-    void bFields
-    if (!eq({ ...bFields }, { ...aFields }))
+    if (!eq(bFields, aFields))
       sync(
         file,
         [],
