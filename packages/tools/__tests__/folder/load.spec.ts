@@ -445,6 +445,30 @@ test('the hero title follows its text and its row stacks on a phone, so a nowrap
   )
 })
 
+test('the CUJ 3 repair (phone nowrap false, size 28) gives the title wrapping text that fits its row', async () => {
+  const { loaded } = await both({})
+  const doc = structuredClone(loaded.doc!)
+  const title = doc.pages[0]!.root.children![0]!.children![0]!.children![0]!
+  assert.equal(title.id, 'hero1.title')
+  title.style!.phone = { nowrap: false, size: 28 }
+  const c = compilePage(doc, 'home', {
+    registry,
+    data: loaded.data,
+    mode: 'measure',
+  })
+  assert.ok(c.ok)
+  const k = new RegExp('class="(c\\d+)" data-id="hero1\\.title"').exec(
+    c.html,
+  )![1]!
+  // the base rule keeps the fit width; the phone rule turns wrapping back on and shrinks the text
+  assert.match(c.css, new RegExp(`\\.${k}\\{[^}]*width:fit-content`))
+  const phone = new RegExp(
+    `@media \\(max-width: 600px\\)\\{[^]*?\\.${k}\\{([^}]*)\\}`,
+  ).exec(c.css)![1]!
+  assert.match(phone, /font-size:28px/)
+  assert.match(phone, /white-space:normal/)
+})
+
 test('a symbolic link in pieces/ that points outside the project is refused with file and line', async () => {
   const dir = await copyFixture('site-basic')
   const outside = mkdtempSync(join(tmpdir(), 'culm-outside-'))
