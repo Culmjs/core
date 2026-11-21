@@ -32,7 +32,7 @@ type Rec = {
   time: number
 }
 type State =
-  | { kind: 'fresh' }
+  | { kind: 'fresh'; stale?: true }
   | { kind: 'ok'; revision: number; rec: Rec }
   | { kind: 'bad'; problem: Located }
 type Refusal = {
@@ -141,9 +141,14 @@ export async function fileStore(
     } catch (e) {
       if (code(e) !== 'ENOENT') return bad('.culm/head', 'cannot be read')
       // no history, or a history that lost its head: the second is damage, never a new start
-      return (await names('revisions')).length || (await names('blobs')).length
-        ? bad('.culm/head', 'is missing')
-        : { kind: 'fresh' }
+      const recs = await names('revisions')
+      const left = recs.length + (await names('blobs')).length
+      if (!left) return { kind: 'fresh' }
+      // An interrupted first commit (blobs, and at most the one first record, no journal) is not damage: the project files are
+      // still wholly old, and recovery removes the leftovers. Anything more is a history that lost its head.
+      return recs.length <= 1 && !(await exists(journalPath))
+        ? { kind: 'fresh', stale: true }
+        : bad('.culm/head', 'is missing')
     }
     if (!/^\d+$/.test(text.trim()))
       return bad('.culm/head', 'is empty or not a revision number')
@@ -254,8 +259,21 @@ export async function fileStore(
    * On open: records numbered above `head` are deleted, and the files a journal names are put back from the head revision's blobs.
    * This is the one place besides `commit` that writes to `.culm/`. A corrupt `.culm/` is left as it is.
    */
+  const clear = async () => {
+    for (const d of ['revisions', 'blobs', 'tmp'])
+      await rm(join(culm, d), { recursive: true, force: true })
+  }
   async function recover() {
     const st = await state()
+    if (st.kind === 'fresh' && st.stale) {
+      const release = await takeLock()
+      try {
+        if (((await state()) as State).kind === 'fresh') await clear()
+      } finally {
+        await release()
+      }
+      return
+    }
     if (st.kind !== 'ok') return
     const pending = async () =>
       (await exists(journalPath)) ||
@@ -411,6 +429,7 @@ export async function fileStore(
         const mine = mineOf(loaded)
         let head: number
         if (st.kind === 'fresh') {
+          if (st.stale) await clear()
           const f = hashes(mine)
           // the files changed since `head` reported this number: the same rule as for a later revision
           if (pending && !sameFiles(f, pending.files)) {

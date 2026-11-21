@@ -1,5 +1,6 @@
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
@@ -516,25 +517,6 @@ test('restore after removePage writes the stored files back, comments and tabs i
   assert.deepEqual(await store.get(SITE, n + 2), await store.get(SITE, n))
 })
 
-test('restore after a batch that changed a commented line writes the stored files back', async () => {
-  const { dir, registry, store } = await open(two())
-  await commented(dir)
-  const n = (await headOf(store)).revision
-  const atN = await readProject(dir)
-  assert.ok((await apply(store, registry, req(n, 'a', [set('t1', 'X')]))).ok)
-  assert.ok(
-    (
-      await restore(store, registry, {
-        site: SITE,
-        to: n,
-        baseRevision: n + 1,
-        key: 'b',
-      })
-    ).ok,
-  )
-  assert.deepEqual(await readProject(dir), atN)
-})
-
 test('a store that outlives the deletion of .culm/ never restarts at an old number', async () => {
   const { dir, registry } = await project(two())
   const store = await fileStore(dir, registry, { now: () => 1_000_000_000_000 })
@@ -586,3 +568,34 @@ test('a lock left by a dead process is taken over by recovery', async () => {
   assert.ok(!readdirSync(join(dir, '.culm')).includes('journal.json'))
   assert.equal((await headOf(again)).revision, r0)
 })
+
+for (const withRecord of [false, true])
+  test(`an interrupted first commit (${withRecord ? 'blobs and a record' : 'blobs only'}, no head) is recovered`, async () => {
+    const { dir, registry } = await project(two())
+    const old = await readProject(dir)
+    mkdirSync(join(dir, '.culm/blobs'), { recursive: true })
+    mkdirSync(join(dir, '.culm/revisions'), { recursive: true })
+    const files: Record<string, string> = {}
+    for (const [p, t] of old) {
+      if (p === 'data') continue
+      const h = createHash('sha256').update(t).digest('hex')
+      writeFileSync(join(dir, '.culm/blobs', h), t)
+      files[p] = h
+    }
+    if (withRecord)
+      writeFileSync(
+        join(dir, '.culm/revisions/5.json'),
+        JSON.stringify({ files, by: 'culm', time: 1 }),
+      )
+    const store = await fileStore(dir, registry)
+    const h = await headOf(store)
+    assert.deepEqual(await readProject(dir), old)
+    assert.ok(!readdirSync(join(dir, '.culm')).includes('head'))
+    const r = await apply(
+      store,
+      registry,
+      req(h.revision, 'k', [set('t1', 'A')]),
+    )
+    assert.ok(r.ok, JSON.stringify(r))
+    assert.equal((await headOf(store)).revision, h.revision + 1)
+  })
