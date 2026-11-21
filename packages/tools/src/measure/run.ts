@@ -75,7 +75,7 @@ const incomplete = (message: string): Problem => ({
 const why = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 /** The states the profile leaves out: each declared value that is not the initial one. */
-function skippedStates(doc: SiteDocument, pageId: string): string[] {
+export function skippedStates(doc: SiteDocument, pageId: string): string[] {
   const out: string[] = []
   const done = new Set<string>()
   // The page, its header and footer, and each component an instance in them (or in such a component) draws.
@@ -297,7 +297,7 @@ export async function runMeasure(input: MeasureInput): Promise<Report> {
 }
 
 /** The pages a broken document was asked to measure, or its page ids as far as they can be read. */
-function ids(input: MeasureInput): string[] {
+export function ids(input: MeasureInput): string[] {
   if (input.pages?.length) return input.pages
   const ps = (input.doc as { pages?: unknown } | undefined)?.pages
   const found = Array.isArray(ps)

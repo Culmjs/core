@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { accessSync, constants, readdirSync, statSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -343,6 +344,8 @@ type Owner = {
   fn?: (url: string) => Promise<Answer | undefined>
   blocked: string[]
   hooked: Set<string>
+  /** Sessions whose children follow this owner. */
+  adopted: Set<string>
 }
 type Hub = {
   owners: Map<string, Owner>
@@ -365,6 +368,7 @@ function watch(cdp: Cdp): Hub {
   const hub: Hub = {
     owners: new Map(),
     async adopt(owner, session) {
+      owner.adopted.add(session)
       cdp.on(session, 'Target.attachedToTarget', ev => void attached(ev, owner))
       await cdp.send('Target.setAutoAttach', AUTO, session)
     },
@@ -392,6 +396,8 @@ function watch(cdp: Cdp): Hub {
       cdp.send('Target.closeTarget', { targetId: t.targetId }).catch(() => {})
     const mine = !parent && t.type === 'page' && !t.openerId
     if (mine) return hub.slot(t.targetId).ok(sessionId) // newPage sets it up and resumes it
+    // A target runs only once its requests are covered: by a Fetch hook of its own, or by its frame's (a dedicated worker, a worklet). Else it is closed.
+    let covered = false
     try {
       if (!parent && t.type === 'page') {
         // A window the page opened: its requests fail and are listed, it runs just long enough that its opener is not left waiting, then it goes.
@@ -400,20 +406,31 @@ function watch(cdp: Cdp): Hub {
         const popup: Owner = {
           blocked: opener?.blocked ?? [],
           hooked: new Set(),
+          adopted: new Set(),
         }
-        await hook(cdp, popup, sessionId).catch(() => {})
+        await hook(cdp, popup, sessionId)
         await resume()
-        return void (await close())
+        covered = true
+        return
       }
       const owner = parent ?? hub.last
-      if (!owner) return void (await close())
-      // A dedicated worker has no Fetch of its own: its requests go through its frame's.
-      if (t.type !== 'worker') await hook(cdp, owner, sessionId)
-      await hub.adopt(owner, sessionId)
-    } catch {
-      // a target that went away while it was being set up
-    } finally {
+      if (!owner) return
+      if (t.type === 'worker' || t.type === 'worklet') {
+        covered = true
+        await hub.adopt(owner, sessionId).catch(() => {})
+      } else {
+        await hook(cdp, owner, sessionId)
+        await hub.adopt(owner, sessionId)
+        covered = true
+      }
       await resume()
+    } catch {
+      // a target that went away, or one that could not be covered
+    } finally {
+      if (!covered || (!parent && t.type === 'page')) {
+        cdp.drop(sessionId)
+        await close()
+      }
     }
   }
   cdp.on('', 'Target.attachedToTarget', ev => void attached(ev))
@@ -447,6 +464,14 @@ async function hook(cdp: Cdp, owner: Owner, session: string) {
           responseHeaders: [
             { name: 'Content-Type', value: r.type },
             { name: 'Access-Control-Allow-Origin', value: '*' },
+            ...(/^text\/html/i.test(r.type)
+              ? [
+                  {
+                    name: 'Content-Security-Policy',
+                    value: scriptPolicy(Buffer.from(r.body).toString('utf8')),
+                  },
+                ]
+              : []),
           ],
           body: Buffer.from(r.body).toString('base64'),
         })
@@ -480,7 +505,7 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
   })
   const s = (method: string, params?: object, ms?: number) =>
     cdp.send(method, params, sessionId, ms)
-  const owner: Owner = { blocked: [], hooked: new Set() }
+  const owner: Owner = { blocked: [], hooked: new Set(), adopted: new Set() }
   hub.owners.set(targetId, owner)
   hub.last = owner
   try {
@@ -499,7 +524,7 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
     await hub.adopt(owner, sessionId)
     await s('Runtime.runIfWaitingForDebugger')
   } catch (e) {
-    for (const h of owner.hooked) cdp.drop(h)
+    for (const h of [...owner.hooked, ...owner.adopted]) cdp.drop(h)
     cdp.drop(sessionId)
     hub.owners.delete(targetId)
     if (hub.last === owner) hub.last = undefined
@@ -577,7 +602,7 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
       return Buffer.from(r.data, 'base64')
     },
     async close() {
-      for (const h of owner.hooked) cdp.drop(h)
+      for (const h of [...owner.hooked, ...owner.adopted]) cdp.drop(h)
       cdp.drop(sessionId)
       hub.owners.delete(targetId)
       if (hub.last === owner) hub.last = undefined
@@ -586,4 +611,15 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
         .catch(() => {})
     },
   }
+}
+
+/**
+ * Speculation rules (prefetch, prerender) are loaded by the browser itself, where no interception reaches, and `'unsafe-inline'` allows them. So the page may run
+ * only its own inline scripts, named by hash (a rules script, written or added later, is none of them), plus files of its own origin and workers from blob: URLs.
+ */
+function scriptPolicy(html: string): string {
+  const hashes = [...html.matchAll(/<script(\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
+    .filter(m => !/type\s*=\s*["']?speculationrules/i.test(m[1] ?? ''))
+    .map(m => `'sha256-${createHash('sha256').update(m[2]!).digest('base64')}'`)
+  return `script-src 'self' blob: ${[...new Set(hashes)].join(' ')}`
 }

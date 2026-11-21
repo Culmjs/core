@@ -200,7 +200,10 @@ test('a window opened by a click or a form, not by script, is closed and listed 
     await page.goto('https://site.culm.invalid/a', 5000)
     await settle()
     assert.equal(out.count(), 0)
-    assert.ok(page.blocked.length >= 2, JSON.stringify(page.blocked))
+    const popups = page.blocked.filter(
+      b => b === 'a window opened by the page' || b.includes(out.url),
+    )
+    assert.ok(popups.length >= 2, JSON.stringify(page.blocked))
   } finally {
     await page.close()
     out.close()
@@ -254,6 +257,37 @@ test('a popup that keeps its opener (a named target) does not freeze the page, a
     out.close()
   }
 })
+
+for (const kind of ['prefetch', 'prerender'] as const)
+  test(`a speculation rules ${kind} to an outside address never connects`, async () => {
+    const out = await counting()
+    const page = await browser.newPage()
+    try {
+      const rules = JSON.stringify({
+        [kind]: [
+          { source: 'list', urls: [out.url] },
+          { source: 'document', where: { href_matches: '*' } },
+        ],
+      })
+      await page.answer(async url =>
+        url === 'https://site.culm.invalid/r'
+          ? HTML(
+              `<a href="${out.url}">x</a><script type="speculationrules">${rules}</script>`,
+            )
+          : undefined,
+      )
+      await page.goto('https://site.culm.invalid/r', 5000)
+      await page.evaluate(
+        `document.body.append(Object.assign(document.createElement('script'),{type:'speculationrules',textContent:${JSON.stringify(rules)}}))`,
+      )
+      await settle()
+      await settle()
+      assert.equal(out.count(), 0)
+    } finally {
+      await page.close()
+      out.close()
+    }
+  })
 
 test('a shared worker that fetches an outside address is answered by the page, listed, and never connects', async () => {
   const out = await counting()

@@ -8,7 +8,12 @@ import { memoryStore } from '@culmjs/core/ops'
 import { copyFixture } from '../fixtures.ts'
 import { openProject } from '../../src/folder/project.ts'
 import { openBrowser } from '../../src/measure/browser.ts'
-import { measureSince, runMeasure } from '../../src/measure/run.ts'
+import {
+  ids,
+  measureSince,
+  runMeasure,
+  skippedStates,
+} from '../../src/measure/run.ts'
 
 const INSTALL = 'npx playwright install chromium'
 
@@ -102,4 +107,42 @@ test('a document that is not a site is incomplete, never a throw', async () => {
   assert.deepEqual(r.findings, [])
   assert.equal(r.incomplete.length, 1)
   assert.equal(r.incomplete[0]!.problem.code, 'MEASUREMENT_INCOMPLETE')
+})
+
+test('skippedStates lists the non-initial states of the page, header, footer and the components they draw, and no others', async () => {
+  const p = await openProject(await copyFixture('site-basic'))
+  const doc = structuredClone(p.loaded.doc!)
+  const st = (name: string) => [{ name, values: ['a', 'b'], initial: 'a' }]
+  doc.pages.find(x => x.id === 'home')!.root.state = st('page')
+  doc.header.state = st('head')
+  doc.footer.state = st('foot')
+  const used = doc.components[0]!
+  used.root.state = st('used')
+  doc.components.push({
+    ...structuredClone(used),
+    id: 'unused',
+    root: {
+      ...structuredClone(used.root),
+      id: 'unusedroot',
+      state: st('unused'),
+    },
+  })
+  assert.deepEqual(skippedStates(doc, 'home').sort(), [
+    'state:foot=b',
+    'state:head=b',
+    'state:page=b',
+    'state:used=b',
+  ])
+  assert.deepEqual(skippedStates(doc, 'about').sort(), [
+    'state:foot=b',
+    'state:head=b',
+    'state:used=b',
+  ])
+})
+
+test('ids names the pages a broken run was asked for, else the readable page ids, else one empty id', () => {
+  const doc = { pages: [{ id: 'a' }, { id: 5 }, { id: 'b' }] } as never
+  assert.deepEqual(ids({ pages: ['x'], doc } as never), ['x'])
+  assert.deepEqual(ids({ doc } as never), ['a', 'b'])
+  assert.deepEqual(ids({ doc: {} } as never), [''])
 })
