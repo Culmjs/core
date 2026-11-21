@@ -1,9 +1,10 @@
-import type { Layout, Node, Run } from '../document/index.ts'
+import type { Layout, Node, Run, SiteDocument } from '../document/index.ts'
 import type { Problem } from '../document/problems.ts'
 import { walk } from '../document/tree.ts'
 import { flagOf, floating } from '../layout/placement.ts'
 import type { Registry } from '../registry/index.ts'
 import { outlineOf } from './outline.ts'
+import { unrolledTrees } from './unrolled.ts'
 import type {
   ContrastRaw,
   Finding,
@@ -115,7 +116,8 @@ type Input = {
   dir: 'ltr' | 'rtl'
   layouts: LayoutRaw[]
   contrast: ContrastRaw[]
-  root: Node
+  /** the page, its header and footer are read from this, with component instances unrolled */
+  doc: SiteDocument
   registry: Registry
   loaded: { fonts: boolean; assets: boolean }
   /** the page's compile problems: each becomes one class 1 finding, check 'invalid' */
@@ -128,15 +130,25 @@ type Input = {
  * Geometry is measured in the light theme only; contrast findings carry the theme and width they were measured at.
  */
 export function runChecks(input: Input): Finding[] {
-  const { layouts, contrast, root, revision, page, dir, loaded } = input
+  const { layouts, contrast, doc, revision, page, dir, loaded } = input
   const out: Finding[] = []
-  const outline = outlineOf(root, input.registry)
+  const trees = unrolledTrees(doc, page)
+  // A page that is not in the document has no tree of its own: an empty one stands in, so the header and footer are still read.
+  const known = doc.pages.some(p => p.id === page)
+  const root: Node = known
+    ? trees[0]!
+    : { id: page, kind: 'column', name: page, slot: {} }
+  const outline = {
+    nodes: [root, ...(known ? trees.slice(1) : trees)].flatMap(
+      t => outlineOf(t, input.registry).nodes,
+    ),
+  }
   const info = new Map(outline.nodes.map(n => [n.id, n]))
   const kids = new Map<string, string[]>()
   for (const n of outline.nodes)
     if (n.parent) kids.set(n.parent, [...(kids.get(n.parent) ?? []), n.id])
   const widgets = new Map<string, Node>()
-  walk(root, w => widgets.set(w.id, w))
+  for (const t of trees) walk(t, w => widgets.set(w.id, w))
   const sections = kids.get(root.id) ?? []
 
   const push = (

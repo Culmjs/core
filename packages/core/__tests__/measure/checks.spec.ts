@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import type { Layout, Node } from '../../src/document/index.ts'
+import type { Layout, Node, SiteDocument } from '../../src/document/index.ts'
 import type { Problem } from '../../src/document/problems.ts'
 import { findingKey, runChecks, THRESHOLDS } from '../../src/measure/checks.ts'
 import type {
@@ -10,7 +10,7 @@ import type {
   MeasuredBox,
   NodeRaw,
 } from '../../src/measure/types.ts'
-import { node, sampleRegistry, text } from '../kit.ts'
+import { node, sampleRegistry, siteWith, text } from '../kit.ts'
 
 type Box = MeasuredBox
 const b = (x: number, y: number, w: number, h: number): Box => ({ x, y, w, h })
@@ -37,7 +37,7 @@ const layout = (
 ): LayoutRaw => ({ layout: l, width, docWidth, nodes, wide })
 const heading = (id: string, words: string, level = 'h2') =>
   text(id, words, { props: { level, runs: [{ text: words }] } })
-type Kind = 'row' | 'column' | 'box' | 'text' | 'button' | 'list'
+type Kind = 'row' | 'column' | 'box' | 'text' | 'button' | 'list' | 'instance'
 const w = (
   kind: Kind,
   id: string,
@@ -50,7 +50,13 @@ type Extra = {
   contrast?: ContrastRaw[]
   fonts?: boolean
   problems?: Problem[]
+  doc?: SiteDocument
   dir?: 'ltr' | 'rtl'
+}
+const docOf = (root: Node, more: Partial<SiteDocument> = {}): SiteDocument => {
+  const d = siteWith([], more)
+  d.pages[0]!.root = root
+  return d
 }
 const run = (layouts: LayoutRaw[], root: Node, x: Extra = {}) =>
   runChecks({
@@ -59,7 +65,7 @@ const run = (layouts: LayoutRaw[], root: Node, x: Extra = {}) =>
     dir: x.dir ?? 'ltr',
     layouts,
     contrast: x.contrast ?? [],
-    root,
+    doc: x.doc ?? docOf(root),
     registry: sampleRegistry(),
     loaded: { fonts: x.fonts ?? true, assets: true },
     ...(x.problems ? { problems: x.problems } : {}),
@@ -899,4 +905,39 @@ test('contrast observed rounds down, so 4.46 never reads as 4.5', () => {
     ],
   })
   assert.equal(one(f, 'contrast').observed, 4.4)
+})
+
+test('an overflow inside the header and inside a component instance is found, with the node ids the page draws', () => {
+  const lay = (ids: string[]) => [
+    layout('phone', 390, [
+      ...ids.flatMap(id => [
+        nr(`${id}.row`, b(16, 0, 100, 40)),
+        nr(`${id}.title`, b(16, 0, 400, 40)),
+      ]),
+    ]),
+  ]
+  const strip = (id: string) =>
+    w('column', id, [w('row', `${id}.row`, [w('text', `${id}.title`)])])
+  const header = strip('hdr')
+  const doc = docOf(page(), { header })
+  const f = run(lay(['hdr']), page(), { doc })
+  const hit = f.filter(x => x.check === 'overflow')
+  assert.deepEqual(
+    hit.map(x => x.nodes),
+    [['hdr.title']],
+  )
+  const comp = {
+    id: 'c1',
+    name: 'C',
+    root: strip('cr'),
+    props: [],
+    variants: [],
+  }
+  const inst = w('instance', 'inst', undefined, { component: 'c1' })
+  const withInst = docOf(page(inst), { components: [comp] })
+  const g = run(lay(['inst.cr']), page(inst), { doc: withInst })
+  assert.deepEqual(
+    g.filter(x => x.check === 'overflow').map(x => x.nodes),
+    [['inst.cr.title']],
+  )
 })
