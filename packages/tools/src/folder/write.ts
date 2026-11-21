@@ -188,34 +188,47 @@ export function fileEdits(
   }
 
   /**
-   * The text of the list element at `path` with the whole-line `//` comments above it, which are cut out of the file (the element
-   * itself stays for `drop`). Undefined when the text cannot be sliced; the caller then re-serialises the value.
+   * The text of the list element at `path`, and the comment on its line after it; the whole-line comments above it (`//` lines and
+   * a `/* ... *\/` block) are cut out of the file and returned with the element. The element itself stays for `drop`.
+   * Undefined when the text cannot be sliced; the caller then re-serialises the value.
    */
-  function cutOut(file: string, path: JsonPath): string | undefined {
-    const t = texts.get(file)
-    if (t === undefined || t.startsWith('\uFEFF') || poisoned.has(file))
-      return undefined
+  function cutOut(
+    file: string,
+    path: JsonPath,
+  ): { slice: string; tail: string } | undefined {
+    const whole = texts.get(file)
+    if (whole === undefined || poisoned.has(file)) return undefined
+    const bom = whole.startsWith('\uFEFF') ? '\uFEFF' : ''
+    const t = whole.slice(bom.length)
     const errs: ParseError[] = []
     const tree = parseTree(t, errs, { allowTrailingComma: true })
     const node =
       !errs.length && tree ? findNodeAtLocation(tree, path) : undefined
     if (!node) return undefined
+    const end = node.offset + node.length
+    const tail = /^[ \t]*,?[ \t]*(\/\/[^\r\n]*)/.exec(t.slice(end))?.[1]
     const lineStart = t.lastIndexOf('\n', node.offset - 1) + 1
     let from = node.offset
     if (/^[ \t]*$/.test(t.slice(lineStart, node.offset))) {
       let ls = lineStart
       while (ls > 0) {
         const ps = t.lastIndexOf('\n', ls - 2) + 1
-        if (!/^\s*\/\//.test(t.slice(ps, ls))) break
-        ls = ps
+        const line = t.slice(ps, ls)
+        if (/^\s*\/\//.test(line)) ls = ps
+        else if (/\*\/\s*$/.test(line)) {
+          const close = ps + line.lastIndexOf('*/')
+          const open = t.lastIndexOf('/*', close)
+          const os = t.lastIndexOf('\n', open - 1) + 1
+          if (open < 0 || !/^[ \t]*$/.test(t.slice(os, open))) break
+          ls = os
+        } else break
       }
       if (ls < lineStart) {
         from = ls + /^[ \t]*/.exec(t.slice(ls))![0].length
-        texts.set(file, t.slice(0, ls) + t.slice(lineStart))
-        return t.slice(from, node.offset + node.length)
+        texts.set(file, bom + t.slice(0, ls) + t.slice(lineStart))
       }
     }
-    return t.slice(from, node.offset + node.length)
+    return { slice: t.slice(from, end), tail: tail ? ' ' + tail : '' }
   }
 
   /** Positions of one longest increasing run of `xs`: the elements of a list that need not move. */
@@ -258,26 +271,33 @@ export function fileEdits(
       if (!aKeys.includes(bKeys[j]!)) drop(file, [...path, j])
     const cur = bKeys.filter(k => aKeys.includes(k))
     const keep = stay(cur.map(k => aKeys.indexOf(k)))
-    const moved = new Map<string, { slice?: string; value: unknown }>()
+    const moved = new Map<
+      string,
+      { cut?: { slice: string; tail: string }; value: unknown }
+    >()
     for (let m = cur.length - 1; m >= 0; m--) {
       if (keep.has(m)) continue
       const value = rawAt(file, [...path, m])
-      moved.set(cur[m]!, { value, slice: cutOut(file, [...path, m]) })
+      moved.set(cur[m]!, { value, cut: cutOut(file, [...path, m]) })
       drop(file, [...path, m])
       cur.splice(m, 1)
     }
     aKeys.forEach((k, i) => {
       if (cur[i] !== k) {
         const mv = moved.get(k)
-        if (mv?.slice === undefined)
+        if (mv?.cut === undefined)
           put(file, [...path, i], mv ? mv.value : make(k), true)
         else {
           put(file, [...path, i], HOLE, true)
           const t = texts.get(file)
+          const cut = mv.cut
           if (t !== undefined && !poisoned.has(file))
             texts.set(
               file,
-              t.replace(JSON.stringify(HOLE), () => mv.slice!),
+              t.replace(
+                new RegExp(JSON.stringify(HOLE) + '(,?)'),
+                (_, comma: string) => cut.slice + comma + cut.tail,
+              ),
             )
         }
         cur.splice(i, 0, k)

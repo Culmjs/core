@@ -646,3 +646,95 @@ test('moving one element leaves every other sibling and every comment where it w
   assert.deepEqual(front.again.doc, front.planned.doc)
   assert.equal(linesChanged(wasMenu, b) > 0, true)
 })
+
+test("swapping two siblings leaves each one's text byte for byte the same", async () => {
+  const was = base.get('pages/menu.json')!
+  const r = await run([
+    { op: 'move', tree: menu, id: 'visit2', parent: 'menuroot', index: 0 },
+  ])
+  const now = r.edits.write['pages/menu.json']!
+  const use = '{ "use": "../pieces/visit-card.json", "id": "visit2" }'
+  assert.ok(now.includes(use + ','))
+  const cards = was.slice(
+    was.indexOf('{\n        "block": "cards"'),
+    was.indexOf('      { "use"'),
+  )
+  assert.ok(now.includes(cards.trimEnd().replace(/,$/, '')))
+  assert.deepEqual(r.again.doc, r.planned.doc)
+})
+
+test('an add at an index above 0 leaves the sibling before it unchanged', async () => {
+  const was = base.get('pages/home.json')!
+  const intro = was.slice(
+    was.indexOf('{\n        "id": "intro"'),
+    was.indexOf('      { "use"'),
+  )
+  const r = await run([
+    {
+      op: 'add',
+      tree: home,
+      parent: 'homeroot',
+      index: 2,
+      node: { kind: 'text', props: { level: 'p', runs: [{ text: 'New' }] } },
+    },
+  ])
+  assert.ok(
+    r.edits.write['pages/home.json']!.includes(
+      intro.trimEnd().replace(/,$/, ''),
+    ),
+  )
+  assert.ok(
+    r.edits.write['pages/home.json']!.includes(
+      '{ "use": "../pieces/visit-card.json", "id": "visit1" }',
+    ),
+  )
+})
+
+test('a moved element takes its trailing comment and the block comment above it, and a file with a byte order mark is sliced, not re-serialised', async () => {
+  const note =
+    '// This node has no written id: the loader derives one and reports a notice.'
+  let menuText = base.get('pages/menu.json')!
+  assert.ok(menuText.includes(note))
+  menuText = menuText
+    .replace(note, note + '\n      /* block above */')
+    .replace(
+      '"heading": "Today\'s bakes"\n      },',
+      '"heading": "Today\'s bakes"\n      }, // card note',
+    )
+  const files = new Map(base)
+  files.set('pages/menu.json', '\uFEFF' + menuText)
+  const l = await loadFiles(files, registry)
+  assert.deepEqual(l.problems, [])
+  const go = async (id: string, index: number) => {
+    const p = plan(l.doc!, registry, {
+      site: 's',
+      baseRevision: 0,
+      key: 'k',
+      ops: [{ op: 'move', tree: menu, id, parent: 'menuroot', index }],
+    })
+    assert.ok(p.ok)
+    const e = fileEdits(l.doc!, p.doc, l, registry)
+    assert.deepEqual(e.problems, [])
+    const again = await loadFiles(
+      new Map([...files, ...Object.entries(e.write)]),
+      registry,
+    )
+    assert.deepEqual(again.doc, p.doc)
+    return e.write['pages/menu.json']!
+  }
+  const end = await go('cards1', 2)
+  assert.ok(end.startsWith('\uFEFF'))
+  assert.match(end, /"heading": "Today's bakes"\n {6}\} \/\/ card note/)
+  assert.equal(end.split('card note').length, 2)
+  const front = await go(allergens, 0)
+  assert.match(
+    front,
+    new RegExp(
+      `${note.replace(/[/.:]/g, '\\$&')}\\n {6}/\\* block above \\*/\\n {6}\\{`,
+    ),
+  )
+  assert.ok(
+    front.indexOf('/* block above */') < front.indexOf('"block": "cards"'),
+  )
+  assert.equal(front.split('block above').length, 2)
+})

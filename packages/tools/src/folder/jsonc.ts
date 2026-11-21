@@ -85,6 +85,58 @@ const parsed = (body: string): Node | undefined => {
   return errs.length ? undefined : tree
 }
 
+/**
+ * An array insert that touches no other byte: the new element's text goes at the insertion point, between the elements around it.
+ * The separator follows the array's own style (`, ` in a one-line array; a new line and the elements' indent in a multi-line one),
+ * and a comment on the same line as an element stays with it. Undefined for an empty array, which the caller formats.
+ */
+function spliceInsert(
+  body: string,
+  arr: Node,
+  index: number,
+  value: unknown,
+): string | undefined {
+  const kids = arr.children ?? []
+  if (!kids.length) return undefined
+  const i = Math.min(index, kids.length)
+  const fmt = formatOf(body)
+  const eol = fmt.eol!
+  const unit = fmt.insertSpaces ? ' '.repeat(fmt.tabSize!) : '\t'
+  const between = (a: number, b: number) => body.slice(a, b).includes('\n')
+  const multi =
+    between(arr.offset, kids[0]!.offset) ||
+    (kids.length > 1 &&
+      between(kids[0]!.offset + kids[0]!.length, kids[1]!.offset))
+  const ref = kids[Math.min(i, kids.length - 1)]!
+  const lead = body.slice(
+    body.lastIndexOf('\n', ref.offset - 1) + 1,
+    ref.offset,
+  )
+  const indent = /^[ \t]*$/.test(lead) ? lead : unit
+  const one = JSON.stringify(value)
+  const text = multi
+    ? JSON.stringify(value, null, fmt.insertSpaces ? fmt.tabSize : '\t')
+        .split('\n')
+        .join(eol + indent)
+    : one
+  const sep = multi ? eol + indent : ' '
+  if (i === 0) {
+    const first = kids[0]!.offset
+    return body.slice(0, first) + text + ',' + sep + body.slice(first)
+  }
+  const prev = kids[i - 1]!
+  const end = prev.offset + prev.length
+  const tail = /^[ \t]*(,)?(?:[ \t]*\/\/[^\r\n]*)?/.exec(body.slice(end))!
+  const at = end + tail[0].length
+  if (tail[1] || i < kids.length)
+    // the previous element has its comma: the new one takes a comma too, and the next element's text is untouched
+    return body.slice(0, at) + sep + text + ',' + body.slice(at)
+  // the last element has none yet: it gets its comma before any comment on its line
+  return (
+    body.slice(0, end) + ',' + body.slice(end, at) + sep + text + body.slice(at)
+  )
+}
+
 const change = (
   text: string,
   path: JsonPath,
@@ -100,6 +152,12 @@ const change = (
     if (!isArrayInsertion && typeof last === 'number') {
       const arr = findNodeAtLocation(tree, path.slice(0, -1))
       isArrayInsertion = arr?.type === 'array' && last >= arr.children!.length
+    }
+    if (isArrayInsertion && typeof last === 'number') {
+      const arr = findNodeAtLocation(tree, path.slice(0, -1))
+      const done =
+        arr?.type === 'array' ? spliceInsert(body, arr, last, value) : undefined
+      if (done !== undefined) return bom + done
     }
     const edits = modify(body, path, value, {
       formattingOptions: formatOf(body),

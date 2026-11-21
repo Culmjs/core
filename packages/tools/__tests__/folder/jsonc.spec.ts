@@ -126,3 +126,44 @@ test('removing the last element of an inline array leaves no stray space', () =>
   assert.equal(removeAt('{ "a": [1, 2, 3] }', ['a', 2]), '{ "a": [1, 2] }')
   assert.equal(removeAt('{ "a": [1, 2, 3] }', ['a', 0]), '{ "a": [2, 3] }')
 })
+
+test('an insert into an inline array leaves every other byte unchanged', () => {
+  const t = '{ "a": [{ "x": 1 }, { "y": 2 }], "b": 1 }'
+  const out = editFile(t, ['a', 1], { z: 3 }, { insert: true })
+  const at = t.indexOf(', { "y"')
+  assert.ok(out.startsWith(t.slice(0, at + 2)))
+  assert.ok(out.endsWith(', ' + t.slice(at + 2)))
+  assert.deepEqual(parseFile(out).value, {
+    a: [{ x: 1 }, { z: 3 }, { y: 2 }],
+    b: 1,
+  })
+  const front = editFile(t, ['a', 0], 5, { insert: true })
+  assert.equal(front, t.replace('[', '[5, '))
+})
+
+test('an insert into a multi-line array leaves every other byte unchanged, a trailing comment stays with its element', () => {
+  const t = `{
+  "a": [
+    { "x": 1 }, // first
+    // second
+    { "y": 2 } // last
+  ]
+}
+`
+  const mid = editFile(t, ['a', 1], { z: 3 }, { insert: true })
+  const cut = t.indexOf('\n    // second')
+  assert.ok(mid.startsWith(t.slice(0, cut)))
+  assert.ok(mid.endsWith(t.slice(cut)))
+  assert.deepEqual((parseFile(mid).value as { a: unknown[] }).a, [
+    { x: 1 },
+    { z: 3 },
+    { y: 2 },
+  ])
+  const end = editFile(t, ['a', 2], 7, { insert: true })
+  assert.ok(end.includes('{ "y": 2 }, // last\n    7\n'))
+  assert.ok(end.startsWith(t.slice(0, t.indexOf('{ "y": 2 }') + 10)))
+  assert.deepEqual((parseFile(end).value as { a: unknown[] }).a.length, 3)
+  const front = editFile(t, ['a', 0], 7, { insert: true })
+  assert.ok(front.endsWith(t.slice(t.indexOf('{ "x"'))))
+  assert.ok(front.includes('    7,\n    { "x": 1 }, // first'))
+})
