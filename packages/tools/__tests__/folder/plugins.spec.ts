@@ -334,3 +334,29 @@ test('a missing culm.json is one problem naming the file', async () => {
   assert.equal(r.problems.length, 1)
   assert.equal(r.problems[0]!.file, 'culm.json')
 })
+
+test('a block or data file with a JSON syntax error is skipped, not registered', async () => {
+  const r = await loadPlugins(
+    '/nowhere',
+    files({
+      'culm.json': '{}',
+      // a trailing garbage token: the parser still recovers the whole object
+      'blocks/note.json': JSON.stringify(block).slice(0, -1) + ', }}',
+      'data/menu.json':
+        '{ "fields": { "name": "text" }, "rows": [{ "name": "Bread" }] ]',
+    }),
+  )
+  assert.ok(r.problems.some(p => p.file === 'blocks/note.json'))
+  assert.ok(r.problems.some(p => p.file === 'data/menu.json'))
+  assert.equal(r.registry.block('note'), undefined)
+  assert.equal(r.registry.source('menu'), undefined)
+})
+
+test('"." and ".." are refused as a part of a scoped package name', async () => {
+  const r = await loadPlugins(
+    '/nowhere',
+    files({ 'culm.json': '{ "plugins": ["@scope/..", "@scope/.", "@../x"] }' }),
+  )
+  assert.equal(r.problems.length, 3)
+  for (const p of r.problems) assert.match(p.message, /not a package name/)
+})

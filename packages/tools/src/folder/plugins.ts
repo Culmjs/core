@@ -65,7 +65,11 @@ function pick(target: unknown): string | undefined {
 
 /** The file to import for a package installed in `<dir>/node_modules`; never looks in a parent folder. */
 function entryOf(dir: string, name: string): string | { error: string } {
-  if (!NAME_RE.test(name) || name.startsWith('.'))
+  if (
+    !NAME_RE.test(name) ||
+    name.startsWith('.') ||
+    name.split('/').some(part => /^@?\.{1,2}$/.test(part))
+  )
     return { error: `"${name}" is not a package name.` }
   const root = join(dir, 'node_modules', name)
   let pkg: unknown
@@ -211,7 +215,9 @@ export async function loadPlugins(
       .sort()
   const sources: DataSource[] = []
   for (const file of names('data')) {
+    const syntax = problems.length
     const { value, bad, at } = read(file)
+    if (problems.length > syntax) continue
     if (!isObj(value) || !isObj(value.fields)) {
       bad('INVALID_DOCUMENT', 'A data file needs "fields".')
       continue
@@ -244,12 +250,13 @@ export async function loadPlugins(
   const blocks: BlockDef[] = []
   const owner = new Map<string, string>()
   for (const file of names('blocks')) {
+    const before = problems.length
     const { value, bad, at } = read(file)
+    if (problems.length > before) continue
     if (!isObj(value)) {
       bad('INVALID_DOCUMENT', 'A block file must be an object.')
       continue
     }
-    const before = problems.length
     if ('onInsert' in value)
       bad(
         'POLICY_VIOLATION',
