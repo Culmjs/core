@@ -35,7 +35,25 @@ export const WIDTH_OF: Record<Layout, number> = {
   phone: 390,
 }
 
-const CLASS: Record<string, 1 | 2 | 3> = {
+type CheckId =
+  | 'invalid'
+  | 'off-screen'
+  | 'overflow'
+  | 'h-scroll'
+  | 'overlap'
+  | 'contrast'
+  | 'tap-target'
+  | 'column'
+  | 'alignment'
+  | 'symmetry'
+  | 'rhythm'
+  | 'empty-band'
+  | 'line-length'
+  | 'heading-order'
+  | 'duplicate-heading'
+  | 'stacked-row'
+  | 'phone-order'
+const CLASS: Record<CheckId, 1 | 2 | 3> = {
   invalid: 1,
   'off-screen': 2,
   overflow: 2,
@@ -43,6 +61,16 @@ const CLASS: Record<string, 1 | 2 | 3> = {
   overlap: 2,
   contrast: 2,
   'tap-target': 2,
+  column: 3,
+  alignment: 3,
+  symmetry: 3,
+  rhythm: 3,
+  'empty-band': 3,
+  'line-length': 3,
+  'heading-order': 3,
+  'duplicate-heading': 3,
+  'stacked-row': 3,
+  'phone-order': 3,
 }
 
 export function findingKey(
@@ -112,7 +140,7 @@ export function runChecks(input: Input): Finding[] {
   const sections = kids.get(root.id) ?? []
 
   const push = (
-    check: string,
+    check: CheckId,
     cls: 1 | 2 | 3,
     cell: { width: number; theme: 'light' | 'dark' },
     nodes: string[],
@@ -203,6 +231,7 @@ export function runChecks(input: Input): Finding[] {
     )
 
   for (const c of contrast) {
+    const seen = Math.floor(c.ratio * 10) / 10 // never rounds up to the threshold
     const need = c.large ? T.contrastLarge : T.contrastBody
     if (c.ratio < need)
       push(
@@ -210,9 +239,9 @@ export function runChecks(input: Input): Finding[] {
         2,
         { width: c.width, theme: c.scheme },
         [c.id],
-        Number(c.ratio.toFixed(1)),
+        seen,
         `at least ${need}:1`,
-        `${label(c.id)} has text at ${c.ratio.toFixed(1)}:1 in the ${c.scheme} scheme${c.sampled ? ' (sampled over a picture or gradient)' : ''}; ${c.large ? 'large' : 'body'} text needs ${need}:1.`,
+        `${label(c.id)} has text at ${seen}:1 in the ${c.scheme} scheme${c.sampled ? ' (sampled over a picture or gradient)' : ''}; ${c.large ? 'large' : 'body'} text needs ${need}:1.`,
       )
   }
 
@@ -220,23 +249,14 @@ export function runChecks(input: Input): Finding[] {
     const on = `on ${L.layout}`
     const cell = { width: WIDTH_OF[L.layout], theme: 'light' as const }
     const add = (
-      check: string,
+      check: CheckId,
       nodes: string[],
       observed: number | string,
       expected: string,
       message: string,
       cause?: string,
     ) =>
-      push(
-        check,
-        CLASS[check] ?? 3,
-        cell,
-        nodes,
-        observed,
-        expected,
-        message,
-        cause,
-      )
+      push(check, CLASS[check], cell, nodes, observed, expected, message, cause)
     const at = new Map(L.nodes.map(n => [n.id, n]))
     const shown = (id: string) => at.get(id)?.box ?? null
     const shownKids = (id: string) => (kids.get(id) ?? []).filter(k => shown(k))

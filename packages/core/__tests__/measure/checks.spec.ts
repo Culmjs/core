@@ -772,8 +772,8 @@ test('an overflow finding at phone names the node, the overflow in pixels and th
   const f = run(
     [
       layout('phone', 390, [
-        nr('sec', b(16, 0, 358, 200)),
-        nr('title', b(16, 0, 570, 40)),
+        nr('sec', b(16, 0, 100, 200)),
+        nr('title', b(16, 0, 312, 40)),
       ]),
     ],
     root,
@@ -821,8 +821,8 @@ test('findingKey is the same for two runs and differs by width, theme, direction
   const root = page(w('column', 'sec', [w('text', 'title')]))
   const lay = () => [
     layout('phone', 390, [
-      nr('sec', b(16, 0, 358, 200)),
-      nr('title', b(16, 0, 570, 40)),
+      nr('sec', b(16, 0, 100, 200)),
+      nr('title', b(16, 0, 312, 40)),
     ]),
   ]
   assert.equal(
@@ -842,7 +842,7 @@ test('fonts: false is carried into every finding of the call', () => {
       layout(
         'phone',
         390,
-        [nr('sec', b(16, 0, 358, 200)), nr('title', b(16, 0, 570, 40))],
+        [nr('sec', b(16, 0, 100, 200)), nr('title', b(16, 0, 312, 40))],
         [],
         512,
       ),
@@ -883,4 +883,20 @@ test('the thresholds keep their old values', () => {
     largePx: 24,
     largeBoldPx: 19,
   })
+})
+
+test('contrast observed rounds down, so 4.46 never reads as 4.5', () => {
+  const f = run([], page(), {
+    contrast: [
+      {
+        id: 't',
+        scheme: 'light',
+        width: 390,
+        ratio: 4.46,
+        large: false,
+        sampled: false,
+      },
+    ],
+  })
+  assert.equal(one(f, 'contrast').observed, 4.4)
 })
