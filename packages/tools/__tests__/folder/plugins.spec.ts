@@ -415,3 +415,29 @@ for (const [name, setting, line] of [
     assert.equal(r.registry.block('bad'), undefined)
     assert.ok(r.registry.block('note'))
   })
+
+for (const [name, action] of [
+  ['null', 'null'],
+  ['a set with no path', '{ "do": "set" }'],
+  ['a filter with no list', '{ "do": "filter" }'],
+  ['a choose with no options', '{ "do": "choose" }'],
+  ['a show with no nodes', '{ "do": "show" }'],
+  ['an unknown do', '{ "do": "fly" }'],
+] as const)
+  test(`a setting action that is ${name} is a located problem and the file is skipped alone`, async () => {
+    const r = await loadPlugins(
+      '/nowhere',
+      files({
+        'culm.json': '{}',
+        'blocks/note.json': JSON.stringify(block),
+        'blocks/bad.json': `{\n"id": "bad", "version": 1, "name": "B", "category": "c",\n"looks": ${JSON.stringify(block.looks)},\n"settings": [\n{ "key": "k", "label": "L", "type": "text", "actions": [${action}] }\n]\n}`,
+      }),
+    )
+    const mine = r.problems.filter(p => p.file === 'blocks/bad.json')
+    assert.equal(mine.length, 1, JSON.stringify(r.problems))
+    assert.equal(mine[0]!.code, 'INVALID_DOCUMENT')
+    assert.equal(mine[0]!.line, 5)
+    assert.match(mine[0]!.message, /action/)
+    assert.equal(r.registry.block('bad'), undefined)
+    assert.ok(r.registry.block('note'))
+  })

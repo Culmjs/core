@@ -53,6 +53,56 @@ const SETTING_TYPES = [
 ]
 const optional = (v: unknown, type: string) =>
   v === undefined || typeof v === type
+const strings = (v: unknown) =>
+  Array.isArray(v) && v.every(x => typeof x === 'string')
+const pathOk = (v: unknown) =>
+  typeof v === 'string' || (strings(v) && (v as unknown[]).length > 0)
+/** What an action lacks, by the shape core's `Action` and its readers expect; undefined when it is fine. */
+function actionProblem(a: unknown): string | undefined {
+  if (!isObj(a)) return 'is an object'
+  switch (a.do) {
+    case 'set':
+      return pathOk(a.path) &&
+        optional(a.unsetWhenEmpty, 'boolean') &&
+        (a.as === undefined ||
+          (isObj(a.as) &&
+            ['px', '%', 'ch', 'vh', 'vw'].includes(a.as.unit as string))) &&
+        (a.readWhen === undefined ||
+          (isObj(a.readWhen) && typeof a.readWhen.path === 'string'))
+        ? undefined
+        : 'is a "set" with a "path" (text or a list of text), and "as" and "readWhen" in their shapes'
+    case 'choose':
+      return isObj(a.options) &&
+        typeof a.default === 'string' &&
+        Object.values(a.options).every(
+          o =>
+            isObj(o) &&
+            (o.write === undefined || isObj(o.write)) &&
+            (o.remove === undefined || strings(o.remove)),
+        )
+        ? undefined
+        : 'is a "choose" with "options" (each with "write" an object, "remove" a list of text) and a "default"'
+    case 'show':
+      return strings(a.nodes) &&
+        (a.when === undefined || strings(a.when)) &&
+        (a.emptyIs === undefined ||
+          a.emptyIs === 'hidden' ||
+          a.emptyIs === 'shown')
+        ? undefined
+        : 'is a "show" with "nodes" (a list of text), and "when" and "emptyIs" in their shapes'
+    case 'filter':
+      return pathOk(a.list) &&
+        typeof a.field === 'string' &&
+        (a.empty === undefined ||
+          a.empty === 'remove' ||
+          (isObj(a.empty) && 'is' in a.empty))
+        ? undefined
+        : 'is a "filter" with a "list" (text or a list of text), a "field" and "empty" in its shape'
+    default:
+      return 'has "do" set, choose, show or filter'
+  }
+}
+
 /** What a declarative setting lacks, by the shape core's `Setting` and its readers expect: [what, path inside the setting]. */
 function settingProblems(s: Record<string, unknown>): [string, JsonPath][] {
   const out: [string, JsonPath][] = []
@@ -84,7 +134,12 @@ function settingProblems(s: Record<string, unknown>): [string, JsonPath][] {
     '"options" as a list of labels and values',
     ['options'],
   )
-  need(Array.isArray(s.actions), '"actions" as a list', ['actions'])
+  if (!Array.isArray(s.actions)) need(false, '"actions" as a list', ['actions'])
+  else
+    for (const [j, a] of s.actions.entries()) {
+      const what = actionProblem(a)
+      if (what) out.push([`an action that ${what}`, ['actions', j]])
+    }
   return out
 }
 
