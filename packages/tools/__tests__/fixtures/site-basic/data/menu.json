@@ -1,0 +1,36 @@
+// The bakery menu: four rows.
+{
+  "$schema": "../culm.schema.json",
+  "fields": {
+    "name": "text",
+    "text": "text",
+    "price": "text",
+    "image": "text"
+  },
+  "rows": [
+    {
+      "name": "Sourdough",
+      "text": "Slow rise, crisp crust",
+      "price": "6",
+      "image": "loaf.svg"
+    },
+    {
+      "name": "Croissant",
+      "text": "Butter, folded three times",
+      "price": "3",
+      "image": "croissant.svg"
+    },
+    {
+      "name": "Cinnamon bun",
+      "text": "Warm from the oven",
+      "price": "4",
+      "image": "bun.svg"
+    },
+    {
+      "name": "Lemon cake",
+      "text": "A slice of sunshine",
+      "price": "5",
+      "image": "cake.svg"
+    }
+  ]
+}

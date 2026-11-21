@@ -1,0 +1,38 @@
+// The home page: a hero, an introduction and the visit card.
+{
+  "$schema": "../culm.schema.json",
+  "id": "home",
+  "title": "Home",
+  "slug": "/",
+  "on": true,
+  "inMenu": true,
+  "inFooter": false,
+  "icon": "home",
+  "root": {
+    "id": "homeroot",
+    "kind": "column",
+    "name": "Page",
+    "children": [
+      // The title is 40 characters on one line at 64 px: wider than its row on a phone.
+      {
+        "block": "hero",
+        "id": "hero1",
+        "title": "Fresh sourdough baked every morning here",
+        "titleSize": 64,
+        "nowrap": true,
+        "lead": "Bread, buns and cake."
+      },
+      {
+        "id": "intro",
+        "kind": "text",
+        "name": "Intro",
+        "props": {
+          "level": "p",
+          "runs": [{ "text": "We bake before the sun comes up." }]
+        },
+        "style": { "base": { "size": 18 } }
+      },
+      { "use": "../pieces/visit-card.json", "id": "visit1" }
+    ]
+  }
+}

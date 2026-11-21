@@ -1,0 +1,33 @@
+// The visit card, used on every page. Its one setting is the line under the heading.
+{
+  "$schema": "../culm.schema.json",
+  "settings": [
+    {
+      "key": "note",
+      "label": "Note",
+      "type": "text",
+      "part": "line",
+      "field": "text",
+      "default": "Open daily"
+    }
+  ],
+  "root": {
+    "id": "card",
+    "kind": "box",
+    "name": "Visit",
+    "children": [
+      {
+        "id": "heading",
+        "kind": "text",
+        "name": "Heading",
+        "props": { "level": "h3", "runs": [{ "text": "Visit us" }] }
+      },
+      {
+        "id": "line",
+        "kind": "text",
+        "name": "Line",
+        "props": { "level": "p", "runs": [{ "text": "Open daily" }] }
+      }
+    ]
+  }
+}

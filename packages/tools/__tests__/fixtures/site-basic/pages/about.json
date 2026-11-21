@@ -1,0 +1,38 @@
+// The about page: two plain texts and the visit card with its own note.
+{
+  "$schema": "../culm.schema.json",
+  "id": "about",
+  "title": "About",
+  "slug": "/about",
+  "on": true,
+  "inMenu": true,
+  "inFooter": true,
+  "icon": "info",
+  "root": {
+    "id": "aboutroot",
+    "kind": "column",
+    "name": "Page",
+    "children": [
+      {
+        "id": "abouttitle",
+        "kind": "text",
+        "name": "About title",
+        "props": { "level": "h1", "runs": [{ "text": "About us" }] }
+      },
+      {
+        "id": "abouttext",
+        "kind": "text",
+        "name": "About text",
+        "props": {
+          "level": "p",
+          "runs": [{ "text": "A small bakery on a corner." }]
+        }
+      },
+      {
+        "use": "../pieces/visit-card.json",
+        "id": "visit3",
+        "note": "Open from 7"
+      }
+    ]
+  }
+}

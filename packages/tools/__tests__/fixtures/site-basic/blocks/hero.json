@@ -1,0 +1,78 @@
+// The hero. The title sits in a row inside the hero, and the row can be narrower than a nowrap title.
+{
+  "$schema": "../culm.schema.json",
+  "id": "hero",
+  "version": 1,
+  "name": "Hero",
+  "category": "content",
+  "looks": [
+    {
+      "id": "plain",
+      "name": "Plain",
+      "tree": {
+        "id": "root",
+        "kind": "column",
+        "name": "Hero",
+        "slot": {},
+        // Clipped, so a long title cannot widen the page: it reaches past its row, not past the window.
+        "style": { "base": { "overflow": "clip", "padding": 16 } },
+        "children": [
+          {
+            "id": "inner",
+            "kind": "row",
+            "name": "Hero row",
+            "slot": {},
+            "children": [
+              {
+                "id": "title",
+                "kind": "text",
+                "name": "Title",
+                "slot": {},
+                "required": true,
+                "props": { "level": "h1", "runs": [{ "text": "Welcome" }] }
+              }
+            ]
+          },
+          {
+            "id": "lead",
+            "kind": "text",
+            "name": "Lead",
+            "slot": {},
+            "props": {
+              "level": "p",
+              "runs": [{ "text": "A line under the title." }]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "settings": [
+    {
+      "key": "title",
+      "label": "Title",
+      "type": "text",
+      "actions": [{ "do": "set", "path": "title.props.runs.0.text" }]
+    },
+    {
+      "key": "titleSize",
+      "label": "Title size",
+      "type": "number",
+      "min": 8,
+      "max": 400,
+      "actions": [{ "do": "set", "path": "title.style.base.size" }]
+    },
+    {
+      "key": "nowrap",
+      "label": "Keep the title on one line",
+      "type": "switch",
+      "actions": [{ "do": "set", "path": "title.style.base.nowrap" }]
+    },
+    {
+      "key": "lead",
+      "label": "Line under the title",
+      "type": "text",
+      "actions": [{ "do": "set", "path": "lead.props.runs.0.text" }]
+    }
+  ]
+}

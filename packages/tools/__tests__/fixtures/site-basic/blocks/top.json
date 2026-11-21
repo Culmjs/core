@@ -1,0 +1,37 @@
+// The header: the name of the site and the menu of its pages.
+{
+  "$schema": "../culm.schema.json",
+  "id": "top",
+  "version": 1,
+  "name": "Top bar",
+  "category": "chrome",
+  "looks": [
+    {
+      "id": "plain",
+      "name": "Plain",
+      "tree": {
+        "id": "root",
+        "kind": "row",
+        "name": "Top bar",
+        "slot": {},
+        "children": [
+          {
+            "id": "brand",
+            "kind": "text",
+            "name": "Brand",
+            "slot": {},
+            "props": { "level": "p", "runs": [{ "text": "Basic" }] }
+          },
+          {
+            "id": "menu",
+            "kind": "menu",
+            "name": "Menu",
+            "slot": {},
+            "props": { "which": "menu" }
+          }
+        ]
+      }
+    }
+  ],
+  "settings": []
+}

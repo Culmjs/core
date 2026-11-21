@@ -1,0 +1,34 @@
+// The menu page: a card for each row of data/menu.json.
+{
+  "$schema": "../culm.schema.json",
+  "id": "menu",
+  "title": "Menu",
+  "slug": "/menu",
+  "on": true,
+  "inMenu": true,
+  "inFooter": false,
+  "icon": "list",
+  "root": {
+    "id": "menuroot",
+    "kind": "column",
+    "name": "Page",
+    "children": [
+      {
+        "block": "cards",
+        "id": "cards1",
+        "source": "menu",
+        "heading": "Today's bakes"
+      },
+      { "use": "../pieces/visit-card.json", "id": "visit2" },
+      // This node has no written id: the loader derives one and reports a notice.
+      {
+        "kind": "text",
+        "name": "Allergens",
+        "props": {
+          "level": "p",
+          "runs": [{ "text": "Ask us about nuts and gluten." }]
+        }
+      }
+    ]
+  }
+}

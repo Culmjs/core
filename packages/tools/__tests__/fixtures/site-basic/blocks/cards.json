@@ -1,0 +1,98 @@
+// A card grid: one card for each row of the data source named by the `source` setting.
+{
+  "$schema": "../culm.schema.json",
+  "id": "cards",
+  "version": 1,
+  "name": "Cards",
+  "category": "content",
+  "looks": [
+    {
+      "id": "plain",
+      "name": "Plain",
+      "tree": {
+        "id": "root",
+        "kind": "column",
+        "name": "Cards",
+        "slot": {},
+        "children": [
+          {
+            "id": "heading",
+            "kind": "text",
+            "name": "Heading",
+            "slot": {},
+            "props": { "level": "h2", "runs": [{ "text": "Cards" }] }
+          },
+          {
+            "id": "list",
+            "kind": "list",
+            "name": "Card list",
+            "slot": {},
+            "repeat": { "source": "menu", "max": 6 },
+            "children": [
+              {
+                "id": "item",
+                "kind": "column",
+                "name": "Card",
+                "slot": {},
+                "children": [
+                  {
+                    "id": "name",
+                    "kind": "text",
+                    "name": "Name",
+                    "slot": {},
+                    "props": {
+                      "level": "h3",
+                      "runs": [
+                        {
+                          "text": "",
+                          "bind": { "from": "item", "field": "name" }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "id": "price",
+                    "kind": "text",
+                    "name": "Price",
+                    "slot": {},
+                    "props": {
+                      "level": "p",
+                      "runs": [
+                        {
+                          "text": "",
+                          "bind": { "from": "item", "field": "price" }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "settings": [
+    {
+      "key": "heading",
+      "label": "Heading",
+      "type": "text",
+      "actions": [{ "do": "set", "path": "heading.props.runs.0.text" }]
+    },
+    {
+      "key": "source",
+      "label": "Data source",
+      "type": "text",
+      "actions": [{ "do": "set", "path": "list.repeat.source" }]
+    },
+    {
+      "key": "limit",
+      "label": "How many",
+      "type": "number",
+      "min": 1,
+      "max": 200,
+      "actions": [{ "do": "set", "path": "list.repeat.max" }]
+    }
+  ]
+}

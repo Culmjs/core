@@ -1,0 +1,36 @@
+// The site: its look, its styles, the order of its pages and the blocks of its header and footer.
+{
+  "$schema": "./culm.schema.json",
+  "name": "Basic",
+  "look": {
+    "id": "plain",
+    "name": "Plain",
+    "family": "Minimal",
+    "brand": "#2255aa",
+    "ink": "#111111",
+    "bg": "#ffffff",
+    "headingFont": "sys:serif",
+    "bodyFont": "sys:sans",
+    "corners": 4,
+    "dark": "auto"
+  },
+  // Every text size in the site stays between 11 and 96 px.
+  "styles": { "textRange": { "min": 11, "max": 96 } },
+  "fonts": ["sys:serif", "sys:sans"],
+  "languages": [{ "code": "en" }],
+  "pages": ["home.json", "menu.json", "about.json"],
+  "header": { "block": "top" },
+  "footer": {
+    "id": "footer",
+    "kind": "column",
+    "name": "Footer",
+    "children": [
+      {
+        "id": "foot",
+        "kind": "text",
+        "name": "Footer text",
+        "props": { "level": "p", "runs": [{ "text": "Basic, baked daily." }] }
+      }
+    ]
+  }
+}
