@@ -4,7 +4,8 @@ import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 
-const MAX_BODY = 4_000_000
+// A request of 1,000,000 characters written as \uXXXX escapes is about 6 MB; core's own limit refuses what is too long.
+const MAX_BODY = 8 * 1024 * 1024
 
 const body = async (req: IncomingMessage): Promise<unknown> => {
   const parts: Buffer[] = []
@@ -64,6 +65,7 @@ export async function listenLocal(
         new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: id => void sessions.set(id, t),
+          maxRequestBodySize: MAX_BODY,
         })
       const server = make()
       servers.add(server)
@@ -73,6 +75,8 @@ export async function listenLocal(
       }
       await server.connect(t)
       await t.handleRequest(req, res, parsed)
+      // a failed initialize opened no session: nothing else will close this transport
+      if (!t.sessionId) await t.close()
     } catch {
       if (!res.headersSent) refuse(400)
       else res.end()

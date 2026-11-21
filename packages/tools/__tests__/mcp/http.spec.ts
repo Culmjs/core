@@ -274,3 +274,83 @@ test('close ends the listener', async () => {
   await l.close()
   await assert.rejects(send(l.port, { authorization: `Bearer ${l.token}` }))
 })
+
+test('a failed initialize leaves no server behind', async () => {
+  let made = 0
+  let closed = 0
+  const l = await listenLocal(
+    () => {
+      const s = createMcpServer({
+        store: memoryStore({ s: siteWith() }),
+        registry: kitRegistry(),
+        site: 's',
+        data: { rows: {} },
+      })
+      made++
+      s.onclose = () => void closed++
+      return s
+    },
+    0,
+    () => {},
+  )
+  closers.push(l.close)
+  // no Accept header: the transport refuses with 406 and never opens a session
+  const r = await new Promise<number>((resolve, reject) => {
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port: l.port,
+        method: 'POST',
+        path: '/',
+        headers: {
+          host: `127.0.0.1:${l.port}`,
+          authorization: `Bearer ${l.token}`,
+          'content-type': 'application/json',
+        },
+      },
+      res => {
+        res.resume()
+        res.on('end', () => resolve(res.statusCode ?? 0))
+      },
+    )
+    req.on('error', reject)
+    req.end(INIT)
+  })
+  assert.equal(r, 406)
+  assert.equal(made, 1)
+  assert.equal(closed, 1)
+})
+
+test('a request of 1,000,000 characters written with \\u escapes (about 6 MB) is not refused for its size', async () => {
+  const l = await start()
+  const client = await connectClient(l)
+  const sessionId = (client.transport as { sessionId?: string }).sessionId
+  assert.ok(sessionId)
+  const big = '\\u0061'.repeat(1_000_000)
+  const text = `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"describe","arguments":{"x":"${big}"}}}`
+  assert.ok(text.length > 5_000_000)
+  const status = await new Promise<number>((resolve, reject) => {
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port: l.port,
+        method: 'POST',
+        path: '/',
+        headers: {
+          host: `127.0.0.1:${l.port}`,
+          authorization: `Bearer ${l.token}`,
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          'mcp-session-id': sessionId,
+        },
+      },
+      res => {
+        res.resume()
+        res.on('end', () => resolve(res.statusCode ?? 0))
+      },
+    )
+    req.on('error', reject)
+    req.end(text)
+  })
+  assert.notEqual(status, 413)
+})
