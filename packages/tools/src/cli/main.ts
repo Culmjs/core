@@ -56,6 +56,50 @@ const untilStopped = (also: Promise<unknown> = new Promise(() => {})) =>
     void also.then(stop)
   })
 
+/**
+ * The options `culm mcp` serves a folder with. The map and the data are read again whenever the store reads the folder, so a later
+ * change, by a batch or by hand, is located and used as it is now. Exported so the journey tests serve a folder the same way.
+ */
+export async function folderMcpOptions(
+  cwd: string,
+  project: Project,
+  executable?: string,
+) {
+  const { loaded } = project
+  // ponytail: one extra load per tool call; read again only on a changed revision or file hash if that costs.
+  const kept = await fileStore(cwd, project.registry)
+  let map = loaded.map
+  let data = loaded.data
+  const store: typeof kept = {
+    ...kept,
+    async head(site) {
+      const h = await kept.head(site)
+      if ('doc' in h) {
+        const now = await loadFolder(cwd, project.registry)
+        map = now.map
+        data = now.data
+      }
+      return h
+    },
+  }
+  return {
+    store,
+    registry: project.registry,
+    site: 'site',
+    get data() {
+      return data
+    },
+    allow: protect,
+    folder: true,
+    executable,
+    // a problem the store already located stays as it is
+    locate: <P extends Problem>(p: P): P =>
+      (p as { file?: string }).file ? p : (map.locateProblem(p) as P),
+    // the folder may have changed since the server started
+    build: async () => buildSite(await openProject(cwd)),
+  }
+}
+
 export async function main(argv: string[], io: Io = {}): Promise<number> {
   const cwd = resolve(io.cwd ?? process.cwd())
   const out = io.out ?? stdout
@@ -229,40 +273,7 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
       return report.incomplete.length ? 2 : report.findings.length ? 1 : 0
     }
 
-    // mcp: the folder's own store, so every change is a revision on disk.
-    // The map and the data are read again whenever the store reads the folder, so a later change, by a batch or by hand, is located and used as it is now.
-    // ponytail: one extra load per tool call; read again only on a changed revision or file hash if that costs.
-    const kept = await fileStore(cwd, project.registry)
-    let map = loaded.map
-    let data = loaded.data
-    const store: typeof kept = {
-      ...kept,
-      async head(site) {
-        const h = await kept.head(site)
-        if ('doc' in h) {
-          const now = await loadFolder(cwd, project.registry)
-          map = now.map
-          data = now.data
-        }
-        return h
-      },
-    }
-    const options = {
-      store,
-      registry: project.registry,
-      site: 'site',
-      get data() {
-        return data
-      },
-      allow: protect,
-      folder: true,
-      executable: values.chrome,
-      // a problem the store already located stays as it is
-      locate: <P extends Problem>(p: P): P =>
-        (p as { file?: string }).file ? p : (map.locateProblem(p) as P),
-      // the folder may have changed since the server started
-      build: async () => buildSite(await openProject(cwd)),
-    }
+    const options = await folderMcpOptions(cwd, project, values.chrome)
     const local =
       port === undefined
         ? undefined
