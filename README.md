@@ -22,6 +22,24 @@ npx culm dev
 
 `init` creates an editable starter site. `dev` previews it locally and reloads on save. Run `npx culm build` in the site folder to write the site to `dist/`; serve that folder with any static host.
 
+## Culm vs. Astro
+
+The same coding agent built four single-page briefs twice with each framework. **All 16 sites passed.** On these briefs, a Culm site took a median of **53.5 seconds** to author versus **84.5 seconds** for Astro. Culm used fewer output tokens but more total input tokens; Astro earned the higher mean blind design score.
+
+| Measure                                                    |      Culm |   Astro |
+| ---------------------------------------------------------- | --------: | ------: |
+| Input tokens, including cached reads (8 sites)             | 1,077,837 | 902,118 |
+| Output tokens (8 sites)                                    |    18,988 |  33,803 |
+| Estimated builder cost per accepted site                   |   $0.0261 | $0.0445 |
+| Agent build time (median)                                  |    53.5 s |  84.5 s |
+| Local static export (median)                               |   0.191 s | 1.385 s |
+| Largest contentful paint on a throttled phone (lab median) |    214 ms |  428 ms |
+| Blind visual score (mean, out of 20)                       |     18.50 |  19.125 |
+
+The **41% estimated cost saving depends on cache pricing**: pricing the same input entirely as fresh would put Astro slightly ahead. In blind desktop-and-phone judging, Culm won three pairs, tied one and lost four.
+
+**[See the sites side by side: desktop and phone screenshots, results for every pair, and how we measured them →](docs/comparison/README.md)**
+
 ## Connect an agent
 
 Configure a stdio MCP server in your agent host: **command** `<site>/node_modules/.bin/culm`, **arguments** `["mcp"]`, **working directory** the folder containing `culm.json`.
