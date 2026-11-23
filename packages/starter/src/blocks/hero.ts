@@ -18,7 +18,10 @@ const copy = (): Node =>
       {
         ...heading('title', 'h1', 'A headline that says what this is'),
         // The starter accepts long editorial titles as well as short wordmarks.
-        style: { base: { balance: true }, phone: { letterSpacing: 0 } },
+        style: {
+          base: { balance: true },
+          phone: { size: 32, letterSpacing: 0 },
+        },
       },
       paragraph('lead', 'One or two lines that say more.', 'lead'),
       solidButton('button', 'Learn more'),

@@ -56,7 +56,9 @@ test('5,000 levels of nesting does not throw and equal deep values give equal te
     for (let i = 0; i < 5000; i++) v = { z: v, a: [i] }
     return v
   }
-  assert.equal(canonicalJson(deep()), canonicalJson(deep()))
+  let expected = '{"a":2,"b":1}'
+  for (let i = 0; i < 5000; i++) expected = `{"a":[${i}],"z":${expected}}`
+  assert.equal(canonicalJson(deep()), expected)
 })
 
 test('a repeated, non-cyclic reference is written in full', () => {

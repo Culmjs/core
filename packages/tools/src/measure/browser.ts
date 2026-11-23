@@ -35,7 +35,10 @@ export type Page = {
     url: string,
     timeoutMs: number,
   ): Promise<{ ok: boolean; problem?: string }>
-  evaluate<T>(expression: string): Promise<T>
+  evaluate<T>(
+    expression: string,
+    options?: { userGesture?: boolean },
+  ): Promise<T>
   /** A PNG of the page rectangle (page coordinates, beyond the window); the window when no clip is given. */
   screenshot(clip?: {
     x: number
@@ -456,7 +459,14 @@ async function hook(cdp: Cdp, owner: Owner, session: string) {
       try {
         if (/^(data|about|blob):/.test(request.url))
           return void (await s('Fetch.continueRequest', { requestId }))
-        const r = await owner.fn?.(request.url)
+        let r = await owner.fn?.(request.url)
+        // Full Chrome requests a favicon even when the document declares none.
+        // The virtual measurement host supplies an empty default locally.
+        if (
+          request.url === 'https://site.culm.invalid/favicon.ico' &&
+          (!r || r.status === 404)
+        )
+          r = { status: 204, type: 'image/x-icon', body: '' }
         if (!r) {
           owner.blocked.push(request.url)
           return void (await s('Fetch.failRequest', {
@@ -531,6 +541,13 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
         void errors.push(String(e.exception?.description ?? e.text)),
     )
     cdp.on(sessionId, 'Log.entryAdded', ({ entry }: Json) => {
+      if (
+        entry.source === 'security' &&
+        String(entry.text).includes('allow-popups')
+      ) {
+        owner.blocked.push('a window opened by the page')
+        return
+      }
       if (entry.level === 'error')
         errors.push(`${entry.text}${entry.url ? ` ${entry.url}` : ''}`)
     })
@@ -599,11 +616,12 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
         }
       }
     },
-    async evaluate<T>(expression: string) {
+    async evaluate<T>(expression: string, options?: { userGesture?: boolean }) {
       const r = await s('Runtime.evaluate', {
         expression,
         returnByValue: true,
         awaitPromise: true,
+        userGesture: options?.userGesture ?? false,
       })
       if (r.exceptionDetails)
         throw new Error(
@@ -668,7 +686,9 @@ function scriptPolicy(html: string): string {
       const lf = text!.replace(/\r\n?/g, '\n')
       return `'sha256-${createHash('sha256').update(lf).digest('base64')}'`
     })
-  return `script-src 'self' blob: ${[...new Set(hashes)].join(' ')}`
+  // Apply before the document runs. An intercepted document may use its own
+  // scripts, forms and workers, but cannot open an unmeasured browsing context.
+  return `sandbox allow-scripts allow-same-origin allow-forms; script-src 'self' blob: ${[...new Set(hashes)].join(' ')}`
 }
 
 /** The type values a browser runs as classic or module JavaScript (HTML, "JavaScript MIME type essence match"). */

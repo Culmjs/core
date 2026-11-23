@@ -77,7 +77,7 @@ test('pack:all packs core, starter and tools into .pack/; packed tools runs `cul
         join(root, '.pack', core),
         join(root, '.pack', starter),
         join(root, '.pack', tools),
-        '--offline',
+        '--prefer-offline',
         '--no-audit',
         '--no-fund',
       ],

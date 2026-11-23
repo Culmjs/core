@@ -236,11 +236,12 @@ test('CUJ 4: a person edits a site by hand', async t => {
     const file = join(dist, p.endsWith('/') ? `${p}index.html` : p)
     if (!file.startsWith(dist)) return void res.writeHead(403).end()
     try {
+      const body = await readFile(file)
       res
         .writeHead(200, {
           'content-type': MIME[extname(file)] ?? 'application/octet-stream',
         })
-        .end(await readFile(file))
+        .end(body)
     } catch {
       res.writeHead(404).end()
     }

@@ -194,11 +194,17 @@ test('a window opened by a click or a form, not by script, is closed and listed 
     await page.answer(async url =>
       url === 'https://site.culm.invalid/a'
         ? HTML(
-            `<a target=_blank href="${out.url}">x</a><form target=_blank action="${out.url}"></form><script>document.querySelector('a').click();document.querySelector('form').submit()</script>`,
+            `<a target=_blank href="${out.url}">x</a><form target=_blank action="${out.url}"></form>`,
           )
         : undefined,
     )
     await page.goto('https://site.culm.invalid/a', 5000)
+    await page.evaluate("document.querySelector('a').click()", {
+      userGesture: true,
+    })
+    await page.evaluate("document.querySelector('form').submit()", {
+      userGesture: true,
+    })
     await settle()
     assert.equal(out.count(), 0)
     const popups = page.blocked.filter(b => b === 'a window opened by the page')

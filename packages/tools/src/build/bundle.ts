@@ -27,11 +27,9 @@ const exists = (p: string) =>
 /** The SHA-256 of every file under fonts/ and assets/ (project-relative, `/` separators), in path order. Links that leave the project are not read. */
 export const fileHashes = async (dir: string) => (await media(dir)).hashes
 
-// ponytail: macOS and Windows file systems ignore case by default, so paths compare lower-cased there; a case-sensitive volume on them is refused slightly more often.
-const fold = (p: string) =>
-  process.platform === 'darwin' || process.platform === 'win32'
-    ? p.toLowerCase()
-    : p
+// Reserve the same source directory names on all platforms, including when
+// the output does not exist yet or the project moves between file systems.
+const fold = (p: string) => p.toLowerCase()
 const within = (inner: string, outer: string) =>
   fold(inner) === fold(outer) || inside(fold(outer), fold(inner))
 /** The real path of a path that may not exist yet: the nearest existing ancestor's real path plus the missing segments. */
