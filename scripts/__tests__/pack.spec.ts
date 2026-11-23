@@ -54,7 +54,7 @@ test('packed core installs offline and every sub-path imports', () => {
   }
 })
 
-test('pack:all packs core then tools into .pack/, and packed tools runs `culm --help` with exit 0 from a temp install', () => {
+test('pack:all packs core, starter and tools into .pack/; packed tools runs `culm --help` and `culm init --from .pack` from a temp install', () => {
   const root = join(import.meta.dirname, '../..')
   const tmp = mkdtempSync(join(tmpdir(), 'culm-packall-'))
   try {
@@ -64,15 +64,20 @@ test('pack:all packs core then tools into .pack/, and packed tools runs `culm --
     )
     const core = tars.find(f => f.startsWith('culmjs-core-'))
     const tools = tars.find(f => f.startsWith('culmjs-tools-'))
-    assert.ok(core && tools, `missing tarballs in .pack: ${tars.join()}`)
+    const starter = tars.find(f => f.startsWith('culmjs-starter-'))
+    assert.ok(
+      core && starter && tools,
+      `missing tarballs in .pack: ${tars.join()}`,
+    )
     writeFileSync(join(tmp, 'package.json'), '{"type":"module"}')
     run(
       'npm',
       [
         'install',
         join(root, '.pack', core),
+        join(root, '.pack', starter),
         join(root, '.pack', tools),
-        '--offline',
+        '--prefer-offline',
         '--no-audit',
         '--no-fund',
       ],
@@ -80,10 +85,35 @@ test('pack:all packs core then tools into .pack/, and packed tools runs `culm --
     )
     const out = run('npx', ['culm', '--help'], tmp)
     assert.match(out, /culm/)
+    const made = run(
+      'npx',
+      ['culm', 'init', 'my-site', '--from', join(root, '.pack')],
+      tmp,
+    )
+    assert.match(made, /Wrote/)
+    const pkg = JSON.parse(
+      readFileSync(join(tmp, 'my-site/package.json'), 'utf8'),
+    )
+    assert.match(
+      pkg.dependencies['@culmjs/starter'],
+      /^file:.*culmjs-starter-.*\.tgz$/,
+    )
+    for (const f of [
+      'culm.json',
+      'site.json',
+      'pages/home.json',
+      'culm.schema.json',
+      '.gitignore',
+    ])
+      readFileSync(join(tmp, 'my-site', f))
   } finally {
     rmSync(tmp, { recursive: true, force: true })
     rmSync(join(root, '.pack'), { recursive: true, force: true })
     rmSync(join(root, 'packages/core/dist'), { recursive: true, force: true })
+    rmSync(join(root, 'packages/starter/dist'), {
+      recursive: true,
+      force: true,
+    })
     rmSync(join(root, 'packages/tools/dist'), { recursive: true, force: true })
   }
 })

@@ -112,10 +112,8 @@ test('siteOutline bounds its header: long names are cut and long lists counted',
   assert.ok(size(r) <= READ_CAP)
 })
 
-test('pageOutline gives one row per node with parent, index, hidden layouts, block of origin, required and an 80-character preview', () => {
-  const long = 'abcdefghij'.repeat(20)
+test('pageOutline rows name the block of origin and the required nodes of a form', () => {
   const doc = siteWith([
-    text('t1', long, { hide: { tablet: true, phone: true } }),
     block('d1', [text('d1.title', 'in block')]),
     node('f1', 'form', [node('fld', 'field')]),
     withRuns('t2', [{ text: 'a' }, { br: true }, { text: 'b' }]),
@@ -123,35 +121,13 @@ test('pageOutline gives one row per node with parent, index, hidden layouts, blo
   const r = ok(pageOutline(head(doc), page))
   assert.equal(r.cut, false)
   const byId = Object.fromEntries(r.rows.map((x: { id: string }) => [x.id, x]))
-  assert.deepEqual(
-    r.rows.map((x: { id: string }) => x.id),
-    ['home-root', 't1', 'd1', 'd1.title', 'f1', 'fld', 't2'].map(x =>
-      x === 'home-root' ? doc.pages[0].root.id : x,
-    ),
-  )
-  const root = doc.pages[0].root.id
-  assert.deepEqual(byId.t1, {
-    id: 't1',
-    kind: 'text',
-    name: 't1',
-    parent: root,
-    index: 0,
-    hidden: ['tablet', 'phone'],
-    required: false,
-    text: long.slice(0, 98),
-    children: 0,
-  })
-  assert.equal(byId[root].parent, null)
-  assert.equal(byId[root].children, 4)
   assert.equal(byId.d1.block, 'demo')
   assert.equal(byId.d1.children, 1)
   assert.equal(byId['d1.title'].block, undefined)
-  assert.equal(byId['d1.title'].index, 0)
   assert.equal(byId.f1.required, true)
   assert.equal(byId.fld.required, true)
-  assert.equal(byId.t2.index, 3)
   assert.equal(byId.t2.text, 'a b')
-  assert.deepEqual(byId.t2.hidden, [])
+  assert.equal('hidden' in byId.t2, false)
 })
 
 test('depth 1 gives the root and its children; from outlines a subtree', () => {
@@ -172,8 +148,6 @@ test('depth 1 gives the root and its children; from outlines a subtree', () => {
   ])
   const sub = ok(pageOutline(head(doc), page, { from: 'c1' }))
   assert.deepEqual(ids(sub), ['c1', 'a', 'c2', 'b'])
-  assert.equal(sub.rows[0].parent, root)
-  assert.equal(sub.rows[0].index, 0)
   assert.deepEqual(
     ids(ok(pageOutline(head(doc), page, { from: 'c1', depth: 1 }))),
     ['c1', 'a', 'c2'],
@@ -228,10 +202,10 @@ test('search: text is a case-insensitive substring, kind and block are exact, an
   const hits = (q: object) =>
     ok(search(head(doc), q)).rows.map((x: { id: string }) => x.id)
   assert.deepEqual(hits({ text: 'hello' }), ['hdt', 't1', 't3'])
-  // the match looks at the whole text, the row shows 80 characters
+  // the match looks at the whole text, the row shows 60 characters
   const needle = ok(search(head(doc), { text: 'needle' })).rows
   assert.equal(needle.length, 1)
-  assert.equal(needle[0].text, long.slice(0, 98))
+  assert.equal(needle[0].text, long.slice(0, 58))
   assert.deepEqual(needle[0].tree, page)
   // name matches too
   assert.deepEqual(hits({ text: 'D1.COL' }), ['d1.col'])
@@ -423,7 +397,7 @@ test('a row stays small whatever the node holds', () => {
   const r = ok(pageOutline(head(doc), page))
   assert.ok(size(r) < 1000)
   const s = ok(search(head(doc), { text: 'www' }))
-  assert.equal(s.rows[0].text.length, 98)
+  assert.equal(s.rows[0].text.length, 58)
   assert.ok(size(s) < 1000)
 })
 
@@ -772,9 +746,6 @@ test('in an invalid document an id of 100,000 characters is cut in every row, so
   )
   assert.equal(outline.length, 5)
   assert.ok(outline.every(r => (r.id as string).length <= 200))
-  assert.ok(
-    outline.every(r => r.parent === null || (r.parent as string).length <= 200),
-  )
   assert.deepEqual(
     outline.map(r => (r.id as string).slice(0, 2)),
     ['ho', 't1', 'II', 't2', 't3'],
@@ -804,4 +775,67 @@ test('a run whose text is not a string keeps it, cut like any other field', () =
     JSON.stringify(r.cutFields),
   )
   assert.equal(runs[2].text, 'fine')
+})
+
+test('read page rows carry depth and no parent or index; hidden, required, children and name are left out at their defaults; text is at most 60', () => {
+  const long = 'abcdefghij'.repeat(20)
+  const doc = siteWith([
+    text('t1', long, { hide: { tablet: true }, name: 'Intro' }),
+    node('c1', 'column', [text('a', 'a')]),
+  ])
+  const r = ok(pageOutline(head(doc), page))
+  const byId = Object.fromEntries(r.rows.map((x: { id: string }) => [x.id, x]))
+  assert.deepEqual(byId.t1, {
+    id: 't1',
+    kind: 'text',
+    depth: 1,
+    name: 'Intro',
+    hidden: ['tablet'],
+    text: long.slice(0, 58),
+  })
+  assert.deepEqual(byId.c1, { id: 'c1', kind: 'column', depth: 1, children: 1 })
+  assert.deepEqual(byId.a, { id: 'a', kind: 'text', depth: 2, text: 'a' })
+  for (const row of r.rows) {
+    assert.equal('parent' in row || 'index' in row, false)
+    assert.ok(row.text === undefined || size(row.text) <= 60)
+  }
+})
+
+test('the depth of each row rebuilds the same tree as the document, with from and depth options too', () => {
+  const doc = siteWith([
+    node('c1', 'column', [
+      text('a', 'a'),
+      node('c2', 'column', [text('b', 'b')]),
+    ]),
+    text('z', 'z'),
+  ])
+  const parents = (rows: { id: string; depth: number }[]) => {
+    const stack: string[] = []
+    return Object.fromEntries(
+      rows.map(r => {
+        stack.length = r.depth
+        const p = stack[r.depth - 1] ?? null
+        stack.push(r.id)
+        return [r.id, p]
+      }),
+    )
+  }
+  const root = doc.pages[0].root.id
+  assert.deepEqual(parents(ok(pageOutline(head(doc), page)).rows), {
+    [root]: null,
+    c1: root,
+    a: 'c1',
+    c2: 'c1',
+    b: 'c2',
+    z: root,
+  })
+  const sub = ok(pageOutline(head(doc), page, { from: 'c1', depth: 1 }))
+  assert.deepEqual(
+    sub.rows.map((r: { id: string; depth: number }) => [r.id, r.depth]),
+    [
+      ['c1', 0],
+      ['a', 1],
+      ['c2', 1],
+    ],
+  )
 })

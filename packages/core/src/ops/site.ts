@@ -144,15 +144,24 @@ export const movePage: OpFn<'movePage'> = (doc, _registry, op) => {
 
 export const setSite: OpFn<'setSite'> = (doc, _registry, op) => {
   const o = op as unknown as Fields
-  if (o.name === undefined && o.languages === undefined)
-    return bad('Give a name, languages, or both.')
-  const wrong = checkTypes(o, { name: isStr, languages: Array.isArray })
+  if (
+    o.name === undefined &&
+    o.languages === undefined &&
+    o.centreMaxWidth === undefined
+  )
+    return bad('Give a name, languages, centreMaxWidth, or any of them.')
+  const wrong = checkTypes(o, {
+    name: isStr,
+    languages: Array.isArray,
+    centreMaxWidth: isBool,
+  })
   if (wrong) return wrong
   const unsafe = checkSafe(o, undefined, ['languages'])
   if (unsafe) return unsafe
   const next = { ...doc } as Fields
   if (o.name !== undefined) next.name = o.name
   if (o.languages !== undefined) next.languages = o.languages
+  if (o.centreMaxWidth !== undefined) next.centreMaxWidth = o.centreMaxWidth
   return done(next as SiteDocument)
 }
 

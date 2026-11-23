@@ -454,6 +454,97 @@ export function isFontRef(v: unknown): v is FontRef {
   )
 }
 
+/** A font the site's folder holds (`fonts/<slug>/font.json`), read by the tools and handed to the compile. */
+export type SiteFont = {
+  family: string
+  kind: 'serif' | 'sans' | 'mono' | 'display'
+  licence: string
+  source: string
+  files: {
+    weight: number | [number, number]
+    style: 'normal' | 'italic'
+    file: string
+  }[]
+}
+export type SiteFonts = Record<string, SiteFont>
+
+/** The name of a held font: the family in lower case, every run of other characters one dash. */
+export const fontSlug = (family: string): string =>
+  family
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+
+const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/
+const FILE = /^[0-9]{3}(-[0-9]{3})?(-italic)?\.woff2$/
+const isW = (n: unknown): n is number =>
+  typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= 1000
+
+/**
+ * A held font as the file says it, or undefined. The family goes into CSS and the file name into a URL, so both are held to a plain
+ * grammar here; the result is built again from the fields it knows.
+ */
+export function checkSiteFont(v: unknown): SiteFont | undefined {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return undefined
+  const o = v as Record<string, unknown>
+  const { family, kind, licence, source, files } = o
+  if (typeof family !== 'string' || !/^[A-Za-z0-9 ]{1,64}$/.test(family))
+    return undefined
+  if (
+    kind !== 'serif' &&
+    kind !== 'sans' &&
+    kind !== 'mono' &&
+    kind !== 'display'
+  )
+    return undefined
+  if (typeof licence !== 'string' || !/^[A-Za-z0-9.+ -]{1,40}$/.test(licence))
+    return undefined
+  if (
+    typeof source !== 'string' ||
+    !/^https?:\/\/[^\s"'<>()\\{}`]{1,290}$/.test(source)
+  )
+    return undefined
+  if (!Array.isArray(files) || files.length < 1 || files.length > 18)
+    return undefined
+  const out: SiteFont['files'] = []
+  for (const f of files) {
+    if (typeof f !== 'object' || f === null) return undefined
+    const { weight, style, file } = f as Record<string, unknown>
+    const ok =
+      isW(weight) ||
+      (Array.isArray(weight) &&
+        weight.length === 2 &&
+        isW(weight[0]) &&
+        isW(weight[1]) &&
+        weight[0] <= weight[1])
+    if (
+      !ok ||
+      (style !== 'normal' && style !== 'italic') ||
+      typeof file !== 'string' ||
+      !FILE.test(file)
+    )
+      return undefined
+    out.push({
+      weight: Array.isArray(weight)
+        ? [weight[0], weight[1]]
+        : (weight as number),
+      style,
+      file,
+    })
+  }
+  return { family, kind, licence, source, files: out }
+}
+
+const heldFont = (ref: FontRef, fonts?: SiteFonts) => {
+  const slug = ref.slice(3)
+  return ref.startsWith('up:') &&
+    fonts &&
+    SLUG.test(slug) &&
+    Object.hasOwn(fonts, slug)
+    ? { slug, font: checkSiteFont(fonts[slug]) }
+    : undefined
+}
+
 const entry = (ref: FontRef) => {
   const id = ref.slice(4)
   return ref.startsWith('cat:') && Object.hasOwn(FONTS, id)
@@ -461,28 +552,69 @@ const entry = (ref: FontRef) => {
     : undefined
 }
 
-export function fontFamily(ref: FontRef): string | undefined {
+export function fontFamily(
+  ref: FontRef,
+  fonts?: SiteFonts,
+): string | undefined {
   if (ref.startsWith('sys:'))
     return SYSTEM_STACKS[ref.slice(4) as keyof typeof SYSTEM_STACKS]
+  const h = heldFont(ref, fonts)
+  if (h) {
+    const k = h.font?.kind
+    return (
+      h.font &&
+      `"${h.font.family}", ${SYSTEM_STACKS[k === 'serif' || k === 'mono' ? k : 'sans']}`
+    )
+  }
   const e = entry(ref)
   return e && `"${e.family}", ${fontFamily(e.fallback)}`
 }
 
-export function fontKind(ref: FontRef): 'serif' | 'sans' {
-  return ref === 'sys:serif' || entry(ref)?.kind === 'serif' ? 'serif' : 'sans'
+export function fontKind(ref: FontRef, fonts?: SiteFonts): 'serif' | 'sans' {
+  return ref === 'sys:serif' ||
+    entry(ref)?.kind === 'serif' ||
+    heldFont(ref, fonts)?.font?.kind === 'serif'
+    ? 'serif'
+    : 'sans'
 }
 
-export function fontFaceCss(refs: FontRef[], base: string): string {
+const face = (family: string, url: string, w: string | number, style: string) =>
+  `@font-face{font-family:"${family}";src:url(${url}) format("woff2");font-weight:${w};font-style:${style};font-display:swap}`
+
+export function fontFaceCss(
+  refs: FontRef[],
+  base: string,
+  fonts?: SiteFonts,
+): string {
   const seen = new Set<string>()
   let css = ''
   for (const ref of refs) {
+    const h = heldFont(ref, fonts)
+    if (h?.font) {
+      for (const f of h.font.files) {
+        const url = `${base}/${h.slug}/${f.file}`
+        if (seen.has(url)) continue
+        seen.add(url)
+        css += face(
+          h.font.family,
+          url,
+          Array.isArray(f.weight) ? f.weight.join(' ') : f.weight,
+          f.style,
+        )
+      }
+      continue
+    }
     const e = entry(ref)
     if (!e) continue
     for (const f of e.files) {
       if (seen.has(f.file)) continue
       seen.add(f.file)
-      const w = Array.isArray(f.weight) ? f.weight.join(' ') : f.weight
-      css += `@font-face{font-family:"${e.family}";src:url(${base}/${f.file}) format("woff2");font-weight:${w};font-style:${f.style};font-display:swap}`
+      css += face(
+        e.family,
+        `${base}/${f.file}`,
+        Array.isArray(f.weight) ? f.weight.join(' ') : f.weight,
+        f.style,
+      )
     }
   }
   return css

@@ -23,13 +23,22 @@ export type Page = {
   blocked: string[]
   setViewport(width: number, height: number): Promise<void>
   setScheme(scheme: 'light' | 'dark'): Promise<void>
+  /** Every console error, uncaught exception and failed request the page logged, in order. */
+  errors: string[]
+  /** Scripts on or off for the next navigation and after (on by default). */
+  setScripts(on: boolean): Promise<void>
+  /** For a page that reaches a local server: the page keeps `EventSource`, `WebSocket` and `window.open` (the next navigation on). Call it instead of `answer`, which would intercept every request; a page with no `answer` reaches the network. */
+  unblock(): Promise<void>
   /** Every request goes to `fn`; `undefined` fails the request and records its address in `blocked`. Nothing reaches the network. */
   answer(fn: (url: string) => Promise<Answer | undefined>): Promise<void>
   goto(
     url: string,
     timeoutMs: number,
   ): Promise<{ ok: boolean; problem?: string }>
-  evaluate<T>(expression: string): Promise<T>
+  evaluate<T>(
+    expression: string,
+    options?: { userGesture?: boolean },
+  ): Promise<T>
   /** A PNG of the page rectangle (page coordinates, beyond the window); the window when no clip is given. */
   screenshot(clip?: {
     x: number
@@ -450,7 +459,14 @@ async function hook(cdp: Cdp, owner: Owner, session: string) {
       try {
         if (/^(data|about|blob):/.test(request.url))
           return void (await s('Fetch.continueRequest', { requestId }))
-        const r = await owner.fn?.(request.url)
+        let r = await owner.fn?.(request.url)
+        // Full Chrome requests a favicon even when the document declares none.
+        // The virtual measurement host supplies an empty default locally.
+        if (
+          request.url === 'https://site.culm.invalid/favicon.ico' &&
+          (!r || r.status === 404)
+        )
+          r = { status: 204, type: 'image/x-icon', body: '' }
         if (!r) {
           owner.blocked.push(request.url)
           return void (await s('Fetch.failRequest', {
@@ -508,15 +524,40 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
   const owner: Owner = { blocked: [], hooked: new Set(), adopted: new Set() }
   hub.owners.set(targetId, owner)
   hub.last = owner
+  const errors: string[] = []
+  let guard: { identifier: string }
+  const text = (a: Json) =>
+    a?.value !== undefined ? String(a.value) : String(a?.description ?? a?.type)
   try {
     await s('Page.enable')
+    await s('Log.enable')
+    cdp.on(sessionId, 'Runtime.consoleAPICalled', ({ type, args }: Json) => {
+      if (type === 'error') errors.push(args.map(text).join(' '))
+    })
+    cdp.on(
+      sessionId,
+      'Runtime.exceptionThrown',
+      ({ exceptionDetails: e }: Json) =>
+        void errors.push(String(e.exception?.description ?? e.text)),
+    )
+    cdp.on(sessionId, 'Log.entryAdded', ({ entry }: Json) => {
+      if (
+        entry.source === 'security' &&
+        String(entry.text).includes('allow-popups')
+      ) {
+        owner.blocked.push('a window opened by the page')
+        return
+      }
+      if (entry.level === 'error')
+        errors.push(`${entry.text}${entry.url ? ` ${entry.url}` : ''}`)
+    })
     // Sockets and WebRTC are not requests the interception sees: the page has none. A window the page opens is not made; the address is listed.
     await s('Runtime.enable')
     await s('Runtime.addBinding', { name: 'culmBlocked' })
     cdp.on(sessionId, 'Runtime.bindingCalled', ({ name, payload }: Json) => {
       if (name === 'culmBlocked') owner.blocked.push(String(payload))
     })
-    await s('Page.addScriptToEvaluateOnNewDocument', {
+    guard = await s('Page.addScriptToEvaluateOnNewDocument', {
       source:
         "for (const k of ['RTCPeerConnection','webkitRTCPeerConnection','WebSocket','WebSocketStream','EventSource']) delete window[k];" +
         'window.open = u => { window.culmBlocked(String(u)); return null }',
@@ -534,6 +575,13 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
   }
   return {
     blocked: owner.blocked,
+    errors,
+    setScripts: on =>
+      s('Emulation.setScriptExecutionDisabled', { value: !on }).then(() => {}),
+    unblock: () =>
+      s('Page.removeScriptToEvaluateOnNewDocument', {
+        identifier: guard.identifier,
+      }).then(() => {}),
     setViewport: (width, height) =>
       s('Emulation.setDeviceMetricsOverride', {
         width,
@@ -568,11 +616,12 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
         }
       }
     },
-    async evaluate<T>(expression: string) {
+    async evaluate<T>(expression: string, options?: { userGesture?: boolean }) {
       const r = await s('Runtime.evaluate', {
         expression,
         returnByValue: true,
         awaitPromise: true,
+        userGesture: options?.userGesture ?? false,
       })
       if (r.exceptionDetails)
         throw new Error(
@@ -637,7 +686,9 @@ function scriptPolicy(html: string): string {
       const lf = text!.replace(/\r\n?/g, '\n')
       return `'sha256-${createHash('sha256').update(lf).digest('base64')}'`
     })
-  return `script-src 'self' blob: ${[...new Set(hashes)].join(' ')}`
+  // Apply before the document runs. An intercepted document may use its own
+  // scripts, forms and workers, but cannot open an unmeasured browsing context.
+  return `sandbox allow-scripts allow-same-origin allow-forms; script-src 'self' blob: ${[...new Set(hashes)].join(' ')}`
 }
 
 /** The type values a browser runs as classic or module JavaScript (HTML, "JavaScript MIME type essence match"). */

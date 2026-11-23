@@ -5,6 +5,7 @@ import { unrollInstances } from '../../src/data/bind.ts'
 import { validateSite } from '../../src/validate/index.ts'
 import { defaultSiteStyles } from '../../src/style/index.ts'
 import { dv, fs, n, put, reg, text as t0 } from './helpers.ts'
+import { aliasStyles } from '../../src/ops/aliases.ts'
 import { bigPage, node as kn, siteWith, text as kt } from '../kit.ts'
 
 const text0 = (id: string) => t0(id, { slot: fs() })
@@ -1806,4 +1807,20 @@ test('a required text whose only run is math is refused, whatever the math: noth
   // a math run beside a run with visible characters: the text has content
   for (const math of [...VALID_MATH, C1_MATH[0]])
     assert.deepEqual(only([{ text: 'Speed: ' }, { math }]), [], math)
+})
+
+test('display none at phone on the required header.nav is refused, and the message names foldOn "phone"', () => {
+  const nav = n({
+    id: 'nav',
+    kind: 'menu',
+    name: 'nav',
+    required: true,
+    slot: fs(),
+    props: { which: 'menu' },
+    style: { phone: { display: 'none' } },
+  })
+  const p = validateSite(aliasStyles(put(nav)), reg)
+  assert.equal(p.length, 1)
+  assert.equal(p[0].rule, 'required')
+  assert.match(p[0].message, /; a menu can fold on phone with foldOn "phone"/)
 })

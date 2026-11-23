@@ -1,0 +1,26 @@
+{
+  "name": "@culmjs/starter",
+  "version": "0.0.0",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json",
+    "./template/*": "./template/*"
+  },
+  "files": [
+    "dist",
+    "template"
+  ],
+  "scripts": {
+    "prepack": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@culmjs/core": "0.0.0"
+  }
+}

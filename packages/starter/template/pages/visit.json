@@ -1,0 +1,34 @@
+// The Visit page.
+{
+  "$schema": "../culm.schema.json",
+  "id": "visit",
+  "title": "Visit",
+  "slug": "/visit",
+  "on": true,
+  "inMenu": true,
+  "inFooter": true,
+  "icon": "",
+  "root": {
+    "id": "visitroot",
+    "kind": "column",
+    "name": "Page",
+    "children": [
+      {
+        "block": "hero",
+        "look": "image",
+        "id": "visithero",
+        "title": "Come and see us",
+        "lead": "We are on the corner of the street, next to the old tram stop.",
+        "buttonLabel": "Call us",
+        "buttonLink": { "email": "hello@example.com" },
+        "image": "street.svg"
+      },
+      // The opening hours are a block written as JSON: see blocks/opening-hours.json.
+      {
+        "block": "openinghours",
+        "id": "visithours",
+        "heading": "Opening hours"
+      }
+    ]
+  }
+}

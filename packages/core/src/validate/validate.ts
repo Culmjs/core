@@ -29,6 +29,7 @@ export const TOP_KEYS = fieldsOf<SiteDocument>({
   styles: true,
   look: true,
   languages: true,
+  centreMaxWidth: true,
 })
 export const PAGE_KEYS = fieldsOf<Page>({
   id: true,
@@ -222,7 +223,7 @@ export function checkDocument(
         (f.startsWith('cat:') && !Object.hasOwn(FONTS, f.slice(4)))
       )
         bad(
-          'A font must be a system, catalogue or uploaded font.',
+          'A font must be a system, catalogue or held font (up:<name>); a folder site names a Google family as {google}.',
           `fonts.${i}`,
         )
     })
@@ -250,6 +251,11 @@ export function checkDocument(
     unknownStyleFields(doc.styles, bad)
     for (const m of checkSiteStyles(doc.styles).problems) bad(m, 'styles')
   }
+  if (
+    doc.centreMaxWidth !== undefined &&
+    typeof doc.centreMaxWidth !== 'boolean'
+  )
+    bad('centreMaxWidth must be true or false.', 'centreMaxWidth')
   if (doc.languages !== undefined) {
     if (!Array.isArray(doc.languages) || doc.languages.length > 50)
       bad('The languages must be a list of at most 50.', 'languages')

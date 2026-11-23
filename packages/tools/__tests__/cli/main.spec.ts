@@ -2,7 +2,15 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -169,10 +177,10 @@ test('dev --port 0: prints the address, serves, and closes on SIGINT', async () 
 const protocol = (line: string) => {
   const v = JSON.parse(line) as { jsonrpc?: string }
   assert.equal(v.jsonrpc, '2.0', line)
-  return v as { id?: number; result?: { tools?: unknown[] } }
+  return v as { id?: number; result?: { tools?: { name: string }[] } }
 }
 
-test('mcp: lists nine tools over standard input and output, and standard output carries nothing but the protocol', async () => {
+test('mcp defaults to the five authoring tools over stdio, with no extra stdout', async () => {
   const dir = await copyFixture('site-basic')
   const c = child(dir, 'mcp')
   const send = (m: unknown) => c.p.stdin.write(`${JSON.stringify(m)}\n`)
@@ -194,7 +202,13 @@ test('mcp: lists nine tools over standard input and output, and standard output 
   assert.equal(await c.exit, 0)
   const lines = c.out.split('\n').filter(Boolean)
   const msgs = lines.map(protocol)
-  assert.equal(msgs.find(m => m.id === 2)?.result?.tools?.length, 9)
+  assert.deepEqual(
+    msgs
+      .find(m => m.id === 2)
+      ?.result?.tools?.map(t => t.name)
+      .sort(),
+    ['build', 'describe', 'find', 'measure', 'write'],
+  )
 })
 
 test('mcp --port 0: prints the token on standard error and refuses a request without it', async () => {
@@ -231,13 +245,13 @@ test('mcp --port 0: prints the token on standard error and refuses a request wit
   await c.exit
 })
 
-test('mcp passes protect: setRequired null through the tool is refused', async () => {
+test('mcp --full passes protect: setRequired null through the tool is refused', async () => {
   const dir = await copyFixture('site-basic')
   const client = new Client({ name: 't', version: '0' })
   await client.connect(
     new StdioClientTransport({
       command: process.execPath,
-      args: childArgs('mcp'),
+      args: childArgs('mcp', '--full'),
       cwd: dir,
       stderr: 'ignore',
     }),
@@ -333,6 +347,21 @@ test('check: a problem in the files is exit 1 before any browser is opened', asy
   assert.match(r.err, /^pages\/home\.json:\d+:\d+ /m)
 })
 
+test('check: an asset linked outside the project is refused, exit 1 before any browser', async () => {
+  const dir = await copyFixture('site-basic')
+  const outside = await mkdtemp(join(tmpdir(), 'culm-outside-'))
+  try {
+    await writeFile(join(outside, 'x.png'), 'x')
+    await mkdir(join(dir, 'assets'), { recursive: true })
+    await symlink(join(outside, 'x.png'), join(dir, 'assets', 'x.png'))
+    const r = await run(['check', '--chrome', '/nonexistent/chrome'], dir)
+    assert.equal(r.code, 1)
+    assert.match(r.err, /^assets\/x\.png:1:1 .*is refused/m)
+  } finally {
+    await rm(outside, { recursive: true, force: true })
+  }
+})
+
 test('formatLocated: file:line:column, the code or the check, the message, then the allowed values', () => {
   assert.equal(
     formatLocated({
@@ -391,7 +420,7 @@ test('mcp locates a problem in the files as they are now, after a change to them
   await client.connect(
     new StdioClientTransport({
       command: process.execPath,
-      args: childArgs('mcp'),
+      args: childArgs('mcp', '--full'),
       cwd: dir,
       stderr: 'ignore',
     }),

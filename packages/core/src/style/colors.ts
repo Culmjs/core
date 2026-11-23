@@ -35,9 +35,14 @@ export const mix = (a: string, b: string, t: number) =>
     )
     .join('')
 
-/** The look's Muted and Line, as the page computes them in CSS (66% and 14% ink over the background). */
+/** Start at 66% ink; use just enough of the authored ink to keep derived text readable. */
+export function mutedPercent({ ink, bg }: Pick<Look, 'ink' | 'bg'>) {
+  for (let percent = 66; percent < 100; percent++)
+    if (contrast(mix(bg, ink, percent / 100), bg) >= 4.5) return percent
+  return 100
+}
 export const mutedOf = (look: Pick<Look, 'ink' | 'bg'>) =>
-  mix(look.ink, look.bg, 0.34)
+  mix(look.bg, look.ink, mutedPercent(look) / 100)
 export const lineOf = (look: Pick<Look, 'ink' | 'bg'>) =>
   mix(look.ink, look.bg, 0.86)
 

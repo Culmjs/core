@@ -1,0 +1,116 @@
+// The site: its look, its text styles, the order of its pages, and its header and footer.
+{
+  "$schema": "./culm.schema.json",
+  "name": "Corner Bakery",
+  "centreMaxWidth": true,
+  "look": {
+    "id": "starter",
+    "name": "Starter",
+    "family": "Minimal",
+    "brand": "#b45309",
+    "ink": "#1c1917",
+    "bg": "#fafaf9",
+    "headingFont": "sys:sans",
+    "bodyFont": "sys:sans",
+    "corners": 6,
+    "dark": "auto"
+  },
+  // Regular text sizes are 11–96 px; display headings (H1/H2) can reach 240 px.
+  "styles": {
+    "colors": [
+      { "id": "ink", "name": "Ink", "value": "#1c1917" },
+      { "id": "canvas", "name": "Canvas", "value": "#fafaf9" },
+      { "id": "brand", "name": "Brand", "value": "#b45309" },
+      { "id": "muted", "name": "Muted", "value": "#57534e" },
+      { "id": "line", "name": "Line", "value": "#e7e5e4" }
+    ],
+    "text": [
+      {
+        "id": "eyebrow",
+        "name": "Eyebrow",
+        "decl": {
+          "font": "sys:sans",
+          "size": 11,
+          "color": "muted",
+          "weight": 600,
+          "upper": true,
+          "letterSpacing": 0.12
+        }
+      },
+      {
+        "id": "body",
+        "name": "Body",
+        "decl": {
+          "font": "sys:sans",
+          "size": 17,
+          "color": "ink",
+          "weight": 400,
+          "lineHeight": 1.6
+        }
+      },
+      {
+        "id": "lead",
+        "name": "Lead",
+        "decl": {
+          "font": "sys:sans",
+          "size": 20,
+          "color": "muted",
+          "weight": 400,
+          "lineHeight": 1.5
+        }
+      },
+      {
+        "id": "h3",
+        "name": "H3",
+        "decl": {
+          "font": "sys:sans",
+          "size": 24,
+          "color": "ink",
+          "weight": 600,
+          "lineHeight": 1.25
+        }
+      },
+      {
+        "id": "h2",
+        "name": "H2",
+        "decl": {
+          "font": "sys:sans",
+          "size": 32,
+          "color": "ink",
+          "weight": 700,
+          "lineHeight": 1.2
+        }
+      },
+      {
+        "id": "h1",
+        "name": "H1",
+        "decl": {
+          "font": "sys:sans",
+          "size": 48,
+          "color": "ink",
+          "weight": 700,
+          "lineHeight": 1.1
+        }
+      }
+    ],
+    "space": { "xs": 4, "s": 8, "m": 16, "l": 24, "xl": 40, "2xl": 64 },
+    "shadows": [{ "id": "card", "name": "Card", "value": "soft" }],
+    "textRange": { "min": 11, "max": 96, "displayMax": 240 }
+  },
+  "fonts": ["sys:sans"],
+  "languages": [{ "code": "en" }],
+  // The order of the pages: file names in pages/.
+  "pages": ["home.json", "menu.json", "about.json", "visit.json"],
+  "header": {
+    "block": "page-header",
+    "id": "header",
+    "siteName": "Corner Bakery",
+    "buttonLabel": "Visit us",
+    "buttonLink": { "page": "/visit" }
+  },
+  "footer": {
+    "block": "page-footer",
+    "id": "footer",
+    "note": "Corner Bakery. Baked fresh every morning."
+  }
+}

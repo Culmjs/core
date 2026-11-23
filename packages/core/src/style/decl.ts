@@ -24,6 +24,10 @@ export type StyleCtx = {
 type Prop = {
   check(v: unknown): unknown | undefined
   css(v: never, ctx: StyleCtx): string
+  /** What the value takes, in words: shown in a refusal. */
+  forms: string
+  /** A value that `check` accepts, shown in a refusal as JSON. */
+  example: unknown
 }
 
 const num = (v: unknown, lo: number, hi: number): number | undefined =>
@@ -71,6 +75,7 @@ const COLOR_NAMES = [
   'line',
   ...Object.keys(LOOK_COLORS),
 ]
+const COLOR_FORMS = `one of ${COLOR_NAMES.join(', ')}, a "#rrggbb" or {"style":"<site colour id>"}`
 /** Site style ids: nothing but these characters can reach a CSS identifier. */
 export const STYLE_ID_RE = /^[a-z0-9-]{1,32}$/
 const ref = (v: unknown): { style: string } | undefined =>
@@ -103,17 +108,26 @@ const alphaCss = (c: C, a?: number) =>
 
 /** Spacing steps are a closed set; the scale itself lives in SiteStyles.space. */
 export const SPACE_STEPS = ['xs', 's', 'm', 'l', 'xl', '2xl'] as const
-type SpaceV = number | { step: (typeof SPACE_STEPS)[number] }
+type SpaceV =
+  number | { step: (typeof SPACE_STEPS)[number] } | { n: number; unit: '%' }
 const space =
   (hi: number, lo = 0) =>
   (v: unknown): SpaceV | undefined =>
     isObj(v)
       ? Object.keys(v).length === 1 && SPACE_STEPS.includes(v.step as never)
         ? { step: v.step as (typeof SPACE_STEPS)[number] }
-        : undefined
+        : only(v, ['n', 'unit']) &&
+            v.unit === '%' &&
+            num(v.n, lo < 0 ? -100 : 0, 100) !== undefined
+          ? { n: v.n as number, unit: '%' }
+          : undefined
       : num(v, lo, hi)
 const spaceCss = (v: SpaceV) =>
-  typeof v === 'number' ? `${v}px` : `var(--s-space-${v.step})`
+  typeof v === 'number'
+    ? `${v}px`
+    : 'step' in v
+      ? `var(--s-space-${v.step})`
+      : `${v.n}%`
 
 const SIZE_RANGE = {
   px: [0, 2000],
@@ -168,19 +182,28 @@ const spaceBox =
 const spaceBoxCss = (v: SpaceV | SpaceV[]) =>
   Array.isArray(v) ? v.map(spaceCss).join(' ') : spaceCss(v)
 
-const px = (name: string, lo: number, hi: number) => ({
+const px = (name: string, lo: number, hi: number, example = lo) => ({
+  forms: `px from ${lo} to ${hi}`,
+  example,
   check: (v: unknown) => num(v, lo, hi),
   css: (v: number) => `${name}:${v}px`,
 })
 const sz = (name: string) => ({
+  forms:
+    '"fit", "fill" or {"n":number,"unit":"px"|"%"|"ch"|"vh"|"vw"} (px 0 to 2000, % 0 to 100, ch 1 to 200, vh and vw 0 to 100)',
+  example: { n: 320, unit: 'px' },
   check: size,
   css: (v: SizeV) => `${name}:${sizeCss(v)}`,
 })
 const flag = (css: string) => ({
+  forms: 'true or false',
+  example: true,
   check: bool,
   css: (v: boolean) => (v ? css : ''),
 })
 const map = <T extends string>(name: string, values: Record<T, string>) => ({
+  forms: `one of ${Object.keys(values).join(', ')}`,
+  example: Object.keys(values)[0],
   check: oneOf(...(Object.keys(values) as T[])),
   css: (v: T) => `${name}:${values[v]}`,
 })
@@ -319,10 +342,45 @@ export const shadowText = (v: ShadowV) =>
   typeof v === 'string'
     ? SHADOWS[v as keyof typeof SHADOWS]
     : `${pxs(v.x, v.y, v.blur, v.spread)} ${colorCss(v.color)}`
+/** The same shadow without its spread, the form `drop-shadow()` takes (a shape's filter). */
+export const dropShadowText = (v: ShadowV) =>
+  typeof v === 'string'
+    ? shadowText(v)
+    : `${pxs(v.x, v.y, v.blur)} ${colorCss(v.color)}`
 const FONT_RE = /^(sys:(sans|serif|mono)|(cat|up):[A-Za-z0-9_-]{1,64})$/
 const ASSET_RE = /^[A-Za-z0-9_-]{1,64}$/
 
 // Key order here is the order declarations are written in.
+const SIDE_PROPS = [
+  'borderTop',
+  'borderRight',
+  'borderBottom',
+  'borderLeft',
+] as const
+const sideBorder = (side: string): Prop => ({
+  forms: `{"width":0 to 64,"color":${COLOR_FORMS},"style"?:"solid"|"dashed"|"dotted"|"double"}`,
+  example: { width: 1, color: 'line' },
+  check: (v: unknown) => {
+    if (!isObj(v) || !only(v, ['width', 'style', 'color'])) return undefined
+    const width = num(v.width, 0, 64)
+    const c = color(v.color)
+    if (
+      width === undefined ||
+      c === undefined ||
+      (v.style !== undefined &&
+        !oneOf('solid', 'dashed', 'dotted', 'double')(v.style))
+    )
+      return undefined
+    return {
+      width,
+      ...(v.style === undefined ? {} : { style: v.style }),
+      color: c,
+    }
+  },
+  css: (v: { width: number; style?: string; color: C }) =>
+    `border-${side}:${v.width}px ${v.style ?? 'solid'} ${colorCss(v.color)}`,
+})
+
 export const PROPS = {
   width: sz('width'),
   minWidth: sz('min-width'),
@@ -330,19 +388,29 @@ export const PROPS = {
   height: sz('height'),
   minHeight: sz('min-height'),
   aspect: {
+    forms: 'a number from 0.25 to 4',
+    example: 1.5,
     check: (v: unknown) => num(v, 0.25, 4),
     css: (v: number) => `aspect-ratio:${v}`,
   },
   padding: {
+    forms:
+      'a number from 0 to 400, a percentage {"n":0 to 100,"unit":"%"}, a step {"step":"xs"|"s"|"m"|"l"|"xl"|"2xl"}, or four of them [top,right,bottom,left]',
+    example: 16,
     check: spaceBox(400),
     css: (v: SpaceV | SpaceV[]) => `padding:${spaceBoxCss(v)}`,
   },
   margin: {
+    forms:
+      'a number from -400 to 400, a percentage {"n":-100 to 100,"unit":"%"}, a step {"step":"m"}, or four of them [top,right,bottom,left]',
+    example: 16,
     check: spaceBox(400, -400),
     css: (v: SpaceV | SpaceV[]) => `margin:${spaceBoxCss(v)}`,
   },
   // After margin, so it wins over the inline sides of a margin value.
   place: {
+    forms: 'one of start, center, end',
+    example: 'center',
     check: oneOf('start', 'center', 'end'),
     css: (v: 'start' | 'center' | 'end') =>
       v === 'start'
@@ -351,7 +419,13 @@ export const PROPS = {
           ? 'margin-inline-start:auto'
           : 'margin-inline:auto',
   },
-  gap: { check: space(200), css: (v: SpaceV) => `gap:${spaceCss(v)}` },
+  gap: {
+    forms:
+      'a number from 0 to 200, a percentage {"n":0 to 100,"unit":"%"}, or a step {"step":"xs"|"s"|"m"|"l"|"xl"|"2xl"}',
+    example: 16,
+    check: space(200),
+    css: (v: SpaceV) => `gap:${spaceCss(v)}`,
+  },
   direction: map('flex-direction', { row: 'row', column: 'column' }),
   wrap: flag('flex-wrap:wrap'),
   justify: map('justify-content', {
@@ -368,8 +442,15 @@ export const PROPS = {
     stretch: 'stretch',
     baseline: 'baseline',
   }),
-  bg: { check: color, css: (v: C) => `background-color:${colorCss(v)}` },
+  bg: {
+    forms: COLOR_FORMS,
+    example: 'brand',
+    check: color,
+    css: (v: C) => `background-color:${colorCss(v)}`,
+  },
   bgImage: {
+    forms: 'an asset id',
+    example: 'hero',
     check: (v: unknown) =>
       typeof v === 'string' && ASSET_RE.test(v) ? v : undefined,
     css: (v: string, ctx: StyleCtx) => {
@@ -379,26 +460,36 @@ export const PROPS = {
         : ''
     },
   },
-  color: { check: color, css: (v: C) => `color:${colorCss(v)}` },
+  color: {
+    forms: COLOR_FORMS,
+    example: 'ink',
+    check: color,
+    css: (v: C) => `color:${colorCss(v)}`,
+  },
   // Look-token hook (Task 4.0b). Before border, radius and shadow, so those keys on the same widget win.
   surface: {
+    forms: 'one of card, button',
+    example: 'card',
     check: oneOf('card', 'button'),
     css: (v: keyof typeof SURFACES) => SURFACES[v],
   },
   border: {
+    forms: `{"width":0 to 64,"color":${COLOR_FORMS},"style"?:"solid"|"dashed"|"dotted"|"double","sides"?:["top"|"right"|"bottom"|"left"]}`,
+    example: { width: 1, color: 'line' },
     check: (v: unknown) => {
       if (!isObj(v) || !only(v, ['width', 'style', 'color', 'sides']))
         return undefined
-      const width = num(v.width, 0, 20)
+      const width = num(v.width, 0, 64)
       const c = color(v.color)
       if (
         width === undefined ||
         c === undefined ||
-        !oneOf('solid', 'dashed', 'dotted', 'double')(v.style)
+        (v.style !== undefined &&
+          !oneOf('solid', 'dashed', 'dotted', 'double')(v.style))
       )
         return undefined
-      if (v.sides === undefined)
-        return { width, style: v.style as string, color: c }
+      const style = v.style === undefined ? {} : { style: v.style as string }
+      if (v.sides === undefined) return { width, ...style, color: c }
       const sides = v.sides
       if (
         !Array.isArray(sides) ||
@@ -410,32 +501,64 @@ export const PROPS = {
         return undefined
       return {
         width,
-        style: v.style as string,
+        ...style,
         color: c,
         sides: SIDES.filter(x => sides.includes(x)),
       }
     },
-    css: (v: { width: number; style: string; color: C; sides?: string[] }) => {
-      const b = `${v.width}px ${v.style} ${colorCss(v.color)}`
+    css: (v: { width: number; style?: string; color: C; sides?: string[] }) => {
+      const b = `${v.width}px ${v.style ?? 'solid'} ${colorCss(v.color)}`
       return v.sides
         ? v.sides.map(x => `border-${x}:${b}`).join(';')
         : `border:${b}`
     },
   },
+  borderTop: sideBorder('top'),
+  borderRight: sideBorder('right'),
+  borderBottom: sideBorder('bottom'),
+  borderLeft: sideBorder('left'),
+  borderWidth: {
+    forms: 'a number from 0 to 64, or four of them [t,r,b,l]',
+    example: 2,
+    check: box4(64),
+    css: (v: number | number[]) => `border-width:${box4Css(v)}`,
+  },
+  borderColor: {
+    forms: COLOR_FORMS,
+    example: 'line',
+    check: color,
+    css: (v: C) => `border-color:${colorCss(v)}`,
+  },
   radius: {
+    forms:
+      'a number from 0 to 999, four of them [tl,tr,br,bl], or {"n":one or four numbers from 0 to 100,"unit":"%"}',
+    example: 8,
     check: (v: unknown) => {
       if (isObj(v)) {
-        const n = num(v.n, 0, 100)
+        const n =
+          Array.isArray(v.n) &&
+          v.n.length === 4 &&
+          v.n.every(x => num(x, 0, 100) !== undefined)
+            ? v.n
+            : num(v.n, 0, 100)
         return only(v, ['n', 'unit']) && v.unit === '%' && n !== undefined
           ? { n, unit: '%' }
           : undefined
       }
       return box4(999)(v)
     },
-    css: (v: number | number[] | { n: number; unit: '%' }) =>
-      `border-radius:${typeof v === 'object' && !Array.isArray(v) ? `${v.n}%` : box4Css(v as number | number[])}`,
+    css: (v: number | number[] | { n: number | number[]; unit: '%' }) =>
+      `border-radius:${typeof v === 'object' && !Array.isArray(v) ? (Array.isArray(v.n) ? v.n : [v.n]).map(n => `${n}%`).join(' ') : box4Css(v as number | number[])}`,
   },
   gradient: {
+    forms: `{"angle":0 to 360,"stops":[{"color":${COLOR_FORMS},"at":0 to 100,"alpha"?:0 to 1}] (2 to 4 stops),"shape"?:"linear"|"radial","at"?:a point}`,
+    example: {
+      angle: 135,
+      stops: [
+        { color: 'brand', at: 0 },
+        { color: 'ink', at: 100 },
+      ],
+    },
     check: (v: unknown) => {
       if (!isObj(v) || !only(v, ['angle', 'stops', 'shape', 'at']))
         return undefined
@@ -489,11 +612,16 @@ export const PROPS = {
       `background-image:${v.shape === 'radial' ? `radial-gradient(circle at ${POINTS[v.at ?? 'center']}` : `linear-gradient(${v.angle}deg`},${v.stops.map(x => `${alphaCss(x.color, x.alpha)} ${x.at}%`).join(',')})`,
   },
   blur: {
+    forms: 'px from 0 to 40',
+    example: 8,
     check: (v: unknown) => num(v, 0, 40),
     css: (v: number) =>
       `backdrop-filter:blur(${v}px);-webkit-backdrop-filter:blur(${v}px)`,
   },
   shadow: {
+    forms:
+      'soft, strong, {"style":"<site shadow id>"} or {"x","y","blur","spread","color"}',
+    example: 'soft',
     check: (v: unknown) => {
       if (typeof v === 'string')
         return Object.hasOwn(SHADOWS, v) ? v : undefined
@@ -519,16 +647,22 @@ export const PROPS = {
       `box-shadow:${typeof v === 'object' && 'style' in v ? `var(--s-sh-${(v as { style: string }).style})` : shadowText(v as ShadowV)}`,
   },
   opacity: {
+    forms: '0 to 1 in steps of 0.05',
+    example: 0.5,
     check: (v: unknown) => int(v, 0, 1, 0.05),
     css: (v: number) => `opacity:${v}`,
   },
   // Look-token hook (Task 4.0b). Before font, letterSpacing and upper, so those keys on the same widget win.
   label: {
+    forms: 'true',
+    example: true,
     check: (v: unknown) => (v === true ? v : undefined),
     css: () =>
       'font-family:var(--s-label,inherit);text-transform:var(--s-label-case,none);letter-spacing:var(--s-label-track,normal)',
   },
   font: {
+    forms: 'sys:sans, sys:serif, sys:mono, cat:<name> or up:<name>',
+    example: 'sys:sans',
     check: (v: unknown) =>
       typeof v === 'string' && FONT_RE.test(v) ? v : undefined,
     css: (v: FontRef, ctx: StyleCtx) => {
@@ -536,36 +670,48 @@ export const PROPS = {
       return f ? `font-family:${f}` : ''
     },
   },
-  size: px('font-size', 8, 240),
+  size: px('font-size', 8, 240, 16),
   weight: {
+    forms: '100 to 900 in steps of 100',
+    example: 700,
     check: (v: unknown) => int(v, 100, 900, 100),
     css: (v: number) => `font-weight:${v}`,
   },
   lineHeight: {
+    forms: 'a number from 0.8 to 4',
+    example: 1.5,
     check: (v: unknown) => num(v, 0.8, 4),
     css: (v: number) => `line-height:${v}`,
   },
   letterSpacing: {
+    forms: 'em from -0.1 to 0.5',
+    example: 0.05,
     check: (v: unknown) => num(v, -0.1, 0.5),
     css: (v: number) => `letter-spacing:${v}em`,
   },
   italic: flag('font-style:italic'),
   underline: {
+    forms: 'true or false',
+    example: true,
     check: bool,
     css: (v: boolean) => `text-decoration:${v ? 'underline' : 'none'}`,
   },
   // strike relies on underline coming earlier in PROPS: declCss merges the two line lists when both are on.
   strike: flag('text-decoration-line:line-through'),
   underlineColor: {
+    forms: COLOR_FORMS,
+    example: 'brand',
     check: color,
     css: (v: C) => `text-decoration-color:${colorCss(v)}`,
   },
-  underlineOffset: px('text-underline-offset', 0, 20),
+  underlineOffset: px('text-underline-offset', 0, 20, 4),
   baseline: map('vertical-align', { super: 'super', sub: 'sub' }),
   smallCaps: flag('font-variant-caps:small-caps'),
   // Keeps a chip, a date or a figure on one line.
   nowrap: flag('white-space:nowrap'),
   textShadow: {
+    forms: '{"x":-50 to 50,"y":-50 to 50,"blur":0 to 100,"color":<colour>}',
+    example: { x: 0, y: 2, blur: 4, color: 'ink' },
     check: (v: unknown) => {
       if (!isObj(v) || !only(v, ['x', 'y', 'blur', 'color'])) return undefined
       const [x, y, blur, c] = [
@@ -586,6 +732,9 @@ export const PROPS = {
   },
   // Outlined lettering. Not hollow: the stroke is painted under the fill, so it does not eat into the letters.
   textStroke: {
+    forms:
+      '{"width":0.5 to 4 in steps of 0.5,"color":<colour>,"hollow"?:true|false}',
+    example: { width: 1, color: 'ink' },
     check: (v: unknown) => {
       if (!isObj(v) || !only(v, ['width', 'color', 'hollow'])) return undefined
       const [width, c] = [int(v.width, 0.5, 4, 0.5), color(v.color)]
@@ -607,6 +756,9 @@ export const PROPS = {
   // Only the gradient is written here (as --s-tf, so a hover or phone layer can change it). compile.ts paints it into the letters in one shared rule
   // that holds only where the browser can clip a background to text and forced colours are off, so everywhere else the plain `color` shows.
   textFill: {
+    forms:
+      '{"from":<colour>,"to":<colour>,"angle":0 to 360,"fromAlpha"?:0 to 1,"toAlpha"?:0 to 1}',
+    example: { from: 'brand', to: 'ink', angle: 90 },
     check: (v: unknown) => {
       if (
         !isObj(v) ||
@@ -656,22 +808,35 @@ export const PROPS = {
     justify: 'justify',
   }),
   order: {
+    forms: 'a whole number from -50 to 50',
+    example: 1,
     check: (v: unknown) => int(v, -50, 50),
     css: (v: number) => `order:${v}`,
   },
   // Float works in a Box (block flow): text after it wraps around it, as on many homepages.
   float: {
+    forms: 'one of start, end',
+    example: 'start',
     check: oneOf('start', 'end'),
     css: (v: 'start' | 'end') => `float:inline-${v}`,
   },
-  sticky: { check: oneOf('top'), css: () => 'position:sticky;top:0' },
+  sticky: {
+    forms: 'top',
+    example: 'top',
+    check: oneOf('top'),
+    css: () => 'position:sticky;top:0',
+  },
   // inset/margin/width reset the browser's popover centring, so a pinned layer sits on the edge.
   pin: {
+    forms: 'one of top, bottom',
+    example: 'top',
     check: oneOf('top', 'bottom'),
     css: (v: 'top' | 'bottom') =>
       `position:fixed;inset:auto;${v}:0;left:0;right:0;margin:0;width:auto;max-width:none;z-index:50`,
   },
   overflow: {
+    forms: 'one of visible, clip, scroll-x, scroll-y',
+    example: 'clip',
     check: oneOf('visible', 'clip', 'scroll-x', 'scroll-y'),
     css: (v: string) =>
       v === 'scroll-x'
@@ -689,6 +854,9 @@ export const PROPS = {
     sticky: 'sticky',
   }),
   inset: {
+    forms:
+      '{"top"?,"right"?,"bottom"?,"left"?}, each {"n":number,"unit":"px"|"%"|"ch"|"vh"|"vw"} from -2000 to 2000 px (% and vh and vw -100 to 100)',
+    example: { top: { n: 0, unit: 'px' } },
     check: (v: unknown) => {
       if (!isObj(v) || !Object.keys(v).length || !only(v, SIDES))
         return undefined
@@ -708,11 +876,16 @@ export const PROPS = {
   },
   // compile.ts adds this to the z-index it already writes for Free slots and front/behind blocks.
   z: {
+    forms: 'a whole number from -10 to 100',
+    example: 1,
     check: (v: unknown) => int(v, -10, 100),
     css: (v: number) => `z-index:${v}`,
   },
   // The four transform parts are written together as one `transform` by declCss.
   move: {
+    forms:
+      '{"x":{"n":number,"unit":"px"|"%"|"ch"|"vh"|"vw"},"y":{"n":number,"unit":"px"|"%"|"ch"|"vh"|"vw"}}',
+    example: { x: { n: 10, unit: 'px' }, y: { n: 0, unit: 'px' } },
     check: (v: unknown) => {
       if (!isObj(v) || !only(v, ['x', 'y'])) return undefined
       const [x, y] = [offset(v.x), offset(v.y)]
@@ -722,14 +895,20 @@ export const PROPS = {
       `transform:translate(${offsetCss(v.x)},${offsetCss(v.y)})`,
   },
   rotate: {
+    forms: 'degrees from -360 to 360',
+    example: 45,
     check: (v: unknown) => num(v, -360, 360),
     css: (v: number) => `transform:rotate(${v}deg)`,
   },
   scale: {
+    forms: 'a number from 0.1 to 3',
+    example: 1.1,
     check: (v: unknown) => num(v, 0.1, 3),
     css: (v: number) => `transform:scale(${v})`,
   },
   skew: {
+    forms: '{"x":-45 to 45,"y":-45 to 45} degrees',
+    example: { x: 10, y: 0 },
     check: (v: unknown) => {
       if (!isObj(v) || !only(v, ['x', 'y'])) return undefined
       const [x, y] = [num(v.x, -45, 45), num(v.y, -45, 45)]
@@ -739,6 +918,8 @@ export const PROPS = {
   },
   // Written as part of the one `transform` (transformCss); its blur joins the `filter`.
   flip: {
+    forms: '{"x"?:true,"y"?:true,"blur"?:0 to 20}, with x or y true',
+    example: { x: true },
     check: (v: unknown) => {
       if (
         !isObj(v) ||
@@ -763,18 +944,30 @@ export const PROPS = {
       `transform:scale(${v.x ? -1 : 1},${v.y ? -1 : 1})`,
   },
   origin: {
+    forms:
+      'one of top-left, top, top-right, left, center, right, bottom-left, bottom, bottom-right',
+    example: 'center',
     check: oneOf(...(Object.keys(POINTS) as (keyof typeof POINTS)[])),
     css: (v: keyof typeof POINTS) => `transform-origin:${POINTS[v]}`,
   },
   columns: {
+    forms:
+      'a list of 1 to 12 tracks: "fit", {"fr":0.1 to 12}, {"n","unit":"px"|"%"} or {"min","max"}',
+    example: [{ fr: 1 }, { fr: 1 }],
     check: tracks(12),
     css: (v: TrackV[]) => `grid-template-columns:${v.map(trackCss).join(' ')}`,
   },
   rows: {
+    forms:
+      'a list of 1 to 24 tracks: "fit", {"fr":0.1 to 12}, {"n","unit":"px"|"%"} or {"min","max"}',
+    example: [{ fr: 1 }],
     check: tracks(24),
     css: (v: TrackV[]) => `grid-template-rows:${v.map(trackCss).join(' ')}`,
   },
   areas: {
+    forms:
+      'a list of 1 to 12 rows of 1 to 12 names each, "." for an empty cell',
+    example: [['a', 'b']],
     check: (v: unknown) => {
       if (!Array.isArray(v) || v.length < 1 || v.length > 12) return undefined
       const w = Array.isArray(v[0]) ? v[0].length : 0
@@ -795,6 +988,9 @@ export const PROPS = {
       `grid-template-areas:${v.map(r => `"${r.join(' ')}"`).join(' ')}`,
   },
   filter: {
+    forms:
+      '{"brightness"?:0 to 2,"contrast"?:0 to 2,"saturate"?:0 to 3,"grayscale"?:0 to 1,"hue"?:-180 to 180}',
+    example: { brightness: 1.2 },
     check: (v: unknown) => {
       if (!isObj(v) || !Object.keys(v).length || !only(v, Object.keys(FILTERS)))
         return undefined
@@ -814,6 +1010,8 @@ export const PROPS = {
         .join(' ')}`,
   },
   backdropBlur: {
+    forms: 'px from 0 to 40',
+    example: 8,
     check: (v: unknown) => num(v, 0, 40),
     css: (v: number) =>
       `backdrop-filter:blur(${v}px);-webkit-backdrop-filter:blur(${v}px)`,
@@ -829,10 +1027,14 @@ export const PROPS = {
     difference: 'difference',
   }),
   clip: {
+    forms: 'one of circle, pill, arch, blob',
+    example: 'circle',
     check: oneOf('circle', 'pill', 'arch', 'blob'),
     css: (v: keyof typeof CLIPS) => CLIPS[v],
   },
   fade: {
+    forms: 'one of top, right, bottom, left',
+    example: 'bottom',
     check: oneOf('top', 'right', 'bottom', 'left'),
     css: (v: keyof typeof FADES) => {
       const g = `linear-gradient(${FADES[v]}, transparent, #000 45%)`
@@ -840,6 +1042,9 @@ export const PROPS = {
     },
   },
   mask: {
+    forms:
+      '{"edge":"top"|"right"|"bottom"|"left"|"radial","strength":5 to 100}',
+    example: { edge: 'bottom', strength: 50 },
     check: (v: unknown) => {
       if (!isObj(v) || !only(v, ['edge', 'strength'])) return undefined
       const strength = int(v.strength, 5, 100)
@@ -857,6 +1062,9 @@ export const PROPS = {
     },
   },
   cut: {
+    forms:
+      '{"shape":"chamfer"|"notch","size":2 to 200,"corners"?:["tl"|"tr"|"br"|"bl"]}',
+    example: { shape: 'chamfer', size: 12 },
     check: (v: unknown) => {
       if (!isObj(v) || !only(v, ['shape', 'size', 'corners'])) return undefined
       const size = num(v.size, 2, 200)
@@ -917,26 +1125,42 @@ export const PROPS = {
   },
   // Only a marker is written here; the shared rule that shows the block after scrolling is written by compile.ts.
   appearAfter: {
+    forms: 'px of scrolling from 10 to 400',
+    example: 100,
     check: (v: unknown) => num(v, 10, 400),
     css: (v: number) => `--s-ap:${v}`,
   },
   fluidSize: {
+    forms:
+      '{"min":8 to 240,"max":8 to 240} px, max at least min, optional vw (0 to 100) for the preferred size',
+    example: { min: 24, max: 48 },
     check: (v: unknown) => {
-      if (!isObj(v) || !only(v, ['min', 'max'])) return undefined
+      if (
+        !isObj(v) ||
+        !only(v, ['min', 'max', 'vw']) ||
+        (v.vw !== undefined && num(v.vw, 0, 100) === undefined)
+      )
+        return undefined
       const [min, max] = [num(v.min, 8, 240), num(v.max, 8, 240)]
       return min === undefined || max === undefined || max < min
         ? undefined
-        : { min, max }
+        : { min, max, ...(v.vw !== undefined ? { vw: v.vw as number } : {}) }
     },
     // Scales from the phone width (390px) to the desktop width (1280px); 890 is the difference.
-    css: (v: { min: number; max: number }) =>
-      `font-size:clamp(${v.min}px, calc(${v.min}px + (${v.max} - ${v.min}) * ((100vw - 390px) / 890)), ${v.max}px)`,
+    css: (v: { min: number; max: number; vw?: number }) =>
+      v.vw === undefined
+        ? `font-size:clamp(${v.min}px, calc(${v.min}px + (${v.max} - ${v.min}) * ((100vw - 390px) / 890)), ${v.max}px)`
+        : `font-size:clamp(${v.min}px,${v.vw}vw,${v.max}px)`,
   },
   textColumns: {
+    forms: 'a whole number from 1 to 4',
+    example: 2,
     check: (v: unknown) => int(v, 1, 4),
     css: (v: number) => `column-count:${v}`,
   },
   clampLines: {
+    forms: 'a whole number from 1 to 10',
+    example: 3,
     check: (v: unknown) => int(v, 1, 10),
     css: (v: number) =>
       `display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:${v};overflow:hidden`,
@@ -944,11 +1168,16 @@ export const PROPS = {
   balance: flag('text-wrap:balance'),
   // Only the strength is written here; compile.ts draws the noise in one shared rule per page (a ::before under the content).
   grain: {
+    forms: '0 to 1 in steps of 0.05',
+    example: 0.1,
     check: (v: unknown) => int(v, 0, 1, 0.05),
     css: (v: number) => `--s-grain:${v}`,
   },
   // Only the glow is written here (as --s-sp, which reads --px and --py from the nearest container with `track`); compile.ts draws it in one shared ::after rule under the content, centred in the box until the pointer script moves it.
   spotlight: {
+    forms:
+      '{"size":40 to 1600,"color":<colour>,"strength":0.05 to 1 in steps of 0.05}',
+    example: { size: 300, color: 'brand', strength: 0.5 },
     check: (v: unknown) => {
       if (!isObj(v) || !only(v, ['size', 'color', 'strength'])) return undefined
       const [size, c, strength] = [
@@ -964,8 +1193,23 @@ export const PROPS = {
       `--s-sp:radial-gradient(circle ${v.size}px at calc(var(--px,.5)*100%) calc(var(--py,.5)*100%),${alphaCss(v.color, v.strength)},transparent)`,
   },
   // Only a marker is written here (so the block has a class); compile.ts pins the footer in one shared rule (live pages, wide windows) because the rule reaches the footer's wrapper, not the block.
-  reveal: { check: bool, css: (v: boolean) => (v ? '--s-rv:1' : '') },
+  reveal: {
+    forms: 'true or false',
+    example: true,
+    check: bool,
+    css: (v: boolean) => (v ? '--s-rv:1' : ''),
+  },
+  // Only a marker is written here; compile.ts lays the site out as a left column of this width on wide live pages.
+  side: {
+    forms: 'a width in px, 160 to 480',
+    example: 280,
+    check: (v: unknown) => int(v, 160, 480),
+    css: (v: number) => `--s-sd:${v}px`,
+  },
   transition: {
+    forms:
+      '{"what":"colour"|"transform"|"opacity"|"size"|"all","ms":0 to 2000,"ease":"smooth"|"out"|"in-out"|"spring"|"linear","delay"?:0 to 2000}',
+    example: { what: 'all', ms: 200, ease: 'smooth' },
     check: (v: unknown) => {
       if (!isObj(v) || !only(v, ['what', 'ms', 'ease', 'delay']))
         return undefined
@@ -999,6 +1243,8 @@ export const PROPS = {
   },
   fit: map('object-fit', { cover: 'cover', contain: 'contain' }),
   focus: {
+    forms: '{"x":0 to 100,"y":0 to 100} percent',
+    example: { x: 50, y: 50 },
     check: (v: unknown) => {
       if (!isObj(v) || !only(v, ['x', 'y'])) return undefined
       const [x, y] = [num(v.x, 0, 100), num(v.y, 0, 100)]
@@ -1008,6 +1254,9 @@ export const PROPS = {
   },
   // Only custom properties are written here; compile.ts turns them into the links' rules (a menu has no per-link style of its own).
   linkHover: {
+    forms:
+      '{"bg"?,"color"?,"radius"?,"underline"?,"pill"?,"lift"?,"ms"?}, at least one',
+    example: { underline: true },
     check: (v: unknown) => {
       if (
         !isObj(v) ||
@@ -1075,6 +1324,10 @@ export const PROPS = {
   }),
 } satisfies Record<keyof Decl, Prop>
 
+/** `<forms>, for example <JSON>`: the end of a refusal about the property. */
+export const hint = (k: keyof Decl): string =>
+  `${PROPS[k].forms}, for example ${JSON.stringify(PROPS[k].example)}`
+
 const KEYS = Object.keys(PROPS) as (keyof Decl)[]
 
 const TRANSFORMS: (keyof Decl)[] = ['move', 'rotate', 'scale', 'skew', 'flip']
@@ -1118,6 +1371,9 @@ export function declCss(d: Decl, ctx: StyleCtx, later = false): string {
     let s = (PROPS[k].css as (v: unknown, c: StyleCtx) => string)(d[k], ctx)
     if (k === 'strike' && d.underline && s)
       s = 'text-decoration-line:underline line-through'
+    // ponytail: a phone borderWidth over a dashed base border draws solid; read the base layer if that matters.
+    if (k === 'borderWidth' && !d.border && !SIDE_PROPS.some(x => d[x]))
+      s += ';border-style:solid'
     if (k === 'filter' && d.flip?.blur) s += ` blur(${d.flip.blur}px)`
     if (!s && later && d[k] === false && FLAG_OFF[k]) s = FLAG_OFF[k]!
     if (s) out.push(s)
@@ -1200,11 +1456,21 @@ export function checkStyle(
       if (!Object.hasOwn(PROPS, k))
         problems.push(`${label}.${k} is not a style property`)
       else if (!allowed.has(k))
-        problems.push(`${label}.${k} does not apply to ${kind}`)
+        problems.push(
+          `${label}.${k} does not apply to ${kind}` +
+            (k === 'align' && allowed.has('textAlign')
+              ? `; use textAlign, which takes ${hint('textAlign')}`
+              : '') +
+            (k === 'radius' && kind === 'shape'
+              ? '; a rect shape takes props.geometry.radius'
+              : ''),
+        )
       else {
         const ok = PROPS[k as keyof Decl].check(v)
         if (ok === undefined)
-          problems.push(`${label}.${k} has a value that is not allowed`)
+          problems.push(
+            `${label}.${k} has a value that is not allowed; it takes ${hint(k as keyof Decl)}`,
+          )
         else clean[k] = ok
       }
     }

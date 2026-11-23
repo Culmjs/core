@@ -54,11 +54,13 @@ function embed({ p, attrs, cls, plate }: Build): HtmlNode | null {
   ])
 }
 
+const TOGGLES = ['icon', 'box', 'outline']
 function menu(b: Build): HtmlNode | null {
   const { p, ctx, attrs } = b
   const { doc, links, mode } = ctx
   const live = mode === 'live'
-  const dropdown = p.as === 'dropdown'
+  const fold = p.foldOn === 'phone'
+  const dropdown = p.as === 'dropdown' || fold
   const wrap = (
     label: string,
     lang: string | undefined,
@@ -70,7 +72,16 @@ function menu(b: Build): HtmlNode | null {
           el(
             'details',
             { class: 's-dd', 'data-up': p.drop === 'up' ? '' : undefined },
-            [el('summary', { lang }, [label]), el('div', {}, items)],
+            [
+              el('summary', { lang }, [
+                fold && glyph('menu'),
+                // a button that shows the glyph alone keeps the word for screen readers
+                TOGGLES.includes(p.toggle as string)
+                  ? el('span', { class: 's-vh' }, [label])
+                  : label,
+              ]),
+              el('div', {}, items),
+            ],
           ),
         ])
       : el('nav', { ...attrs, 'aria-label': aria }, items)
@@ -167,14 +178,18 @@ function field({ p, attrs, ctx, w }: Build): HtmlNode {
     p.name === 'email' || p.name === 'message' || p.name === 'subject'
       ? p.name
       : 'name'
+  const bare = !str(p.label) && !!str(p.placeholder)
   const input: Attrs = {
     name,
     class: ctx.classOf.get(`${w.id}:control`),
+    placeholder: str(p.placeholder) || undefined,
+    // a field with a placeholder and no label shows none; the placeholder names it for a screen reader
+    'aria-label': bare ? str(p.placeholder) : undefined,
     required: p.required ? '' : undefined,
     disabled: ctx.mode === 'edit' ? '' : undefined,
   }
   return el('label', attrs, [
-    str(p.label, UI[name]),
+    bare ? '' : str(p.label, UI[name]),
     name === 'message'
       ? el('textarea', { ...input, rows: 3 })
       : {

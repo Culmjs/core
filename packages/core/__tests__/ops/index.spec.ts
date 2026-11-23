@@ -15,11 +15,12 @@ import type {
   TreeRef,
 } from '../../src/index.ts'
 
-test('the ops entry exports exactly the eleven public values', () => {
+test('the ops entry exports exactly the thirteen public values', () => {
   assert.deepEqual(Object.keys(ops).sort(), [
     'READ_CAP',
     'apply',
     'catalogue',
+    'createdRoots',
     'diffSites',
     'memoryStore',
     'pageOutline',
@@ -28,6 +29,7 @@ test('the ops entry exports exactly the eleven public values', () => {
     'restore',
     'search',
     'siteOutline',
+    'treeKey',
   ])
 })
 

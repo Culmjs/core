@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 200" role="img" aria-label="A loaf of bread">
+  <rect width="300" height="200" fill="#fef3c7"/>
+  <path d="M50 130 Q50 60 150 60 Q250 60 250 130 Q250 150 230 150 H70 Q50 150 50 130 Z" fill="#d97706" stroke="#78350f" stroke-width="4"/>
+  <path d="M100 80 L120 115 M145 72 L165 112 M190 80 L208 115" stroke="#fde68a" stroke-width="6" stroke-linecap="round" fill="none"/>
+</svg>

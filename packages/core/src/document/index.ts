@@ -8,7 +8,7 @@ export {
   previewMigration,
 } from './migrate.ts'
 export type { MigrationResult, MigrationStep } from './migrate.ts'
-export { isRequired } from './required.ts'
+export { isRequired, textRangeFor } from './required.ts'
 export { CODES } from './problems.ts'
 export type { Code, Problem } from './problems.ts'
 export {
@@ -38,6 +38,10 @@ export type {
   FontRef,
   FreeSlot,
   FxValue,
+  ShapeGeometry,
+  ShapePaint,
+  ShapeSlot,
+  ShapeStroke,
   GridSlot,
   ItemCollectionRef,
   Kind,

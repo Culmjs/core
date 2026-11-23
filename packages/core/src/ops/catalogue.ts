@@ -4,6 +4,8 @@ import { ID_RE, STYLE_GROUPS } from '../document/kinds.ts'
 import type { KindSpec, PropField, Problem } from '../document/index.ts'
 import type { BlockDef, DataSource, Registry } from '../registry/index.ts'
 import { paged, tagOf } from './cap.ts'
+import { GUIDE as GUIDE_ROWS } from './guide.ts'
+import { RECIPES } from './recipes.ts'
 import { OP_NAMES } from './plan.ts'
 import { capped, cut, len, marker } from './read.ts'
 import { refuse } from './types.ts'
@@ -11,8 +13,16 @@ import type { Head, Op } from './types.ts'
 
 type Refusal = { ok: false; problems: Problem[] }
 type Row = Record<string, unknown>
-type What = 'kinds' | 'blocks' | 'sources' | 'operations'
-const WHATS: readonly What[] = ['kinds', 'blocks', 'sources', 'operations']
+type What = 'guide' | 'kinds' | 'operations' | 'recipes' | 'blocks' | 'sources'
+/** Composition first: the guide, then what to compose with, then finished examples. */
+const WHATS: readonly What[] = [
+  'guide',
+  'kinds',
+  'operations',
+  'recipes',
+  'blocks',
+  'sources',
+]
 
 // ---- limits. Every bound is a serialised length (`JSON.stringify(v).length`), never a count of characters.
 /** A name, label, id or note in a row. */
@@ -20,7 +30,7 @@ const TEXT = 100
 /** A guide in a detail view (at most 500 characters when registered, but a registry is not trusted). */
 const GUIDE = 500
 /** A guide in a list row. */
-const GUIDE_LIST = 200
+const GUIDE_LIST = 60
 /** A look id, option label or option value. */
 const SHORT = 80
 /** Entries per list in a header; `squeeze` takes more out when the header is over its limit. */
@@ -215,22 +225,12 @@ function kindView(kind: string, spec: KindSpec): Entryview {
   }
   return {
     name: kind,
+    // `kind(role): prop, prop, ...`, as many settings as fit in a row.
     list: () =>
-      squeeze(
-        {
-          kind: cut(kind, TEXT),
-          label: str(spec.label),
-          role: str(spec.role),
-          settings: props.map(([key, f]) => ({
-            key: cut(key, TEXT),
-            type: str(f.type),
-          })),
-          styles: arr(spec.styles).length,
-          states: arr(spec.states).length,
-        },
+      cut(
+        `${cut(kind, TEXT)}(${str(spec.role)})${props.length ? ': ' : ''}${props.map(([k]) => cut(k, TEXT)).join(', ')}`,
         ROW,
-        ['settings'],
-      ),
+      ) as never,
     detail: () => ({
       header: header(),
       rows: props.map(([key, f]) =>
@@ -241,6 +241,7 @@ function kindView(kind: string, spec: KindSpec): Entryview {
             ...withNum('min', f.min),
             ...withNum('max', f.max),
             ...withNum('maxLength', f.maxLength),
+            ...(typeof f.hint === 'string' ? { hint: str(f.hint, 300) } : {}),
           },
           Array.isArray(f.options)
             ? listed(f.options, OPTIONS, o =>
@@ -300,31 +301,6 @@ function needed(settings: unknown): Record<string, string | number> {
   return out
 }
 
-/**
- * A compact row whose ready insert names only settings the row shows. The row may have dropped settings to fit its limit; an insert
- * that gave one of them a value would send an agent to a setting it was not shown. A setting left out of an insert keeps the look's own
- * content, which is always accepted. (The detail view lists every setting, and its insert is complete.)
- */
-function onlyShown(row: Row): Row {
-  const ins = row.insert
-  if (!isObj(ins) || !isObj(ins.settings)) return row
-  const shown = new Set(
-    Array.isArray(row.settings)
-      ? row.settings.flatMap(s =>
-          isObj(s) && typeof s.key === 'string' ? [s.key] : [],
-        )
-      : [],
-  )
-  const { settings, ...rest } = ins
-  const kept = Object.fromEntries(
-    Object.entries(settings as Row).filter(([k]) => shown.has(k)),
-  )
-  return {
-    ...row,
-    insert: Object.keys(kept).length ? { ...rest, settings: kept } : rest,
-  }
-}
-
 function blockView(b: BlockDef, site: Head | undefined): Entryview {
   const first = arr(b.looks)[0]
   const settingsNeeded = needed(b.settings)
@@ -357,24 +333,17 @@ function blockView(b: BlockDef, site: Head | undefined): Entryview {
   })
   return {
     name: b.id,
-    list: () => {
-      const row = squeeze(
-        {
-          ...head(GUIDE_LIST),
-          looks: listed(b.looks, LOOKS_LIST, l =>
-            isObj(l) ? str(l.id, SHORT) : undefined,
-          ).items,
-          ...(arr(b.looks).length > LOOKS_LIST
-            ? { moreLooks: arr(b.looks).length - LOOKS_LIST }
-            : {}),
-          settings: defs.map(s => ({ key: str(s.key), type: str(s.type) })),
-          ...insert,
-        },
-        ROW,
-        ['settings'],
-      )
-      return onlyShown(row)
-    },
+    list: () => ({
+      block: str(b.id),
+      name: str(b.name),
+      category: str(b.category),
+      looks: listed(b.looks, LOOKS_LIST, l =>
+        isObj(l) ? str(l.id, SHORT) : undefined,
+      ).items,
+      ...(typeof b.guide === 'string'
+        ? { guide: str(b.guide, GUIDE_LIST) }
+        : {}),
+    }),
     detail: () => {
       const looks = listed(b.looks, LISTED, l =>
         isObj(l)
@@ -501,6 +470,8 @@ const TREE = "'header' | 'footer' | { page: id } | { component: id }"
 const NODE =
   'a node: { kind, id?, name?, slot?, props?, style?, children? ... }'
 const UNSET = 'object: key -> value | null (null unsets)'
+const VALUE_T =
+  'string | number | boolean | list | object (as the setting takes)'
 const T = { page: 'home' }
 const ROOT = 'homeroot'
 const tree: [string, false] = [TREE, false]
@@ -564,7 +535,7 @@ export const OPERATIONS: readonly Entry[] = [
     {
       tree,
       id,
-      props: ['object: prop -> value | null (null unsets)', false],
+      props: [UNSET, false],
       name: ['string', true],
     },
     { op: 'setProps', tree: T, id: 't', props: { level: 'h2' }, name: 'Title' },
@@ -580,7 +551,7 @@ export const OPERATIONS: readonly Entry[] = [
       tree,
       id,
       layer: [LAYER, false],
-      decl: ['object: style property -> value | null (null unsets)', false],
+      decl: [UNSET, false],
     },
     {
       op: 'setStyle',
@@ -595,7 +566,7 @@ export const OPERATIONS: readonly Entry[] = [
     {
       tree,
       id,
-      layout: ["string ('desktop', 'tablet', 'phone')", false],
+      layout: ['desktop|tablet|phone', false],
       hidden: ['boolean', false],
     },
     { op: 'setHidden', tree: T, id: 't', layout: 'phone', hidden: true },
@@ -606,13 +577,13 @@ export const OPERATIONS: readonly Entry[] = [
       tree,
       id,
       slot: ['object', true],
-      placement: ['object | null (null unsets)', true],
+      placement: ['object|null', true],
     },
     { op: 'setSlot', tree: T, id: 't', slot: {} },
   ),
   entry(
     'setRequired',
-    { tree, id, required: ['boolean | null (null unsets)', false] },
+    { tree, id, required: ['boolean|null', false] },
     { op: 'setRequired', tree: T, id: 'lst', required: true },
   ),
   entry(
@@ -620,10 +591,10 @@ export const OPERATIONS: readonly Entry[] = [
     {
       tree,
       id,
-      repeat: ['object | null (null unsets)', true],
-      bind: ['object | null (null unsets)', true],
-      showIf: ['object | null (null unsets)', true],
-      showIfAny: ['list | null (null unsets)', true],
+      repeat: ['object|null', true],
+      bind: ['object|null', true],
+      showIf: ['object|null', true],
+      showIfAny: ['list|null', true],
     },
     {
       op: 'bindData',
@@ -637,8 +608,8 @@ export const OPERATIONS: readonly Entry[] = [
     {
       tree,
       id,
-      state: ['list | null (null unsets)', true],
-      on: ['list | null (null unsets)', true],
+      state: ['list|null', true],
+      on: ['list|null', true],
     },
     {
       op: 'setStates',
@@ -674,10 +645,7 @@ export const OPERATIONS: readonly Entry[] = [
       tree,
       id,
       key: ['string', false],
-      value: [
-        'string | number | boolean | list | object (as the setting takes)',
-        false,
-      ],
+      value: [VALUE_T, false],
     },
     { op: 'setBlockSetting', tree: T, id: 'st1', key: 'title', value: 'Hello' },
   ),
@@ -748,7 +716,11 @@ export const OPERATIONS: readonly Entry[] = [
   ),
   entry(
     'setSite',
-    { name: ['string', true], languages: ['list', true] },
+    {
+      name: ['string', true],
+      languages: ['list', true],
+      centreMaxWidth: ['boolean', true],
+    },
     { op: 'setSite', name: 'My site' },
   ),
   entry(
@@ -772,7 +744,7 @@ export const OPERATIONS: readonly Entry[] = [
   ),
   entry(
     'setSiteStyles',
-    { styles: ['object: part -> value | null (null unsets)', false] },
+    { styles: [UNSET, false] },
     {
       op: 'setSiteStyles',
       styles: { colors: [{ id: 'sun', name: 'Sun', value: '#ffcc00' }] },
@@ -784,6 +756,23 @@ export const OPERATIONS: readonly Entry[] = [
     { op: 'setFonts', fonts: ['sys:serif'] },
   ),
 ]
+
+/** The legend of the operations list: a type longer than 24 characters is one of these keys. */
+const LEGEND: Record<string, string> = {
+  T: TREE,
+  N: NODE,
+  L: LAYER,
+  U: UNSET,
+  V: VALUE_T,
+}
+const KEY_OF = new Map(Object.entries(LEGEND).map(([k, v]) => [v, k]))
+/** `name(field:type, field?:type)`; a long type is its legend key. */
+const line = (o: Entry) =>
+  `${o.op}(${o.fields
+    .map(
+      f => `${f.name}${f.optional ? '?' : ''}:${KEY_OF.get(f.type) ?? f.type}`,
+    )
+    .join(', ')})`
 
 // ---- the query
 
@@ -838,10 +827,43 @@ export function catalogue(
     } else if (query.what === 'sources') {
       unknown = 'UNKNOWN_SOURCE'
       views = registry.sources().map(sourceView)
+    } else if (query.what === 'guide') {
+      if (query.id !== undefined)
+        return bad('The guide has no entries by id.', { path: 'id' })
+      views = GUIDE_ROWS.map(g => ({
+        name: g,
+        list: () => g as never,
+        detail: () => ({ header: {}, rows: [] }),
+      }))
+    } else if (query.what === 'recipes') {
+      views = RECIPES.map(r => ({
+        name: r.id,
+        list: () => ({
+          recipe: r.id,
+          name: r.name,
+          guide: str(r.guide, GUIDE_LIST),
+          ops: r.ops.length,
+        }),
+        detail: () => ({
+          header: {
+            recipe: r.id,
+            name: r.name,
+            guide: r.guide,
+            ops: r.ops.map((o, i) =>
+              i === 0
+                ? { ...o, ...target(site) }
+                : 'tree' in o
+                  ? { ...o, tree: target(site).tree }
+                  : o,
+            ),
+          },
+          rows: [],
+        }),
+      }))
     } else
       views = OPERATIONS.map(o => ({
         name: o.op,
-        list: () => ({ ...o }),
+        list: () => line(o) as never,
         detail: () => ({ header: {}, rows: [{ ...o }] }),
       }))
     const wrap =
@@ -856,6 +878,11 @@ export function catalogue(
       const hit = views.find(v => v.name === query.id)
       if (!hit) {
         const allowed = views.slice(0, ALLOWED).map(v => cut(v.name, TEXT))
+        if (query.what === 'recipes')
+          return bad(`No recipe "${cut(query.id, TEXT)}".`, {
+            path: 'id',
+            allowed: RECIPES.map(r => r.id),
+          })
         return unknown
           ? refuse(
               unknown,
@@ -884,7 +911,13 @@ export function catalogue(
         0,
         query.cursor,
         tagOf('catalogue', query.what, null),
-        wrap(query.what === 'operations' ? {} : { detail: DETAIL }),
+        wrap(
+          query.what === 'operations'
+            ? { legend: LEGEND }
+            : query.what === 'guide' || query.what === 'recipes'
+              ? {}
+              : { detail: DETAIL },
+        ),
       ) as Reply | Refusal,
     )
   } catch {

@@ -2,14 +2,15 @@ import {
   contrast,
   darkOf,
   luminance,
-  mix,
+  mutedOf,
+  mutedPercent,
   siteColors,
   type Colors,
 } from './colors.ts'
 import type { FontRef, Look, SiteStyles } from '../document/index.ts'
 import { fontFamily, isFontRef, SYSTEM_STACKS } from './fonts.ts'
 import { stylesOf } from './siteStyles.ts'
-import { escapeCss, shadowText } from './decl.ts'
+import { dropShadowText, escapeCss, shadowText } from './decl.ts'
 
 const MIN = 4.5
 
@@ -42,8 +43,11 @@ function lightLook(look: Look): {
   }
 }
 
-export function lookVars(look: Look): Record<string, string> {
-  const font = (f: FontRef) => fontFamily(f) ?? SYSTEM_STACKS.sans
+export function lookVars(
+  look: Look,
+  family: (f: FontRef) => string | undefined = fontFamily,
+): Record<string, string> {
+  const font = (f: FontRef) => family(f) ?? SYSTEM_STACKS.sans
   // Every token is guarded where it is written: a colour only as hex, a number only as a finite number, so a look nobody validated cannot put CSS in the page.
   const hex = (v: string) => (HEX.test(v) ? v : '#000000')
   const num = (v: unknown) => (Number.isFinite(v) ? Number(v) : 0)
@@ -59,6 +63,8 @@ export function lookVars(look: Look): Record<string, string> {
     '--s-body': font(look.bodyFont),
     '--s-radius': `${num(look.corners)}px`,
   }
+  const muted = Math.max(mutedPercent(light), mutedPercent(dark))
+  if (muted > 66) vars['--s-muted-ink'] = `${muted}%`
   // Optional tokens add a variable only when set, so a look without them keeps today's nine.
   if (look.accent && HEX.test(look.accent)) {
     vars['--s-accent'] = look.accent
@@ -109,8 +115,13 @@ function siteVars(
   const shadowIds = ids(body, /var\(--s-sh-([a-z0-9-]+)\)/g)
   const shadows = s.shadows.filter(x => shadowIds.has(x.id))
   for (const x of shadows) light.push(`--s-sh-${x.id}:${shadowText(x.value)}`)
+  // a shape's filter points at `--s-shd-<id>`: the same shadow with no spread
+  const dropIds = ids(body, /var\(--s-shd-([a-z0-9-]+)\)/g)
+  const drops = s.shadows.filter(x => dropIds.has(x.id))
+  for (const x of drops)
+    light.push(`--s-shd-${x.id}:${dropShadowText(x.value)}`)
   const colorIds = ids(
-    body + shadows.map(x => shadowText(x.value)).join(''),
+    body + [...shadows, ...drops].map(x => shadowText(x.value)).join(''),
     /var\(--s-c-([a-z0-9-]+)\)/g,
   )
   for (const c of s.colors.filter(
@@ -343,10 +354,15 @@ function textureDecl(layers: Layer[]): string {
 }
 
 /** The look's variables as one rule, so the page needs no `style` attribute. Site styles ride along (see siteVars). */
-export function lookCss(look: Look, styles?: SiteStyles, body = ''): string {
+export function lookCss(
+  look: Look,
+  styles?: SiteStyles,
+  body = '',
+  family?: (f: FontRef) => string | undefined,
+): string {
   const { light, dark } = siteVars(look, styles, body)
   dark.push(...lightLook(look).dark)
-  let css = `.s-site{${[...Object.entries(lookVars(look)).map(([k, v]) => `${k}:${v}`), ...light].join(';')}}`
+  let css = `.s-site{${[...Object.entries(lookVars(look, family)).map(([k, v]) => `${k}:${v}`), ...light].join(';')}}`
   const layers = layersOf(look)
   // <main> paints an opaque background, so it needs the texture too (`.s-site main` outweighs the :where() rule).
   // A band sits once, at the page edge, so <main> must not paint it again: it goes on .s-site and main turns transparent (the page colour shows through).
@@ -355,6 +371,9 @@ export function lookCss(look: Look, styles?: SiteStyles, body = ''): string {
       ? `.s-site{${textureDecl(layers)}}.s-site main{background-color:transparent}`
       : `.s-site,.s-site main{${textureDecl(layers)}}`
   // Headings take the look's case, weight and tracking unless a layer sets its own (a class outweighs :where).
+  if (styles?.textRange?.displayMax !== undefined)
+    css +=
+      ':where(.s-site h1){line-height:.95;letter-spacing:-.035em}:where(.s-site h2){line-height:1.08;letter-spacing:-.025em}'
   const head = [
     look.headingCase && 'text-transform:var(--s-head-case)',
     look.headingWeight && 'font-weight:var(--s-head-w)',
@@ -542,7 +561,7 @@ export function checkLook(look: Look): string[] {
       problems.push(
         `In ${name}, the brand colour is too faint on the background.`,
       )
-    if (low(mix(c.bg, c.ink, 0.66), c.bg))
+    if (low(mutedOf(c), c.bg))
       problems.push(
         `In ${name}, the muted text is too faint on the background.`,
       )

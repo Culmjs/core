@@ -12,7 +12,7 @@ import {
   type SiteStyles,
 } from '../document/index.ts'
 import { EMBEDS, embedIdOk } from '../document/embed.ts'
-import { ID_RE } from '../document/kinds.ts'
+import { ID_RE, SHAPE_LIMITS } from '../document/kinds.ts'
 import {
   isObj,
   DETAILS_NAME,
@@ -24,7 +24,7 @@ import { PLACEMENT_MODES, effectivePlacement } from '../layout/placement.ts'
 import { effectiveFreeBoxes } from '../layout/phone.ts'
 import { type Registry } from '../registry/index.ts'
 import { checkSiteStyles } from '../style/index.ts'
-import { checkSize, checkStyle, declsOf } from '../style/decl.ts'
+import { checkColor, checkSize, checkStyle, declsOf } from '../style/decl.ts'
 import { stylesOf } from '../style/siteStyles.ts'
 import {
   add,
@@ -433,6 +433,17 @@ export function slotBad(
       )
         return 'spans more of the grid than allowed.'
       return null
+    case 'shape':
+      return keys.length === 4 &&
+        only(s, ['x', 'y', 'w', 'h']) &&
+        isNum(s.x, -10000, 10000) &&
+        isNum(s.y, -10000, 10000) &&
+        isNum(s.w, 0, 10000) &&
+        s.w > 0 &&
+        isNum(s.h, 0, 10000) &&
+        s.h > 0
+        ? null
+        : 'must sit in its group by x, y, w and h.'
     default:
       return keys.length
         ? 'has a position, but its parent places children by order.'
@@ -481,6 +492,87 @@ export function styleBad(
       })
   }
   return out
+}
+
+/** Path data: commands, numbers and separators only, so nothing typed can close the element or add an attribute. */
+const PATH_RE = /^[MmLlHhVvCcSsQqTtAaZz0-9eE.,+\s-]+$/
+const pair = (v: unknown, lo: number, hi: number): v is [number, number] =>
+  Array.isArray(v) && v.length === 2 && v.every(x => isNum(x, lo, hi))
+/** A size in drawing units (1 to 10,000 each way). */
+const viewOk = (v: unknown) => v === undefined || pair(v, 1, 10000)
+
+/** The problem with a shape's geometry, or null. Each geometry names its own keys; any other is refused. */
+export function geometryBad(v: unknown): string | null {
+  if (!isObj(v) || typeof v.type !== 'string')
+    return 'is not a geometry with a type.'
+  const keys = (...k: string[]) => only(v, ['type', ...k])
+  const ok = (good: boolean) => (good ? null : 'is not valid for its type.')
+  switch (v.type) {
+    case 'rect':
+      return ok(
+        keys('radius', 'view') &&
+          viewOk(v.view) &&
+          (v.radius === undefined ||
+            isNum(v.radius, 0, 9999) ||
+            (Array.isArray(v.radius) &&
+              v.radius.length === 4 &&
+              v.radius.every(x => isNum(x, 0, 9999)))),
+      )
+    case 'ellipse':
+      return ok(keys('view') && viewOk(v.view))
+    case 'polygon':
+      return ok(
+        keys('sides', 'rotate') &&
+          isInt(v.sides, 3, 12) &&
+          (v.rotate === undefined || isNum(v.rotate, -360, 360)),
+      )
+    case 'star':
+      return ok(
+        keys('points', 'inner', 'rotate') &&
+          isInt(v.points, 3, 24) &&
+          isNum(v.inner, 0.1, 0.95) &&
+          (v.rotate === undefined || isNum(v.rotate, -360, 360)),
+      )
+    case 'line':
+      return ok(
+        keys('from', 'to', 'view') &&
+          pair(v.from, 0, 100) &&
+          pair(v.to, 0, 100) &&
+          viewOk(v.view),
+      )
+    case 'blob':
+      return ok(
+        keys('seed', 'smooth', 'points') &&
+          isInt(v.seed, 0, 2147483647) &&
+          (v.smooth === undefined || isNum(v.smooth, 0, 1)) &&
+          (v.points === undefined || isInt(v.points, 3, 12)),
+      )
+    case 'path':
+      return ok(
+        keys('d', 'view') &&
+          typeof v.d === 'string' &&
+          v.d.length <= SHAPE_LIMITS.path &&
+          PATH_RE.test(v.d) &&
+          viewOk(v.view),
+      )
+    case 'group':
+      return ok(
+        keys('view', 'combine') &&
+          viewOk(v.view) &&
+          (v.combine === undefined ||
+            oneOf(v.combine, ['layer', 'union', 'subtract'])),
+      )
+    default:
+      return 'has a type that is not a shape geometry.'
+  }
+}
+
+const colorBad = (c: Checks, v: unknown): boolean => {
+  const k = checkColor(v)
+  return (
+    k === undefined ||
+    (typeof k === 'object' && !c.styles.colors.some(x => x.id === k.style))
+  )
 }
 
 export function propBad(
@@ -547,6 +639,36 @@ export function propBad(
           oneOf(v.density, ['top', 'right', 'bottom', 'left']))
         ? null
         : bad('is not a valid pattern.')
+    case 'geometry': {
+      const m = geometryBad(v)
+      return m ? bad(m) : null
+    }
+    case 'paint':
+      if (v === 'none') return null
+      if (isObj(v) && !Object.hasOwn(v, 'style'))
+        return only(v, ['from', 'to', 'angle']) &&
+          !colorBad(c, v.from) &&
+          !colorBad(c, v.to) &&
+          (v.angle === undefined || isNum(v.angle, 0, 360))
+          ? null
+          : bad(
+              'is not a valid gradient; it takes {"from":<colour>,"to":<colour>,"angle"?:0 to 360}, for example {"from":"brand","to":"ink","angle":135}',
+            )
+      return colorBad(c, v)
+        ? bad(
+            'is not a paint; it takes a site colour name, a #rrggbb colour, a gradient or "none", for example "brand", "#1f2937", {"from":"brand","to":"ink","angle":135} or "none"',
+          )
+        : null
+    case 'stroke':
+      return isObj(v) &&
+        only(v, ['color', 'width', 'dash']) &&
+        !colorBad(c, v.color) &&
+        isNum(v.width, 0, 200) &&
+        (v.dash === undefined || pair(v.dash, 0, 1000))
+        ? null
+        : bad(
+            'is not a valid stroke; it takes {"color":<colour>,"width":0 to 200,"dash"?:[on,off]}, for example {"color":"ink","width":2}',
+          )
     case 'list':
       return listBad(c, f, v, key, refs, code)
     default:
@@ -701,6 +823,11 @@ export function checkNode(c: Ctx, t: TCtx, e: Entry) {
       say(
         `A ${aspec.label.toLowerCase()} cannot go inside a ${pspec.label.toLowerCase()}.`,
       )
+    if (akind === 'field' && parent.kind !== 'form') {
+      let x: Entry | null = e.parent
+      while (x && x.w.kind !== 'form') x = x.parent
+      if (!x) say('A field has to be inside a form.')
+    }
     if (pspec.children?.kinds && !pspec.children.kinds.includes(akind))
       say(
         `A ${pspec.label.toLowerCase()} cannot hold a ${aspec.label.toLowerCase()}.`,
@@ -711,8 +838,38 @@ export function checkNode(c: Ctx, t: TCtx, e: Entry) {
 
   // Children.
   const count = w.children?.length ?? 0
-  if (spec.role === 'leaf' && count)
+  // A leaf holds only what its `children` names (a shape's parts); a leaf with no `children` holds nothing.
+  if (spec.role === 'leaf' && count && !spec.children)
     say('It cannot hold other nodes.', 'children')
+  if (w.kind === 'shape') {
+    const gt =
+      isObj(w.props) && isObj(w.props.geometry)
+        ? (w.props.geometry as { type?: unknown }).type
+        : undefined
+    if (gt === 'group' ? count < 1 : count)
+      say(
+        gt === 'group'
+          ? 'A group must hold 1 to 32 shapes.'
+          : 'Only a group holds shapes.',
+        'children',
+      )
+    if (e.parent?.w.kind === 'button')
+      for (const layout of [false, 'tablet', true] as const)
+        if (effectivePlacement(w, layout).mode !== 'behind') {
+          say('A shape in a button is placed behind.', 'placement')
+          break
+        }
+    if (e.parent?.w.kind === 'shape') {
+      if (w.style !== undefined)
+        say('A shape in a group has no style.', 'style')
+      if (w.placement !== undefined)
+        say('A shape in a group has no placement.', 'placement')
+      let up = 0
+      for (let x: Entry | null = e; x?.w.kind === 'shape'; x = x.parent) up++
+      if (up > SHAPE_LIMITS.depth)
+        say(`Shapes go at most ${SHAPE_LIMITS.depth} deep.`, 'children')
+    }
+  }
   if (w.kind === 'list' && w.repeat !== undefined && count > 1)
     say('A repeating list must hold exactly 1 node.', 'children')
   if (spec.children && (count < spec.children.min || count > spec.children.max))
@@ -751,6 +908,12 @@ export function checkNode(c: Ctx, t: TCtx, e: Entry) {
     for (const [k, f] of Object.entries(spec.props))
       if (f.required && pr[k] === undefined)
         say(`Its ${k} is missing.`, `props.${k}`)
+    if (
+      w.kind === 'shape' &&
+      typeof pr.shadow === 'string' &&
+      !c.styles.shadows.some(x => x.id === pr.shadow)
+    )
+      say('Its shadow is not one this site has.', 'props.shadow')
     checkSettings(c, t, e, pr, say)
   }
 
@@ -770,6 +933,12 @@ export function checkNode(c: Ctx, t: TCtx, e: Entry) {
       !(t.which === 'footer' && !e.parent)
     )
       say("Reveal belongs on the footer's top block only.", 'style')
+    if (
+      !sb.length &&
+      declsOf(w.style).some(d => d?.side !== undefined) &&
+      !(t.which === 'header' && !e.parent?.parent)
+    )
+      say("Side belongs on the header's top blocks only.", 'style')
     for (const b of sb) say(b.message, b.path)
     // A layer reacts only to a state this node or a node around it holds, and only to a value that state has.
     if (!sb.length && Array.isArray(w.style.when))

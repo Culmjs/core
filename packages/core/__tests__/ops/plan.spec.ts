@@ -752,3 +752,42 @@ test('an allow that throws a value with no message says so in words', () => {
     assert.equal(p.message, 'allow failed: unknown error')
   }
 })
+
+test('setStyle align center on a text is accepted and stored as textAlign center', () => {
+  const r = ok(
+    run([
+      {
+        op: 'setStyle',
+        tree: T,
+        id: 't1',
+        layer: 'base',
+        decl: { align: 'center' },
+      },
+    ]),
+  )
+  assert.deepEqual(r.doc.pages[0].root.children![0].style, {
+    base: { textAlign: 'center' },
+  })
+})
+
+test('setStyle align stretch on a text is refused with the textAlign hint: one of start, center, end, justify, for example "start"', () => {
+  const p = refused(
+    run([
+      {
+        op: 'setStyle',
+        tree: T,
+        id: 't1',
+        layer: 'base',
+        decl: { align: 'stretch' },
+      },
+    ]),
+  )
+  assert.ok(
+    p.some(x =>
+      x.message.includes(
+        'use textAlign, which takes one of start, center, end, justify, for example "start"',
+      ),
+    ),
+    JSON.stringify(p),
+  )
+})

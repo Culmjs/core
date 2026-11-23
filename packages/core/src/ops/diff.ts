@@ -251,7 +251,14 @@ export function diffAll(
   }
 
   const site: string[] = []
-  for (const k of ['name', 'look', 'styles', 'fonts', 'languages'])
+  for (const k of [
+    'name',
+    'look',
+    'styles',
+    'fonts',
+    'languages',
+    'centreMaxWidth',
+  ])
     if (!same(da[k], db[k])) site.push(k)
   const order = (m: Map<string, unknown>, o: Map<string, unknown>) =>
     [...m.keys()].filter(id => o.has(id))

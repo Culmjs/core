@@ -1,0 +1,6 @@
+// The project file: the plug-ins to load and the folder `culm build` writes to.
+{
+  "$schema": "./culm.schema.json",
+  "plugins": ["@culmjs/starter"],
+  "out": "dist"
+}

@@ -36,6 +36,7 @@ import {
 import { stylesOf } from '../style/siteStyles.ts'
 import { lookCss } from '../style/look.ts'
 
+import { shapeRefs } from './elementsShape.ts'
 import { DENSITY, FADE, patternBackground } from './stylesPatterns.ts'
 import {
   CODE_HEX,
@@ -51,6 +52,7 @@ import {
   currentMarkRules,
   detailsRules,
   dropdownRules,
+  divideRules,
   fitSize,
   linkHoverRules,
   markerRules,
@@ -96,10 +98,44 @@ const classStart = (p: string) => {
   return `p${p.replace(/\./g, '_').replace(/~/g, '-')}-`
 }
 
+/** The styles of a field that sit on its input, not the label round it (under `centreMaxWidth`). */
+const FIELD_INPUT = ['height', 'minHeight', 'padding'] as const
+const CENTRED = new Set<string>(['box', 'row', 'column', 'grid', 'free'])
+/** `centreMaxWidth`: a container with a max width and no slot align of its own sits in the middle of its parent's cross axis (a column's width, a block's width), unless that parent sets an align of its own. */
+function centred(on: boolean | undefined, w: Node, p: Node | null): boolean {
+  if (!on || !CENTRED.has(w.kind) || w.style?.base?.maxWidth === undefined)
+    return false
+  // `stretch` is what every added block carries (the default of a flow slot), so it is no choice; start, center and end are
+  const own = (w.slot as { align?: unknown }).align
+  if (own !== undefined && own !== 'stretch') return false
+  if (!p) return true
+  const base = p.style?.base
+  return (
+    p.kind === 'column' &&
+    base?.direction !== 'row' &&
+    (base?.align === undefined || base.align === 'stretch')
+  )
+}
+
+/** `centreMaxWidth`: the only child of a row that has a max width and no slot align or grow of its own sits in the middle of the row. */
+function lone(on: boolean | undefined, w: Node, p: Node | null): boolean {
+  if (!on || p?.kind !== 'row' || p.children?.length !== 1) return false
+  if (!CENTRED.has(w.kind) || w.style?.base?.maxWidth === undefined)
+    return false
+  const s = w.slot as { align?: unknown; grow?: unknown }
+  return (
+    (s.align === undefined || s.align === 'stretch') &&
+    !s.grow &&
+    p.style?.base?.direction !== 'column'
+  )
+}
+
 export function compileStyles(
   t: Node,
   ctx: {
     look: Look
+    /** The site's `centreMaxWidth`: a block with a max width and no slot align of its own centres in its parent. */
+    centre?: boolean
     mode: 'edit' | 'live'
     style: StyleCtx
     styles?: SiteStyles
@@ -140,7 +176,8 @@ export function compileStyles(
     fitted: string[] = []
   // blocks that appear after scrolling, a pinned footer, any tooltip, and any link back to the top of the page: also shared rules
   const appearing = new Map<number, string[]>(),
-    revealed: string[] = []
+    revealed: string[] = [],
+    sided: { id: string; w: number }[] = []
   let tips = false,
     toTop = false
   // the spotlight blocks
@@ -203,10 +240,11 @@ export function compileStyles(
       }
     }
     if (w.kind === 'grid') {
-      r.base.push(cols(n(props.cols, 1)))
+      r.base.push(cols(n(props.cols, 1), ctx.centre))
       if (posInt(props.tabletCols))
-        r.tablet.push(cols(props.tabletCols as number))
-      if (posInt(props.phoneCols)) r.phone.push(cols(props.phoneCols as number))
+        r.tablet.push(cols(props.tabletCols as number, ctx.centre))
+      if (posInt(props.phoneCols))
+        r.phone.push(cols(props.phoneCols as number, ctx.centre))
     }
     const marker =
       w.kind === 'list' ? (props.marker ?? w.repeat?.marker) : undefined
@@ -233,7 +271,15 @@ export function compileStyles(
     if (w.kind === 'row') {
       if (props.as === 'nav' || props.as === 'breadcrumb')
         r.phone.push('flex-wrap:wrap')
-      else if (!st.phone?.direction) r.phone.push('flex-direction:column')
+      // CSS keeps a flex row a row; under `centreMaxWidth` only a phone layer that asks folds it
+      else if (!st.phone?.direction && !ctx.centre)
+        r.phone.push('flex-direction:column')
+    }
+    if (ctx.centre && w.kind === 'button') {
+      // a button centres its label; an author's paint wins over the form button's line and weight
+      r.base.push('justify-content:center')
+      if (st.base?.bg !== undefined || st.base?.color !== undefined)
+        r.base.push('border:0;font-weight:inherit')
     }
     const pattern = props.pattern as Pattern | undefined
     if (pattern && w.kind !== 'free')
@@ -254,7 +300,12 @@ export function compileStyles(
       } else if (!w.hide?.phone) r.phone.push('display:none')
     } else if (p && FLEX.has(p.kind)) {
       const f = w.slot as FlowSlot
-      r.base.push('min-width:0')
+      // under `centreMaxWidth` a text item never shrinks below its longest word
+      r.base.push(
+        ctx.centre && w.kind === 'text'
+          ? 'min-width:min-content'
+          : 'min-width:0',
+      )
       const grow = Number.isFinite(f.grow) && f.grow! >= 0 ? f.grow : undefined
       const basis = f.basis
         ? declCss(checkedDecl({ width: f.basis }), ctx.style)
@@ -263,11 +314,37 @@ export function compileStyles(
         r.base.push(
           `flex:${grow ?? 0} 1 ${basis ? basis.slice('width:'.length) : grow ? '0%' : 'auto'}`,
         )
+      // a row that folds to a column on a phone has no width left to share: a grow child sizes by its content or its height, not from 0
+      if (
+        ctx.centre &&
+        grow &&
+        !basis &&
+        p.style?.phone?.direction === 'column'
+      )
+        r.phone.push('flex-basis:auto')
       const wd = w.style?.base?.width
       if (typeof wd === 'object' && wd.unit === 'px')
         r.base.push('flex-shrink:0')
-      if (f.align && SLOT_ALIGN.includes(f.align))
+      if (lone(ctx.centre, w, p))
+        // a lone block with a max width in a row sits in the middle of the row's main axis (a header's inner row)
+        r.base.push('margin-inline:auto')
+      if (centred(ctx.centre, w, p))
+        // a web block is as wide as its parent up to its max width, so the width is the parent's unless one is set
+        r.base.push(
+          w.style?.base?.width === undefined
+            ? 'align-self:center;width:100%'
+            : 'align-self:center',
+        )
+      // `stretch` is what every added block carries and CSS calls `auto`: under `centreMaxWidth` it writes nothing, so the parent's align decides
+      else if (
+        f.align &&
+        SLOT_ALIGN.includes(f.align) &&
+        !(ctx.centre && f.align === 'stretch')
+      )
         r.base.push(`align-self:${f.align}`)
+    } else if (ctx.centre && p?.kind === 'box' && centred(true, w, null)) {
+      // a block parent: the same as `margin-inline:auto`
+      r.base.push('margin-inline:auto')
     } else if (p?.kind === 'grid') {
       const g = w.slot as GridSlot
       const [gc, gr] = [posInt(g.cols), posInt(g.rows)]
@@ -290,7 +367,11 @@ export function compileStyles(
       const d = pick(
         st[v],
         w.kind === 'field'
-          ? KINDS.field.styles.filter(k => !STYLE_GROUPS.PAINT.includes(k))
+          ? KINDS.field.styles.filter(
+              k =>
+                !STYLE_GROUPS.PAINT.includes(k) &&
+                !(ctx.centre && FIELD_INPUT.some(f => f === k)),
+            )
           : spec.styles,
       )
       // The three layouts write z-index themselves, below.
@@ -403,7 +484,10 @@ export function compileStyles(
         target.push(
           `position:absolute;z-index:${(mode === 'front' ? 20000 : -20000) + z};inset-inline-start:${fin(placement.x)}px;top:${fin(placement.y)}px`,
         )
-        if (p.kind === 'free' && !['image', 'video'].includes(w.kind)) {
+        if (
+          (p.kind === 'free' && !['image', 'video'].includes(w.kind)) ||
+          w.kind === 'shape'
+        ) {
           if (!size('width')) target.push('width:100%')
           if (!size('height')) target.push('height:100%')
         }
@@ -421,8 +505,8 @@ export function compileStyles(
         if (
           floating(w, prev) &&
           !floating(w, layout) &&
-          p.kind === 'free' &&
-          !['image', 'video'].includes(w.kind)
+          ((p.kind === 'free' && !['image', 'video'].includes(w.kind)) ||
+            w.kind === 'shape')
         )
           target.push(
             `width:${declCss({ width: size('width') ?? 'fill' }, ctx.style).slice(6)};height:${declCss({ height: size('height') ?? 'fit' }, ctx.style).slice(7)}`,
@@ -484,10 +568,26 @@ export function compileStyles(
     // Hidden in the base and shown in dark (the dark half of a light/dark pair): the dark layer restates the display.
     if (st.base?.hidden && st.dark?.hidden === false)
       r.dark.push(`display:${displayOf(spec, w)}`)
+    // Hidden in the base and shown on tablet: the tablet layer restates the display, and phone (inside tablet's range) inherits it.
+    // It goes first, so the layout's own tablet display (an ordered box, a wrapping child) wins; else it restates the base layout's display.
+    if (st.base?.hidden && st.tablet?.hidden === false) {
+      const own = r.base.findLast(
+        x => x.startsWith('display:') && x !== 'display:none',
+      )
+      r.tablet.unshift(
+        w.children?.some(c => wrapping(c, 'tablet'))
+          ? 'display:flow-root'
+          : (own ?? `display:${displayOf(spec, w)}`),
+      )
+    }
     // (the base rule already hides it at every width, so no phone copy that would beat the dark show rule)
     if (
       st.phone?.hidden ??
-      (st.dark?.hidden === false ? undefined : st.base?.hidden)
+      (st.dark?.hidden === false
+        ? undefined
+        : st.tablet?.hidden === false
+          ? false
+          : st.base?.hidden)
     )
       r.phone.push('display:none')
     else if (
@@ -536,7 +636,11 @@ export function compileStyles(
       })
     const whens = whenRules(
       w.kind === 'field'
-        ? KINDS.field.styles.filter(k => !STYLE_GROUPS.PAINT.includes(k))
+        ? KINDS.field.styles.filter(
+            k =>
+              !STYLE_GROUPS.PAINT.includes(k) &&
+              !(ctx.centre && FIELD_INPUT.some(f => f === k)),
+          )
         : spec.styles,
       true,
     )
@@ -597,11 +701,16 @@ export function compileStyles(
         : own1
     // `links: inherit` makes the entries wear the menu's own text colour, so a menu on a dark bar reads (the links are the brand colour otherwise).
     const own3 =
-      w.kind === 'menu' && props.links === 'inherit'
+      w.kind === 'menu' && (props.links === 'inherit' || ctx.centre)
         ? {
-            key: `${own2?.key ?? ''}|inherit`,
+            key: `${own2?.key ?? ''}|inherit|${ctx.centre && !st.base?.underline}`,
             rules: (cls: string) =>
-              (own2?.rules(cls) ?? '') + `.${cls} a{color:inherit}`,
+              (own2?.rules(cls) ?? '') +
+              `.${cls} a{color:inherit}` +
+              // CSS gives the open page's link no underline; one is written only when the menu asks (`underline`)
+              (ctx.centre && !st.base?.underline
+                ? `.${cls} a[aria-current=page]{text-decoration:none}`
+                : ''),
           }
         : own2
     const own4 =
@@ -638,8 +747,71 @@ export function compileStyles(
           rules: detailsRules(mk, ms, fold),
         })
     }
-    if (w.kind === 'menu' && props.as === 'dropdown')
-      more.push({ key: 'dropdown', rules: dropdownRules })
+    if (
+      w.kind === 'menu' &&
+      (props.as === 'dropdown' || props.foldOn === 'phone')
+    ) {
+      const fold = props.foldOn === 'phone' ? 'phone' : undefined
+      const toggle =
+        fold && ['icon', 'box', 'outline'].includes(props.toggle as string)
+          ? (props.toggle as string)
+          : undefined
+      more.push({
+        key: `${fold ? 'dropdown|phone' : 'dropdown'}${ctx.centre ? '|fix' : ''}${toggle ? `|${toggle}` : ''}`,
+        rules: dropdownRules(fold, ctx.centre, toggle),
+      })
+    }
+    // `divide`: a line where the items touch, laid out as each layer lays the container out
+    if (
+      props.divide === true &&
+      ['row', 'column', 'grid', 'list'].includes(w.kind)
+    ) {
+      const dir = (v: 'base' | 'tablet' | 'phone') =>
+        (v === 'phone'
+          ? (st.phone?.direction ?? st.tablet?.direction)
+          : v === 'tablet'
+            ? st.tablet?.direction
+            : undefined) ??
+        st.base?.direction ??
+        (w.kind === 'row' ? 'row' : 'column')
+      const colsAt = (v: 'base' | 'tablet' | 'phone') =>
+        (v === 'phone'
+          ? (posInt(props.phoneCols) ?? posInt(props.tabletCols))
+          : v === 'tablet'
+            ? posInt(props.tabletCols)
+            : undefined) ?? n(props.cols, 1)
+      const sig = (v: 'base' | 'tablet' | 'phone') =>
+        w.kind === 'grid'
+          ? `g${colsAt(v)}`
+          : // a Row folds on a phone unless the site keeps CSS semantics
+            w.kind === 'row' &&
+              v === 'phone' &&
+              !ctx.centre &&
+              !st.phone?.direction
+            ? 'y'
+            : dir(v) === 'row'
+              ? 'x'
+              : 'y'
+      const sigs: [string, string, string] = [
+        sig('base'),
+        sig('tablet'),
+        sig('phone'),
+      ]
+      more.push({
+        key: `divide|${sigs.join(',')}`,
+        rules: divideRules(sigs),
+      })
+    }
+    // an icon's width and height size the glyph, not just the box round it
+    if (
+      ctx.centre &&
+      w.kind === 'icon' &&
+      (st.base?.width !== undefined || st.base?.height !== undefined)
+    )
+      more.push({
+        key: 'icon-fill',
+        rules: cls => `.${cls}>svg{width:100%;height:100%}`,
+      })
     const lh =
       w.kind === 'menu' ? declsOf(st).flatMap(d => d.linkHover ?? []) : []
     if (lh.length)
@@ -695,6 +867,7 @@ export function compileStyles(
           w.id,
         ])
       if (st.base?.reveal) revealed.push(w.id)
+      if (st.base?.side) sided.push({ id: w.id, w: st.base.side })
     }
     if (
       typeof props.tip === 'string' &&
@@ -717,15 +890,35 @@ export function compileStyles(
       const control = noRules()
       for (const v of VARIANTS) {
         if (!OWN(spec, v)) continue
-        const s = declCss(
-          pick(st[v], [...STYLE_GROUPS.PAINT, 'nowrap']),
-          ctx.style,
-          v !== 'base',
+        const keys = [
+          ...STYLE_GROUPS.PAINT,
+          'nowrap',
+          ...(ctx.centre ? FIELD_INPUT : []),
+        ] as (keyof Decl)[]
+        // an author's background and no line of its own: no border, as in a reset stylesheet
+        if (
+          ctx.centre &&
+          v === 'base' &&
+          st.base?.bg !== undefined &&
+          !STYLE_GROUPS.PAINT.some(
+            k => k.startsWith('border') && st.base?.[k] !== undefined,
+          )
         )
+          control[v].push('border:0')
+        if (ctx.centre && v === 'base' && st.base?.height !== undefined)
+          control[v].push('min-height:0')
+        const s = declCss(pick(st[v], keys), ctx.style, v !== 'base')
         if (s) control[v].push(s)
       }
       // A field's paint reacts to states on its control.
-      const cw = whenRules([...STYLE_GROUPS.PAINT, 'nowrap'], false)
+      const cw = whenRules(
+        [
+          ...STYLE_GROUPS.PAINT,
+          'nowrap',
+          ...(ctx.centre ? FIELD_INPUT : []),
+        ] as (keyof Decl)[],
+        false,
+      )
       add(
         `${w.id}:control`,
         'field-control',
@@ -853,6 +1046,10 @@ export function compileStyles(
   // Layers that react to a state come after every state layer and before the tablet and phone blocks.
   css += all.map(e => e.extra?.when?.(e.cls) ?? '').join('')
   const tablet = rules('tablet', c => `:where(.s-site--live) .${c}`)
+  // A word is never split across lines: `anywhere` and `break-word` break "Permissions" in a narrow track, so the word stays whole and a word too wide for its box overflows (the overflow and off-screen checks report it).
+  if (ctx.centre)
+    css +=
+      ':where(.s-site) :where(p,h1,h2,h3,h4,h5,h6,span,a,li,td,th){overflow-wrap:normal;word-break:normal;hyphens:manual}'
   if (tablet) css += `@media (max-width: 1024px){${tablet}}`
   const phone = rules('phone', c => `:where(.s-site--live) .${c}`)
   if (phone) css += `@media (max-width: 600px){${phone}}`
@@ -888,6 +1085,14 @@ export function compileStyles(
   // reveal: the footer's wrapper stays at the foot of the window and the page, opaque and above it, scrolls off to uncover it. Wide and tall windows only: a footer taller than the window could not be read.
   if (revealed.length)
     css += `@media (min-width:601px) and (min-height:561px){${revealed.map(id => `.s-site:has(.${classOf.get(id)})`).join(',')}{isolation:isolate}${revealed.map(id => `.s-site:has(.${classOf.get(id)})>.s-footer`).join(',')}{position:sticky;bottom:0;z-index:-1;background-color:var(--s-bg)}${revealed.map(id => `.s-site:has(.${classOf.get(id)})>main`).join(',')}{position:relative;background-color:var(--s-bg)}}`
+  // side: from 901 px up the header is a sticky left column and the page and footer stack beside it; narrower, the header stays the bar it is.
+  if (sided.length)
+    css += `@media (min-width:901px){${sided
+      .map(({ id, w }) => {
+        const s = `.s-site:has(.${classOf.get(id)})`
+        return `${s}{display:grid;grid-template-columns:${w}px minmax(0,1fr);grid-template-rows:1fr auto}${s}>.s-header{grid-row:1/3;grid-column:1;position:sticky;top:0;height:100vh;overflow:auto;align-self:start}${s}>.s-header>section{height:100%}${s}>main{grid-column:2;grid-row:1}${s}>.s-footer{grid-column:2;grid-row:2}`
+      })
+      .join('')}}`
   // spotlight sits in a ::after under the content, as grain does in a ::before (the glow itself is --s-sp, written by the block's layers)
   if (spotty.length) {
     const g = clsOf(spotty)
@@ -903,5 +1108,16 @@ export function compileStyles(
     css +=
       '@media (prefers-reduced-motion: reduce){:where(.s-site) *{transition:none!important}}'
   const own = escapeCss(css)
-  return { css: lookCss(ctx.look, siteStyles, css) + own, rules: own, classOf }
+  // A shape writes its paint inline, so the site colours and shadows it points at are named here for the look's variables.
+  let shapeRefsOf = ''
+  walk(t, w => {
+    if (w.kind === 'shape' && w.props) shapeRefsOf += shapeRefs(w.props)
+  })
+  return {
+    css:
+      lookCss(ctx.look, siteStyles, css + shapeRefsOf, ctx.style.fontFamily) +
+      own,
+    rules: own,
+    classOf,
+  }
 }

@@ -26,7 +26,14 @@ export const treeKey = (t: TreeRef): string =>
 
 const steps = (dotted: string): JsonPath =>
   dotted.split('.').map(s => (/^\d+$/.test(s) ? +s : s))
-const SITE_KEYS = ['name', 'look', 'fonts', 'styles', 'languages']
+const SITE_KEYS = [
+  'name',
+  'look',
+  'fonts',
+  'styles',
+  'languages',
+  'centreMaxWidth',
+]
 
 /** What the loader recorded, as the lookups of {@link SourceMap}. `at` finds a place in a parsed file. */
 export type Recorded = {

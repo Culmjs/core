@@ -6,6 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { READ_CAP } from '@culmjs/core/ops'
 import { folderMcpOptions } from '../../src/cli/main.ts'
+import type { FetchOptions } from '../../src/folder/fetch.ts'
 import { openProject } from '../../src/folder/project.ts'
 import { createMcpServer } from '../../src/mcp/server.ts'
 
@@ -15,16 +16,27 @@ after(async () => {
 })
 
 /** An SDK client over a server that serves the folder the way `culm mcp` does. */
-export async function serve(dir: string, executable?: string) {
+export async function serve(
+  dir: string,
+  executable?: string,
+  fetchOptions?: FetchOptions,
+) {
   const project = await openProject(dir)
   const server = createMcpServer(
-    await folderMcpOptions(dir, project, executable),
+    await folderMcpOptions(dir, project, executable, fetchOptions),
   )
+  return { call: await connectClient(server), project }
+}
+
+/** An SDK client linked to `server` in memory; the client is closed when the test file ends. */
+export async function connectClient(
+  server: ReturnType<typeof createMcpServer>,
+) {
   const [a, b] = InMemoryTransport.createLinkedPair()
   const client = new Client({ name: 'test', version: '0' })
   await Promise.all([server.connect(b), client.connect(a)])
   closers.push(() => client.close())
-  const call = async (name: string, args: Record<string, unknown> = {}) => {
+  return async (name: string, args: Record<string, unknown> = {}) => {
     const r = await client.callTool({ name, arguments: args })
     const content = r.content as { type: string; text: string }[]
     assert.equal(content.length, 1)
@@ -35,7 +47,6 @@ export async function serve(dir: string, executable?: string) {
       json: JSON.parse(content[0]!.text) as any,
     }
   }
-  return { call, project }
 }
 
 /** Every file of the project folder (not `.culm/`) with its text. */

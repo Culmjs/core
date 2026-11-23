@@ -228,3 +228,81 @@ export function applySetting(
   })
   return { ok: true, root: next }
 }
+
+/** Deletes the value at a setting path from a copy of the tree, with the sample marks the setting's write leaves on its node. */
+function dropPath(root: Node, target: string): void {
+  const hit = localTarget(root, target)
+  if (!hit?.path.length) return
+  let o = hit.node as unknown as Record<string, unknown> | undefined
+  for (const k of hit.path.slice(0, -1))
+    o = o?.[k] as Record<string, unknown> | undefined
+  if (o) delete o[hit.path.at(-1)!]
+  if (hit.path[0] === 'props' && hit.node.props) {
+    delete hit.node.props.sample
+    delete hit.node.props.chrome
+  }
+}
+
+/**
+ * Whether a block's root is still as `insertBlock` made it: the same look as a fresh expansion of its origin, except for what its settings write and for starter nodes removed or hidden (a node added, or any style changed, is false)
+ * (the site name, a note, labels, links, shown switches). False when the origin's version is not the block's version, because the old default is not held.
+ */
+export function isAsInserted(registry: Registry, root: Node): boolean {
+  const o = root.origin
+  const block = o && registry.block(o.block)
+  if (!o || !block || block.version !== o.version) return false
+  const fresh = insertBlock(registry, o.block, o.look, root.id)
+  if (!fresh.ok) return false
+  const a: Node = JSON.parse(JSON.stringify(root))
+  const b: Node = JSON.parse(JSON.stringify(fresh.root))
+  for (const s of block.settings)
+    for (const act of s.actions ?? []) {
+      const targets =
+        act.do === 'set'
+          ? paths(act.path)
+          : act.do === 'choose'
+            ? Object.values(act.options).flatMap(x => [
+                ...Object.keys(x.write ?? {}),
+                ...(x.remove ?? []),
+              ])
+            : act.do === 'show'
+              ? act.nodes.map(n => `${n}.style.base.hidden`)
+              : []
+      for (const t of targets) {
+        dropPath(a, t)
+        dropPath(b, t)
+      }
+    }
+  // Appearance only: a node the starter inserted may be removed or hidden, a node added may not.
+  const gone = (n: Node) => {
+    n.children = n.children?.filter(c => find(a, c.id))
+    n.children?.forEach(gone)
+  }
+  gone(b)
+  for (const t of [a, b])
+    walk(t, n => {
+      if (n.style?.base) delete n.style.base.hidden
+    })
+  return JSON.stringify(sorted(a)) === JSON.stringify(sorted(b))
+}
+
+/** The same value with every object's keys in order and empty objects left out, so two trees that differ only in that compare equal. */
+function sorted(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(sorted)
+  if (v && typeof v === 'object')
+    return Object.fromEntries(
+      Object.entries(v)
+        .sort(([x], [y]) => (x < y ? -1 : 1))
+        .map(([k, x]) => [k, sorted(x)] as const)
+        .filter(
+          ([, x]) =>
+            !(
+              x &&
+              typeof x === 'object' &&
+              !Array.isArray(x) &&
+              !Object.keys(x).length
+            ),
+        ),
+    )
+  return v
+}

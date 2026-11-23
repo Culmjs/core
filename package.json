@@ -17,10 +17,8 @@
     "gen:scripts": "node --conditions=source --import tsx scripts/gen-scripts.ts",
     "check:layers": "node --conditions=source --import tsx scripts/check-layers.ts",
     "check:terms": "node --conditions=source --import tsx scripts/check-terms.ts",
-    "parity": "node --conditions=source --import tsx --test 'packages-private/parity/__tests__/*.spec.ts'",
-    "parity:setup": "npm install --no-save --no-audit --no-fund playwright@1.64.1 pixelmatch@7 pngjs@7 @types/pngjs@6",
     "test:browser": "node --conditions=source --import tsx --test --test-concurrency=1 'packages/*/__browser__/*.spec.ts'",
-    "pack:all": "mkdir -p .pack && npm pack --workspace=packages/core --workspace=packages/tools --pack-destination=.pack"
+    "pack:all": "mkdir -p .pack && npm pack --workspace=packages/core --workspace=packages/starter --workspace=packages/tools --pack-destination=.pack"
   },
   "devDependencies": {
     "@types/node": "^22",

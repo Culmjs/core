@@ -5,7 +5,12 @@ export type {
   SetAction,
   ShowAction,
 } from './actions.ts'
-export { applySetting, insertBlock, readSettings } from './block.ts'
+export {
+  applySetting,
+  insertBlock,
+  isAsInserted,
+  readSettings,
+} from './block.ts'
 export type {
   BlockDef,
   Setting,

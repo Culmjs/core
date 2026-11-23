@@ -7,6 +7,7 @@ export type Links = {
   file(id: string): string | undefined
   /** Where a form posts to; without it a form posts to its own page. */
   form?(): string
+  fragment?(id: string): string
 }
 
 /** The address a Link points at, or undefined when its target is missing, off, or unsafe. */
@@ -27,7 +28,9 @@ export function href(
           ? `mailto:${l.email}`
           : /^[^@\s:/?#]+@[^@\s:/?#]+$/.test(l.url)
             ? `mailto:${l.url}` // a bare address is an email link
-            : l.url
+            : l.url?.startsWith('#') && links.fragment
+              ? `#${links.fragment(l.url.slice(1))}`
+              : l.url
   return out !== undefined && urlOk(out) ? out : undefined
 }
 

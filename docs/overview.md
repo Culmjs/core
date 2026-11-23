@@ -2,7 +2,7 @@
 
 Culm is a JavaScript framework that builds websites from data. This page says exactly what exists in the repository today. The package is `@culmjs/core`. It has no runtime dependencies and runs in Node 22+, edge workers and the browser.
 
-This page covers stage 1 (the document, validation and the compiler), checkpoint 2a of stage 2 (checked operations, reads, the catalogue, diff and restore) and checkpoint 2b (measure, folder sites, the `culm` command, the dev server and the MCP server). `@culmjs/core` is the part described in most of this page; `@culmjs/tools` is the second package, described in "Tools" below. Stage 2 is not finished: the starter package and `culm init` (checkpoint 2c) and the agent comparison (2d) do not exist yet. The API will change before a first release.
+This page describes the site document, validation, compilation and checked operations in `@culmjs/core`. `@culmjs/tools` provides folder sites, the CLI and [agent authoring over MCP](mcp.md#ordered-json-edits). `@culmjs/starter` supplies the site created by `culm init`.
 
 ## The idea in three sentences
 
@@ -35,7 +35,7 @@ A page is a tree of nodes. A node has:
 - optional `repeat`, `bind`, `showIf`: data binding and conditional display
 - optional `slot` and `placement`: how it sits in its parent
 
-There are 21 core kinds, all layout or content: `free`, `box`, `row`, `column`, `grid`, `list`, `table`, `table-row`, `table-cell`, `text`, `image`, `icon`, `button`, `divider`, `embed`, `video`, `menu`, `form`, `field`, `details` and `instance`. A plug-in can add more.
+There are 22 core kinds, all layout or content: `free`, `box`, `row`, `column`, `grid`, `list`, `table`, `table-row`, `table-cell`, `text`, `image`, `icon`, `button`, `divider`, `embed`, `video`, `menu`, `form`, `field`, `details`, `instance` and `shape`. A `shape` is a vector drawing (rect, ellipse, polygon, star, line, blob, path or a group of up to 32 parts) painted with site colours, a gradient or a stroke; a button may hold up to 4 shapes behind its label, and any container may hold shapes placed `behind` or `front`. A shape is decoration unless it has a `label`, and it never counts as text. A plug-in can add more.
 
 The limits are 2,000 nodes per page and 12 levels of nesting. `KINDS`, the table of core kinds, is frozen along with everything in it, so a consumer cannot change a kind for every registry in the process.
 
@@ -135,6 +135,7 @@ A problem has a stable `code`, a `message`, and where they apply a `nodeId`, a `
 | `UNKNOWN_SOURCE`          | A list or binding names a data source or field that is not registered |
 | `RESOURCE_LIMIT_EXCEEDED` | A node, depth or byte ceiling was passed                              |
 | `POLICY_VIOLATION`        | A product's own rule refused the document                             |
+| `FETCH_FAILED`            | A font or icon could not be fetched                                   |
 
 Wording may change. Codes keep their meaning.
 
@@ -171,7 +172,7 @@ A refusal is a list of problems. Each has a stable `code`, a `message`, and wher
 - The document is validated once, after the last operation. A batch whose result has any problem is refused whole, and the problems come back.
 - A request holds at most 200 operations and 1,000,000 characters of canonical JSON. Past either, it is refused with `RESOURCE_LIMIT_EXCEEDED`.
 
-`plan(doc, registry, request, allow?)` runs the batch on a document and returns the result without a store. `apply(store, registry, request, allow?)` does the same against a store, in four steps: replay the key, check the revision, plan, commit. Both return problems and never throw for a bad request. A store that throws makes `apply` reject with that error.
+`plan(doc, registry, request, allow?)` runs the batch on a document and returns the result without a store. Before it checks, an alias pass rewrites `align` on a text to `textAlign`, a layer's `display` to `hidden`, and a rect shape's style `radius` to `geometry.radius`. `apply(store, registry, request, allow?)` does the same against a store, in four steps: replay the key, check the revision, plan, commit. Both return problems and never throw for a bad request. A store that throws makes `apply` reject with that error.
 
 A successful result has `created` and `changed` (node references, with no repeats), `pages` (the ids of the pages affected), `notes`, and from `apply` the new `revision`. `created` and `changed` are what `diffSites` reports between the document before and after the batch: `created` is every id the diff lists as added, `changed` every id it lists as changed or moved that is not created. A node that was removed is in neither list (the diff lists it as removed), and a parent whose children changed is not changed. A page's own settings are in `pages`, not in `changed`. A note has a `kind` (`reset`, `expanded` or `info`), the node `ids` it is about and a `text`. One note says which links now lead to no page after a page was removed, switched off or given another slug. Culm does not rewrite links.
 
@@ -210,7 +211,9 @@ catalogue(registry, { what: 'kinds' }) // compact rows, paged
 catalogue(registry, { what: 'kinds', id: 'text' }) // one entry in full
 ```
 
-`what` is `kinds`, `blocks`, `sources` or `operations`. It is generated from the registry, so a plug-in's kinds, blocks and sources appear with the core ones. A list view pages compact rows: a block with its looks and its settings as key and type, a kind with its settings, a source with its fields and its first sample row. A view with an `id` returns the one entry in full, with its settings paged as rows, every select option listed (a long list is cut and counted) and a ready insert operation for a block that `plan` accepts as it stands. Pass `site` (a head) and that operation names the first page of the site. In the list view the ready insert gives values only to settings whose keys the compact row shows; the view of one entry gives every value it can. A block whose look id is too long to show whole has no ready insert. An unknown `id` is refused with the code of its kind and the allowed names. The `operations` entries give each operation's fields and an example.
+`what` is `guide`, `kinds`, `operations`, `recipes`, `blocks` or `sources`, in the order an agent should read them. It is generated from the registry, so a plug-in's kinds, blocks and sources appear with the core ones. The list views are terse: `guide` is rows of plain sentences on composing a section; `kinds` is one string per kind (`kind(role): setting, setting`); `operations` is one string per operation with a `legend` for the long types; `recipes` is rows `{ recipe, name, guide, ops }`; a block is `{ block, name, category, looks, guide }`; a source has its fields. A view with an `id` returns the one entry in full: a kind's settings with their `hint` (the grammar of a shape's `geometry`, `fill` and `stroke`), an operation's fields and example, a recipe's batch (its first operation aimed at the first page of the site, which `plan` accepts as it stands), a block's settings with a ready insert (pass `site` to name the first page of the site) and a source's first sample row. An unknown `id` is refused with the code of its kind and the allowed names; an unknown recipe is `INVALID_OPERATION` at `id`.
+
+`GUIDE` and `RECIPES` are core data, like `OPERATIONS`: six recipes (`hero`, `split`, `cta-band`, `buttons`, `divider`, `card`) that use only site colours and leave node ids out so one can be applied twice. The five list replies `guide`, `kinds`, `operations`, `recipes` and `blocks` stay within 9,165 characters on the starter registry.
 
 ### Diff and restore
 
@@ -276,7 +279,7 @@ Sizes are raw minified bytes. `compilePage` reports a page that passes a ceiling
 The `measure` layer of the core says what is wrong with a rendered page, in a form an agent can act on, and confirms a repair. It has no browser in it: it takes measurements that a runner made and returns findings.
 
 - `PROBE_SCRIPT` is one function a runner evaluates in the page. It returns, for every element with a node id, its box, whether it paints, its background, clipping, text lines and size, and tap size.
-- `runChecks(input)` takes those measurements for every layout of one page, and returns findings. There are 16 checks and one row for a compile problem (`invalid`). Class 1 is a compile problem, class 2 a defect (`off-screen`, `overflow`, `h-scroll`, `overlap`, `contrast`, `tap-target`) and class 3 taste (`column`, `alignment`, `symmetry`, `rhythm`, `empty-band`, `line-length`, `heading-order`, `duplicate-heading`, `stacked-row`, `phone-order`). The thresholds are in `THRESHOLDS`. `runChecks` takes the document (`doc`), not a root, and unrolls the header, the page and the footer itself.
+- `runChecks(input)` takes those measurements for every layout of one page, and returns findings. There are 31 checks and one row for a compile problem (`invalid`). Class 1 is a compile problem, class 2 a defect (`off-screen`, `overflow`, `h-scroll`, `overlap`, `contrast`, `tap-target`, and for shapes `shape-covers`, `shape-complex` and `raw-colour`; and the design findings `stretched-button`, `header-edge`, `hero-bare`, `orphan-heading`, `bleed-gutter`, `all-stacked`, `no-accent`, `starter-chrome`, `side-stripe`, `gradient-text`, `glow` and `emoji-icon`, each with a `fix`) and class 3 taste (`column`, `alignment`, `symmetry`, `rhythm`, `empty-band`, `line-length`, `heading-order`, `duplicate-heading`, `stacked-row`, `phone-order`). The thresholds are in `THRESHOLDS`. `runChecks` takes the document (`doc`), not a root, and unrolls the header, the page and the footer itself.
 - A finding names the check, the class, the page, the width, the theme, the direction, the nodes, what was observed, what was expected, and a `key` (`findingKey`) that is the same on every run for the same defect.
 - `buildReport` joins the findings of many cells into one `Report`, and `compareReports(old, new, doc)` says, for each earlier finding, whether it is `fixed`, still `present`, `unobservable` (every node of the finding is gone or hidden at the finding's width) or `unchecked`, and lists the findings that are new.
 - The measure profile is version 1: widths 1280, 834 and 390, themes light and dark, each direction the site's languages declare, and the default state of each part. `MEASURE_PROFILE` is that version, and a report says what the profile skipped.
@@ -299,6 +302,37 @@ The `measure` layer of the core says what is wrong with a rendered page, in a fo
 
 Read [docs/folder-sites.md](folder-sites.md) for the folder format, `.culm/` and the commands, and [docs/mcp.md](mcp.md) for the nine tools, what `protect` refuses and the local port.
 
+## The starter
+
+`@culmjs/starter` is a plug-in (`trust: 'declarative'`, build only) with eight blocks and one look, written only against the public names of `@culmjs/core`. Every setting of every block is a declared action; no block has `onInsert`, and the plug-in has no setting functions, kinds or rules. An ESLint rule limits its imports to the public names of `@culmjs/core`, and `npm run check:terms` finds no product term in it. A test in `packages/starter` shows it and core's test plug-in sharing one registry and one page, and a test in `packages/tools` shows that the template compiles within every ceiling.
+
+| Block            | Looks                       | What it is                                                                                                      |
+| ---------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `page-header`    | `bar`, `centered`           | The site name, the navigation and an optional button; the navigation is required in every look                  |
+| `page-footer`    | `simple`, `columns`         | A note and optional links                                                                                       |
+| `hero`           | `plain`, `image`            | The page title (a required `h1`), a lead line and a button, with an optional image                              |
+| `text-section`   | `narrow`, `wide`            | A heading and text in a column of 640 or 960 px                                                                 |
+| `image-text`     | `image-left`, `image-right` | An image beside a heading and text                                                                              |
+| `card-grid`      | `cards`, `rows`             | A heading and one card or row for each row of a source (default source `menu`); with no rows, the heading alone |
+| `link-list`      | `plain`, `boxed`            | A heading and one link for each row of a source (default source `links`); with no rows, the heading alone       |
+| `call-to-action` | `band`, `card`              | A heading and a button                                                                                          |
+
+Tokens: colours `ink #1c1917`, `canvas #fafaf9`, `brand #b45309`, `muted #57534e`, `line #e7e5e4`; text styles `eyebrow` 11, `body` 17, `lead` 20, `h3` 24, `h2` 32, `h1` 48. New starters set `textRange` to 11–96px for regular text with `displayMax: 240` for H1/H2. Phone size, leading and tracking can be set independently. Spacing: `xs` 4, `s` 8, `m` 16, `l` 24, `xl` 40, `2xl` 64. Fonts are the system stacks only; the package ships no font file. Every heading and the navigation are required content.
+
+### First run
+
+```sh
+npx @culmjs/tools init my-site
+cd my-site
+npm install
+npx culm dev     # serve the site; reloads on save
+npx culm build   # write the site to dist/
+```
+
+Nothing is on npm yet, so until a release the steps above do not work. From a checkout of this repository, run `npm run pack:all` (it writes three tarballs to `.pack/`), then `node packages/tools/bin/culm.js init my-site --from .pack`, then `npm install` in `my-site`. `--from <folder>` is a folder that holds `culmjs-core-*.tgz`, `culmjs-starter-*.tgz` and `culmjs-tools-*.tgz`; `init` then writes `file:` dependencies on them in place of version numbers. A relative `--from` is resolved against the folder you run the command in.
+
+`culm init <folder>` writes a bakery site (four pages, a menu, a piece used on three pages and one block written as data) into a new or empty folder. A folder that holds anything, hidden files included, is refused, and the message lists up to five of the names found. It also writes a `package.json`, a `culm.schema.json` and a `.gitignore` (which excludes `node_modules`, `dist` and `.culm/`).
+
 ## Guarantees and their limits
 
 What the code holds today, each backed by tests:
@@ -318,14 +352,13 @@ What the tools add, each backed by tests:
 - Every problem and measure finding on a folder site names a file and a line.
 - `culm dev`, `culm mcp --port` and the measure runner bind or serve `127.0.0.1` only. The loader reads inside the project folder only, and `culm build` deletes only inside an output folder that holds a manifest it wrote.
 - Measure never downloads a browser and never contacts an address outside the compiled bundle. `build` and `dev` make no network request.
-- The dev server's reload code is in no file `build` writes, and a built page gains no bytes from stage 2.
+- The dev server's reload code is in no file `build` writes.
 
 What it does not do:
 
-- It does not fetch, store, host, publish or sign anyone in. The MCP server has no accounts and no identity.
+- Culm builds local files; it does not publish them to a host or sign anyone in.
 - A plug-in named in `culm.json` runs as code with your rights, and a caller that can write the files can bypass every operation. Both are stated in "What this does not protect" in [folder-sites.md](folder-sites.md).
 - Measure covers the default state of each part. Hover, focus, open and other states are listed as skipped, not measured.
-- It has no starter package or `culm init` (checkpoint 2c) and has not been compared with agents that write page code (checkpoint 2d).
 - A removed or moved page does not rewrite the links that pointed at it. The result says which links now lead nowhere.
 - A plug-in's block functions and rules are ordinary code that runs with the product's rights. Culm checks what they return. It does not sandbox them.
 

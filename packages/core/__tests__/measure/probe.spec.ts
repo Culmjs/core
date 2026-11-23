@@ -72,7 +72,12 @@ class El {
 }
 
 /** A document of `[data-id]` elements; every character of a text is 10 wide, 20 tall, and wraps after `perLine` characters. */
-function page(build: (root: El) => void, perLine = 100, scrollY = 0) {
+function page(
+  build: (root: El) => void,
+  perLine = 100,
+  scrollY = 0,
+  spaceWidth = 0,
+) {
   const root = new El('html', {}, rect(0, 0, 1000, 5000))
   build(root)
   const all = root.all()
@@ -91,13 +96,16 @@ function page(build: (root: El) => void, perLine = 100, scrollY = 0) {
         setEnd() {},
         getClientRects() {
           const s = node!.nodeValue
-          if (s[i] === ' ') return [{ width: 0, top: 0, height: 20 }]
+          if (s[i] === ' ' && (!spaceWidth || (i + 1) % perLine === 0))
+            return [{ width: 0, top: 0, height: 20 }]
           const owner = all.find(e => e.childNodes.includes(node))!
           return [
             {
               width: 10,
               height: 20,
               top: owner.r.top + Math.floor(i / perLine) * 20,
+              left: owner.r.left + (i % perLine) * 10,
+              right: owner.r.left + (i % perLine) * 10 + 10,
             },
           ]
         },
@@ -176,7 +184,60 @@ test('direct text gives the rendered lines and the longest one, read through the
   }, 5)
   const [n] = measureNodes(doc, win, 1000).nodes
   assert.equal(n.visible, true)
-  assert.deepEqual(n.text, { lines: 2, longest: 5, size: 16, weight: 400 })
+  assert.deepEqual(n.text, {
+    lines: 2,
+    longest: 5,
+    last: 3,
+    broken: false,
+    x0: 0,
+    x1: 50,
+    size: 16,
+    weight: 400,
+  })
+})
+
+test('a word whose letters sit on two lines is broken; a space between words is not', () => {
+  const { doc, win } = page(root => {
+    new El('p', { 'data-id': 'p' }, rect(0, 100, 200, 60), root, 'abcdefgh')
+  }, 5)
+  assert.equal(measureNodes(doc, win, 1000).nodes[0].text?.broken, true)
+})
+
+test('direct text "Bikes fixed while you" over "wait" gives lines 2, longest 21, last 4', () => {
+  const { doc, win } = page(
+    root => {
+      new El(
+        'h1',
+        { 'data-id': 'h' },
+        rect(0, 0, 300, 40),
+        root,
+        'Bikes fixed while you wait',
+      )
+    },
+    22,
+    0,
+    10,
+  )
+  const [n] = measureNodes(doc, win, 1000).nodes
+  assert.deepEqual(n.text, {
+    lines: 2,
+    longest: 21,
+    last: 4,
+    broken: false,
+    x0: 0,
+    x1: 210,
+    size: 16,
+    weight: 400,
+  })
+})
+
+test('merged rows keep the first row last', () => {
+  const { doc, win } = page(root => {
+    new El('a', { 'data-id': 'l~1' }, rect(0, 0, 100, 20), root, 'abcdefgh')
+    new El('a', { 'data-id': 'l~2' }, rect(0, 30, 90, 20), root, 'abcdefghij')
+  }, 5)
+  const [n] = measureNodes(doc, win, 1000).nodes
+  assert.equal(n.text?.last, 3)
 })
 
 test('a link or a button reports its tap size', () => {

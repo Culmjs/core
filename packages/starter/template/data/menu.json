@@ -1,0 +1,60 @@
+// The bakery menu: eight rows. Each image names a file in assets/.
+{
+  "$schema": "../culm.schema.json",
+  "fields": {
+    "name": "text",
+    "text": "text",
+    "price": "text",
+    "image": "text"
+  },
+  "rows": [
+    {
+      "name": "Sourdough loaf",
+      "text": "Slow rise, crisp crust",
+      "price": "6",
+      "image": "loaf.svg"
+    },
+    {
+      "name": "Butter croissant",
+      "text": "Folded three times",
+      "price": "3",
+      "image": "street.svg"
+    },
+    {
+      "name": "Cinnamon bun",
+      "text": "Warm from the oven",
+      "price": "4",
+      "image": "counter.svg"
+    },
+    {
+      "name": "Rye loaf",
+      "text": "Dark, dense and a little sweet",
+      "price": "6",
+      "image": "loaf.svg"
+    },
+    {
+      "name": "Lemon cake",
+      "text": "A slice of sunshine",
+      "price": "5",
+      "image": "counter.svg"
+    },
+    {
+      "name": "Seeded roll",
+      "text": "Good with soup",
+      "price": "2",
+      "image": "street.svg"
+    },
+    {
+      "name": "Baguette",
+      "text": "Long, light and crackling",
+      "price": "4",
+      "image": "loaf.svg"
+    },
+    {
+      "name": "Almond tart",
+      "text": "Frangipane in a short crust",
+      "price": "5",
+      "image": "counter.svg"
+    }
+  ]
+}
