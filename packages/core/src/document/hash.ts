@@ -1,7 +1,7 @@
 /**
  * JSON with keys sorted at every depth and no whitespace. Keys sort by code unit, except that integer-like keys come first in numeric order,
  * because that is how JavaScript orders own keys; the text is deterministic for equal values. Follows JSON.stringify for undefined, functions and NaN;
- * a top-level undefined or function gives "null". Deep JSON data does not depend on the engine's call-stack limit.
+ * a top-level undefined or function gives "null". If the native stack runs out, plain data up to 8,192 levels is supported.
  */
 export function canonicalJson(value: unknown): string {
   // The replacer copies each object, which hides a cycle from JSON.stringify; the plain pass throws the TypeError for it.
@@ -47,6 +47,8 @@ export function canonicalJson(value: unknown): string {
       }
       if (typeof (v as { toJSON?: unknown }).toJSON === 'function') throw e // not plain data; preserve its original error
       if (ancestors.has(v)) throw new TypeError('Circular value in JSON')
+      if (ancestors.size >= 8192)
+        throw new RangeError('JSON nesting exceeds the supported depth')
       ancestors.add(v)
       const array = Array.isArray(v)
       chunks.push(array ? '[' : '{')
