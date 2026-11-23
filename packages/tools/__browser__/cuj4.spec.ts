@@ -149,6 +149,7 @@ test('CUJ 4: a person edits a site by hand', async t => {
   cleanup.push(() => o.browser.close())
   const page = await o.browser.newPage()
   await page.unblock()
+  await page.setScheme('light')
   assert.deepEqual(await page.goto(`${url}/`, 15000), { ok: true })
   assert.equal(await h1(page), 'Bread, baked before sunrise')
   const brand = await heroButton(page)
@@ -233,6 +234,7 @@ test('CUJ 4: a person edits a site by hand', async t => {
 
   const server: Server = createServer(async (req, res) => {
     const p = decodeURIComponent((req.url ?? '/').split(/[?#]/)[0]!)
+    if (p === '/favicon.ico') return void res.writeHead(204).end()
     const file = join(dist, p.endsWith('/') ? `${p}index.html` : p)
     if (!file.startsWith(dist)) return void res.writeHead(403).end()
     try {
@@ -247,7 +249,13 @@ test('CUJ 4: a person edits a site by hand', async t => {
     }
   })
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r))
-  cleanup.push(() => new Promise(r => server.close(r)))
+  cleanup.push(
+    () =>
+      new Promise(r => {
+        server.close(r)
+        server.closeAllConnections()
+      }),
+  )
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
 
   const slugs: Record<string, string> = {}
