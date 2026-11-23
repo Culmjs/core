@@ -1,0 +1,41 @@
+// The Menu page.
+{
+  "$schema": "../culm.schema.json",
+  "id": "menu",
+  "title": "Menu",
+  "slug": "/menu",
+  "on": true,
+  "inMenu": true,
+  "inFooter": false,
+  "icon": "",
+  "root": {
+    "id": "menuroot",
+    "kind": "column",
+    "name": "Page",
+    "children": [
+      {
+        "block": "hero",
+        "look": "plain",
+        "id": "menuhero",
+        "title": "The menu",
+        "lead": "Everything is made by hand and sold until it runs out.",
+        "buttonLabel": "Visit us",
+        "buttonLink": { "page": "/visit" }
+      },
+      // Every row of data/menu.json, in rows.
+      {
+        "block": "card-grid",
+        "look": "rows",
+        "id": "menulist",
+        "heading": "All our bakes",
+        "source": "menu",
+        "limit": 8
+      },
+      {
+        "use": "../pieces/visit-card.json",
+        "id": "menuvisit",
+        "note": "Order before 6 for the next morning"
+      }
+    ]
+  }
+}

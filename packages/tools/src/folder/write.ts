@@ -525,7 +525,9 @@ export function fileEdits(
 
   // ---- the site file
   const SITE = 'site.json'
-  const siteKey = (k: 'name' | 'look' | 'fonts' | 'languages') => {
+  const siteKey = (
+    k: 'name' | 'look' | 'fonts' | 'languages' | 'centreMaxWidth',
+  ) => {
     if (eq(before[k], after[k])) return
     const rv = rawAt(SITE, [k])
     if (after[k] === undefined) {
@@ -533,7 +535,14 @@ export function fileEdits(
     } else if (rv === undefined) put(SITE, [k], after[k])
     else sync(SITE, [k], rv, after[k])
   }
-  for (const k of ['name', 'look', 'fonts', 'languages'] as const) siteKey(k)
+  for (const k of [
+    'name',
+    'look',
+    'fonts',
+    'languages',
+    'centreMaxWidth',
+  ] as const)
+    siteKey(k)
   if (!eq(before.styles, after.styles)) {
     const rv = rawAt(SITE, ['styles'])
     if (after.styles === undefined) {

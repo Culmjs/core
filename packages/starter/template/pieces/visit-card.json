@@ -1,0 +1,55 @@
+// A small card that says where we are. Pages use it and may change its note.
+{
+  "$schema": "../culm.schema.json",
+  "id": "visitcard",
+  "name": "Visit card",
+  "settings": [
+    {
+      "key": "note",
+      "label": "Note",
+      "type": "text",
+      "part": "line",
+      "field": "text",
+      "default": "Open every day from 7 until 3"
+    }
+  ],
+  "root": {
+    "id": "card",
+    "kind": "column",
+    "name": "Visit",
+    "style": { "base": { "padding": [40, 16, 40, 16], "align": "center" } },
+    "children": [
+      {
+        "id": "cardinner",
+        "kind": "column",
+        "name": "Inner",
+        "slot": { "align": "center" },
+        "style": {
+          "base": { "width": "fill", "maxWidth": { "n": 1100, "unit": "px" } }
+        },
+        "children": [
+          {
+            "id": "cardheading",
+            "kind": "text",
+            "name": "Heading",
+            "required": true,
+            "props": {
+              "level": "h3",
+              "textStyle": "h3",
+              "runs": [{ "text": "Find us on the corner" }]
+            }
+          },
+          {
+            "id": "line",
+            "kind": "text",
+            "name": "Line",
+            "props": {
+              "level": "p",
+              "runs": [{ "text": "Open every day from 7 until 3" }]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

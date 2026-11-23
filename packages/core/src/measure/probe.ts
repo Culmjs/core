@@ -85,6 +85,11 @@ export function measureNodes(
         node.tap = { w: box!.w, h: box!.h }
       // Direct text only: one range per character gives the rendered lines and the longest one in characters.
       let chars = 0
+      // a word whose letters sit on two lines is broken; the ink's left and right edges catch a word too long for its box (it spills out)
+      let broken = false,
+        wordTop: number | null = null,
+        ink0 = Infinity,
+        ink1 = -Infinity
       const lines: { top: number; n: number }[] = []
       for (const t of Array.from(el.childNodes)) {
         if (t.nodeType !== TEXT || !(t.nodeValue || '').trim()) continue
@@ -93,8 +98,17 @@ export function measureNodes(
           range.setStart(t, i)
           range.setEnd(t, i + 1)
           const q = range.getClientRects()[0]
-          if (!q || q.width < 0.1) continue // a collapsed space has no box
+          const gap = /[\s-]/.test(s[i]) // a space or a hyphen may end a line without splitting a word
+          if (!q || q.width < 0.1) {
+            if (gap) wordTop = null
+            continue // a collapsed space has no box
+          }
           chars++
+          ink0 = Math.min(ink0, q.left)
+          ink1 = Math.max(ink1, q.right)
+          if (wordTop !== null && Math.abs(q.top - wordTop) > q.height / 2)
+            broken = true
+          wordTop = gap ? null : (wordTop ?? q.top)
           const last = lines[lines.length - 1]
           if (last && Math.abs(q.top - last.top) < q.height / 2) last.n++
           else lines.push({ top: q.top, n: 1 })
@@ -104,6 +118,10 @@ export function measureNodes(
         node.text = {
           lines: lines.length,
           longest: Math.max(...lines.map(l => l.n)),
+          last: lines[lines.length - 1].n,
+          broken,
+          x0: round(ink0 + win.scrollX),
+          x1: round(ink1 + win.scrollX),
           size: parseFloat(cs.fontSize),
           weight: parseInt(cs.fontWeight, 10) || 400,
         }
@@ -111,6 +129,11 @@ export function measureNodes(
       let x0 = r.left,
         x1 = r.right,
         fixed = false
+      // text that spills out of its box counts as part of it
+      if (node.text) {
+        x0 = Math.min(x0, node.text.x0! - win.scrollX)
+        x1 = Math.max(x1, node.text.x1! - win.scrollX)
+      }
       for (
         let a: Element | null = el;
         a && a !== doc.documentElement;
@@ -177,6 +200,9 @@ export function measureNodes(
             ...prev.text,
             lines: Math.max(prev.text.lines, node.text.lines),
             longest: Math.max(prev.text.longest, node.text.longest),
+            broken: prev.text.broken || node.text.broken,
+            x0: Math.min(prev.text.x0 ?? Infinity, node.text.x0 ?? Infinity),
+            x1: Math.max(prev.text.x1 ?? 0, node.text.x1 ?? 0),
           }
         : node.text
     prev.tap = prev.tap ?? node.tap

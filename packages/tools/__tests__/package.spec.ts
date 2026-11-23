@@ -9,10 +9,13 @@ const pkg = JSON.parse(
   readFileSync(join(root, 'packages/tools/package.json'), 'utf8'),
 )
 
-test('the two dependencies are pinned to exact versions, and playwright is not one', () => {
+test('the dependencies are pinned to exact versions, and playwright is not one', () => {
   assert.deepEqual(pkg.dependencies, {
+    '@culmjs/starter': '0.0.0',
     '@modelcontextprotocol/sdk': '1.32.2',
+    htmlparser2: '12.0.0',
     'jsonc-parser': '3.3.1',
+    postcss: '8.5.33',
   })
   assert.equal(pkg.devDependencies?.playwright, undefined)
   assert.equal(pkg.peerDependencies?.playwright, undefined)

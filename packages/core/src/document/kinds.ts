@@ -7,6 +7,8 @@ export const MAX_DEPTH = 12
 export const DEPTH_GUARD = 64
 /** The most rows one list shows: `rowsOf` stops here, so validation refuses a `repeat.max` or component `limit` above it. */
 export const MAX_ROWS = 200
+/** What a shape may hold: parts in a group, depth of groups in groups, characters of path data. */
+export const SHAPE_LIMITS = { children: 32, depth: 4, path: 8000 } as const
 /** No `~` or `.`, so an id can't collide with an expanded copy (`<id>~<n>`), a block copy (`<rootId>.<localId>`) or an unrolled component part (`<instanceId>.<partId>`). */
 export const ID_RE = /^[a-z0-9]{1,20}$/
 
@@ -48,6 +50,12 @@ export const STYLE_GROUPS: Record<
     'bg',
     'bgImage',
     'border',
+    'borderTop',
+    'borderRight',
+    'borderBottom',
+    'borderLeft',
+    'borderWidth',
+    'borderColor',
     'radius',
     'shadow',
     'gradient',
@@ -79,7 +87,7 @@ export const STYLE_GROUPS: Record<
   // Lettering effects, for a text and a button only (not for the containers that hold TYPE_MORE).
   TEXT_FX: ['textStroke', 'textFill', 'fitWidth'],
   // Surface effects, for the layout containers only.
-  BOX_FX: ['grain', 'reveal', 'spotlight'],
+  BOX_FX: ['grain', 'reveal', 'side', 'spotlight'],
   POSITION: ['position', 'inset', 'z'],
   TRANSFORM: ['move', 'rotate', 'scale', 'skew', 'flip', 'origin'],
   EFFECTS: [
@@ -109,12 +117,17 @@ export type PropField = {
     | 'link'
     | 'id'
     | 'pattern'
+    | 'geometry'
+    | 'paint'
+    | 'stroke'
   min?: number
   max?: number
   int?: boolean
   maxLength?: number
   options?: string[]
   required?: boolean
+  /** The grammar of a setting whose value is an object, shown by `catalogue kinds id=<kind>`. At most 300 characters. */
+  hint?: string
 }
 
 export type KindSpec = {
@@ -263,6 +276,7 @@ export const KINDS: Record<CoreKind, KindSpec> = {
     // `breadcrumb` is a nav named "Breadcrumb" in the page's language, with a "/" drawn between its items
     props: {
       as: sel(['div', 'nav', 'breadcrumb']),
+      divide: { type: 'switch' },
       pattern,
       tabs: sel(['list', 'panel']),
       labelledBy: { type: 'id' },
@@ -288,6 +302,7 @@ export const KINDS: Record<CoreKind, KindSpec> = {
     props: {
       as: sel(AS),
       side: sel(['left']),
+      divide: { type: 'switch' },
       pattern,
       tabs: sel(['list', 'panel']),
       labelledBy: { type: 'id' },
@@ -314,6 +329,8 @@ export const KINDS: Record<CoreKind, KindSpec> = {
       cols: { type: 'number', min: 1, max: 12 },
       tabletCols: { type: 'number', min: 1, max: 12 },
       phoneCols: { type: 'number', min: 1, max: 12 },
+      // a thin line between the items (`--s-line`), where they touch
+      divide: { type: 'switch' },
     },
     styles: [
       'gap',
@@ -360,6 +377,7 @@ export const KINDS: Record<CoreKind, KindSpec> = {
       ]),
       reversed: { type: 'switch' },
       start: { type: 'number', min: 1, max: 9999, int: true },
+      divide: { type: 'switch' },
     },
     styles: [...LAYOUT, ...BOX, ...PAINT, ...TYPE, ...FX, ...TYPE_MORE],
     bindable: [],
@@ -442,7 +460,11 @@ export const KINDS: Record<CoreKind, KindSpec> = {
     display: () => 'inline-flex',
     inner: ['svg'],
     props: {
-      name: { type: 'text', maxLength: 40 },
+      name: {
+        type: 'text',
+        maxLength: 80,
+        hint: 'a built-in name (star) or an Iconify set:name (lucide:camera)',
+      },
       link: { type: 'link' },
       label: { type: 'text', maxLength: 120 },
     },
@@ -462,12 +484,14 @@ export const KINDS: Record<CoreKind, KindSpec> = {
       opens: { type: 'id' },
       command: sel(COMMANDS),
       tabs: sel(['tab']),
-      icon: { type: 'text', maxLength: 40 },
+      icon: { type: 'text', maxLength: 80 },
       iconOnly: { type: 'switch' },
       iconAfter: { type: 'switch' },
       // Provenance (a default label the owner has not written over yet).
       sample: { type: 'switch' },
     },
+    // Up to 4 shapes drawn behind the label (each `behind` at every layout).
+    children: { min: 0, max: 4, kinds: ['shape'] },
     styles: [...BOX, ...PAINT, ...TYPE, ...FX, ...TYPE_MORE, ...TEXT_FX],
     states: ['pressed', 'focus', 'current'],
     bindable: ['label', 'link'],
@@ -530,6 +554,10 @@ export const KINDS: Record<CoreKind, KindSpec> = {
       viewAllLabel: { type: 'text', maxLength: 60 },
       as: sel(['dropdown']),
       drop: sel(['down', 'up']),
+      // `foldOn: phone` folds the links behind a menu button on phone (it always renders the dropdown markup); from the tablet width up they show in a row
+      foldOn: sel(['phone']),
+      // the folded menu's button: the glyph alone (`icon`), on a grey square (`box`) or in an outlined square (`outline`); the word "Menu" stays for screen readers
+      toggle: sel(['icon', 'box', 'outline']),
     },
     styles: [...LAYOUT, ...BOX, ...TYPE, ...FX, ...TYPE_MORE, 'linkHover'],
     states: ['current'],
@@ -538,7 +566,11 @@ export const KINDS: Record<CoreKind, KindSpec> = {
     icon: 'menu',
   }),
   form: container({
-    children: { min: 0, max: Infinity, kinds: ['field', 'button', 'text'] },
+    children: {
+      min: 0,
+      max: Infinity,
+      kinds: ['field', 'button', 'text', 'row', 'column', 'grid', 'box'],
+    },
     tag: () => 'form',
     display: () => 'flex',
     inner: ['input'],
@@ -551,13 +583,15 @@ export const KINDS: Record<CoreKind, KindSpec> = {
     icon: 'mail',
   }),
   field: leaf({
-    parents: ['form'],
+    // a row, column, grid or box may group fields (Name and Email side by side), but some form above must hold them: see validate/tree.ts
+    parents: ['form', 'row', 'column', 'grid', 'box'],
     tag: () => 'label',
     display: () => 'flex',
     inner: ['input', 'textarea'],
     props: {
       name: sel(['name', 'email', 'subject', 'message']),
       label: { type: 'text', maxLength: 80 },
+      placeholder: { type: 'text', maxLength: 80 },
       required: { type: 'switch' },
     },
     styles: [...BOX, ...PAINT, ...TYPE, ...FX, ...TYPE_MORE],
@@ -585,6 +619,35 @@ export const KINDS: Record<CoreKind, KindSpec> = {
     label: 'Details',
     icon: 'chevron-down',
   }),
+  // A vector drawing, SVG-like. A leaf that may hold only shapes (a group's parts). Never text, never a tip.
+  shape: leaf({
+    tag: () => 'svg',
+    display: () => 'block',
+    children: { min: 0, max: SHAPE_LIMITS.children, kinds: ['shape'] },
+    props: {
+      geometry: {
+        type: 'geometry',
+        required: true,
+        hint: 'type: rect{radius?,view?} | ellipse{view?} | polygon{sides 3-12,rotate?} | star{points 3-24,inner 0.1-0.95,rotate?} | line{from:[x,y],to:[x,y] in 0-100} | blob{seed,smooth? 0-1,points? 3-12} | path{d,view?} | group{view?,combine? layer|union|subtract}',
+      },
+      fill: {
+        type: 'paint',
+        hint: 'A site colour name or {style}, #rrggbb, {from,to,angle?} for a gradient, or "none". Absent: brand.',
+      },
+      stroke: {
+        type: 'stroke',
+        hint: '{color, width 0-200, dash?:[on,off]}',
+      },
+      opacity: { type: 'number', min: 0, max: 1 },
+      shadow: { type: 'text', maxLength: 32 },
+      fit: sel(['contain', 'cover', 'stretch']),
+      label: { type: 'text', maxLength: 120 },
+    },
+    styles: [...BOX, ...FX],
+    bindable: [],
+    label: 'Shape',
+    icon: 'shapes',
+  }),
   // Stands in for its component's tree; expand() unrolls it, so nothing renders it.
   instance: container({
     tag: () => 'div',
@@ -600,7 +663,9 @@ export const KINDS: Record<CoreKind, KindSpec> = {
 
 /** Any block that draws a box can carry a tooltip. Not those drawn as a void element (image, video, divider), which cannot hold the tip, nor a table row or the stand-in for a component. */
 for (const k of Object.keys(KINDS) as CoreKind[])
-  if (!['image', 'video', 'divider', 'table-row', 'instance'].includes(k))
+  if (
+    !['image', 'video', 'divider', 'table-row', 'instance', 'shape'].includes(k)
+  )
     KINDS[k].props = {
       ...KINDS[k].props,
       tip: { type: 'text', maxLength: 120 },

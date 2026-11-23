@@ -7,6 +7,8 @@ import {
   type Problem,
   type Registry,
   type SiteDocument,
+  type SiteFonts,
+  type SiteIcons,
 } from '@culmjs/core'
 import {
   MEASURE_PROFILE,
@@ -28,6 +30,10 @@ export type MeasureInput = {
   doc: SiteDocument
   registry: Registry
   data: Data
+  /** Fonts the folder holds (`up:<name>`), as `readHeld` reads them. */
+  fonts?: SiteFonts
+  /** Icons the folder holds (`set:name`), as `readHeld` reads them. */
+  icons?: SiteIcons
   revision: number
   /** Page ids; default: every page that is on. */
   pages?: string[]
@@ -46,6 +52,8 @@ export type MeasureInput = {
   files?: { path: string; sha256: string }[]
   /** The bytes of a file the page asks for, by project path (`assets/…`, `fonts/…`), or undefined. */
   assets?(path: string): Promise<Uint8Array | undefined>
+  /** Called once per page and direction with the probe's layouts, before the checks (the fixture capture reads them). */
+  onLayouts?: (page: string, dir: 'ltr' | 'rtl', layouts: LayoutRaw[]) => void
 }
 
 const LAYOUT = { 1280: 'desktop', 834: 'tablet', 390: 'phone' } as const
@@ -175,6 +183,8 @@ async function measurePage(
     data: i.data,
     mode: 'measure',
     links: { page: slug => slug, file: id => `/assets/${id}` },
+    ...(i.fonts ? { fonts: i.fonts } : {}),
+    ...(i.icons ? { icons: i.icons } : {}),
     ...(lang ? { lang } : {}),
   })
   if (!compiled.ok)
@@ -230,6 +240,7 @@ async function measurePage(
       }
     }
     loaded.assets = page.blocked.length === 0 && missing.n === 0
+    i.onLayouts?.(pageId, dir, layouts)
     return {
       findings: checks(compiled.problems, layouts, contrast, loaded),
       measured,

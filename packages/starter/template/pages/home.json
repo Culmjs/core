@@ -1,0 +1,45 @@
+// The Home page.
+{
+  "$schema": "../culm.schema.json",
+  "id": "home",
+  "title": "Home",
+  "slug": "/",
+  "on": true,
+  "inMenu": true,
+  "inFooter": false,
+  "icon": "",
+  "root": {
+    "id": "homeroot",
+    "kind": "column",
+    "name": "Page",
+    "children": [
+      // The opening of the page: the headline, one line, one button and a picture.
+      {
+        "block": "hero",
+        "look": "image",
+        "id": "homehero",
+        "title": "Bread, baked before sunrise",
+        "lead": "Sourdough, croissants and cake from our corner oven, fresh every morning.",
+        "buttonLabel": "See the menu",
+        "buttonLink": { "page": "/menu" },
+        "image": "loaf.svg"
+      },
+      // Three of the eight things on the menu.
+      {
+        "block": "card-grid",
+        "id": "homemenu",
+        "heading": "Today at the counter",
+        "source": "menu",
+        "limit": 3
+      },
+      { "use": "../pieces/visit-card.json", "id": "homevisit" },
+      {
+        "block": "call-to-action",
+        "id": "homecta",
+        "heading": "Order for tomorrow morning",
+        "buttonLabel": "Get in touch",
+        "buttonLink": { "email": "hello@example.com" }
+      }
+    ]
+  }
+}

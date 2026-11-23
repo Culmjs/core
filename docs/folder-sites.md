@@ -25,7 +25,7 @@ A project is a folder with a `culm.json`. Every `culm` command run outside one s
 
 All files are JSONC: JSON with comments. Culm keeps your comments, key order and indentation when it writes (see "What is kept when Culm writes").
 
-`culm init` does not exist yet; it comes with the starter package in checkpoint 2c. For now, copy `packages/tools/__tests__/fixtures/site-basic` in the Culm repository, which has one of each file below.
+`culm init <folder>` writes a bakery site, with one of each file below, into a new or empty folder (`npx @culmjs/tools init my-site`, then `npm install`; before a release, see "First run" in [overview.md](overview.md#first-run) for `--from .pack`). A folder that holds anything, hidden files included, is refused. It also writes a `package.json`, a `culm.schema.json` and a `.gitignore`.
 
 ## The files
 
@@ -148,7 +148,7 @@ This is how a project declares a data source without TypeScript. The loader regi
 
 ### Fonts and files
 
-`fonts/` is copied to `_fonts/` in the output and `assets/` to `assets/`. Culm ships no font files. A site that names a catalogue font whose file is not in `fonts/` gets a problem from `culm build` and `culm dev`. `culm check` does not report it as a problem: the font cannot load, the page is measured with its fallback font, and the findings say `assets: false`. A site that uses only system font stacks (`sys:sans`, `sys:serif`) needs no font file.
+`fonts/` is copied to `_fonts/` in the output and `assets/` to `assets/`. Culm ships no font files of its own. A Google family named in `setFonts` as `{ google: "Lato", weights: [400, 700] }` is fetched by `plan` and `apply` into `fonts/<slug>/`: the latin woff2 files, a `font.json` and the family's `LICENSE`. An Iconify icon named `set:name` is fetched into `assets/icons/<set>/<name>.svg` with the set's `LICENSE`. Both are plain files you can commit; a restore keeps them, and a hand-edited file that Culm would not have written is dropped at build. Only fonts licensed OFL-1.1, Apache-2.0 or UFL-1.0, and icon sets licensed MIT, Apache-2.0, ISC, CC-BY-3.0 or CC-BY-4.0, are fetched. One batch fetches at most 4 font families and 60 icons not already held; more is `RESOURCE_LIMIT_EXCEEDED`. A site that names a catalogue font whose file is not in `fonts/` gets a problem from `culm build` and `culm dev`. `culm check` does not report it as a problem: the font cannot load, the page is measured with its fallback font, and the findings say `assets: false`. A site that uses only system font stacks (`sys:sans`, `sys:serif`) needs no font file.
 
 ## Ids
 
@@ -197,7 +197,7 @@ Exit codes: 0 done; 1 problems or findings; 2 wrong usage, or `check` could not 
 
 ### `culm dev`
 
-The server binds `127.0.0.1` only and has no option to bind elsewhere. It refuses a request whose `Host` header is not `127.0.0.1:<port>` or `localhost:<port>`. It serves `assets/` and `fonts/` (as `/_fonts/`) from the project and nothing outside them, including through a symbolic link. A file under `assets/` or `fonts/` is used (served, copied, hashed, measured) only when its real path lies inside that same folder; a link to a file elsewhere in the project, such as `site.json`, is refused by build and `check` with its file named, and is a 404 in dev. A link to a folder is skipped everywhere, and a folder that cannot be read is a problem.
+The server binds `127.0.0.1` only and has no option to bind elsewhere. It refuses a request whose `Host` header is not `127.0.0.1:<port>` or `localhost:<port>`. It serves `assets/` and `fonts/` (as `/_fonts/`) from the project and nothing outside them, including through a symbolic link. A file under `assets/` or `fonts/` is used (served, copied, hashed, measured) only when its real path lies inside that same folder; a link to a file elsewhere in the project, such as `site.json`, is refused by build and `check` with its file named (`check` stops with exit 1 before it opens a browser), and is a 404 in dev. A link to a folder that stays inside its own folder is skipped; one that leaves it, or the project, is refused like a file link, and a folder that cannot be read is a problem.
 
 On a save, the server waits 50 ms for the burst of file events to end, reloads the folder, compiles, and swaps the new pages in whole. It then sends a `reload` event and the page reloads itself.
 
@@ -232,7 +232,7 @@ Measure serves each page from memory under a Content-Security-Policy, answers on
   lock                present only while a process is writing
 ```
 
-`.culm/` is the history of the folder. A revision is a set of file contents, not a copy of the document, so a restore writes those contents back and comments and layout return exactly. It is not edited by hand, and `culm init` will write a `.gitignore` that excludes it, so history is per machine.
+`.culm/` is the history of the folder. A revision is a set of file contents, not a copy of the document, so a restore writes those contents back and comments and layout return exactly. It is not edited by hand, and `culm init` writes a `.gitignore` that excludes it, so history is per machine.
 
 - **What a revision covers.** `culm.json`, `site.json`, and every file under `pages/`, `pieces/` and `blocks/`. Not `data/`, `assets/` or `fonts/`.
 - **Only `apply` and `restore` write to `.culm/`.** `dev`, `build`, `check`, `schema`, `expand` and every read write nothing there.
@@ -269,4 +269,4 @@ Two limits are stated here and are not tested away.
 
 ## Not built yet
 
-`culm init` and the starter package (checkpoint 2c). A change to a plug-in's own code is not picked up by `culm dev`: Node caches an imported module, so restart the server.
+A change to a plug-in's own code is not picked up by `culm dev`: Node caches an imported module, so restart the server.

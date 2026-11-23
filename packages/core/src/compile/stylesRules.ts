@@ -32,6 +32,8 @@ export const KIND_CSS: Partial<Record<CompileKind, string>> = {
   button: 'display:inline-flex;align-items:center;text-decoration:none',
   // a text at level code: the look's own corners, scrolling sideways instead of wrapping
   code: 'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-x:auto;padding:16px;border-radius:var(--s-radius);margin:0',
+  // the aspect ratio is --s-ar (set from the geometry); a width, height or aspect style on the node wins
+  shape: 'display:block;width:100%;height:auto;aspect-ratio:var(--s-ar,auto)',
   divider: 'border:0;border-top:1px solid var(--s-line);margin:0',
 }
 export const CODE_HEX = /^#[0-9a-f]{6}$/i
@@ -118,8 +120,9 @@ export const place = (b: unknown) =>
   boxOk(b)
     ? `grid-column:${b.x + 1} / span ${b.w};grid-row:${b.y + 1} / span ${b.h};z-index:${b.z}`
     : ''
-export const cols = (n: number) =>
-  `grid-template-columns:repeat(${n},minmax(0,1fr))`
+/** `whole`: a track is at least as wide as its longest word, so a word is never split. */
+export const cols = (n: number, whole = false) =>
+  `grid-template-columns:repeat(${n},minmax(${whole ? 'min-content' : '0'},1fr))`
 export const n = (v: unknown, d: number) => posInt(v) ?? d
 /** The own entry of a table for a key, or undefined (a key such as `constructor` reads nothing). */
 export const ownOf = <T>(o: Record<string, T>, k: unknown): T | undefined =>
@@ -262,11 +265,36 @@ export const detailsRules =
     return css
   }
 /** A menu folded into a native disclosure: the panel hangs under the summary, or above it with data-up. */
-export const dropdownRules = (cls: string) =>
-  `.${cls} details{position:relative}.${cls} summary{display:inline-flex;align-items:center;gap:.4em;cursor:pointer;list-style:none}.${cls} summary::-webkit-details-marker{display:none}` +
-  `.${cls} summary::after{content:"";width:.45em;height:.45em;border:solid currentColor;border-width:0 1.5px 1.5px 0;transform:translateY(-.1em) rotate(45deg)}.${cls} details[open]>summary::after{transform:translateY(.1em) rotate(225deg)}` +
-  `.${cls} details>div{position:absolute;inset-inline-start:0;top:calc(100% + 6px);z-index:30;display:flex;flex-direction:column;align-items:stretch;gap:2px;min-width:max-content;padding:6px;background-color:var(--s-bg);border:1px solid var(--s-line);border-radius:var(--s-radius);box-shadow:0 8px 24px rgb(0 0 0/.12)}` +
-  `.${cls} details[data-up]>div{top:auto;bottom:calc(100% + 6px)}.${cls} details>div a{padding:.35em .7em}`
+export const dropdownRules =
+  (fold?: 'phone', fix = false, toggle?: string) =>
+  (cls: string) =>
+    `.${cls} details{position:relative}.${cls} summary{display:inline-flex;align-items:center;gap:.4em;cursor:pointer;list-style:none}.${cls} summary::-webkit-details-marker{display:none}` +
+    `.${cls} summary::after{content:"";width:.45em;height:.45em;border:solid currentColor;border-width:0 1.5px 1.5px 0;transform:translateY(-.1em) rotate(45deg)}.${cls} details[open]>summary::after{transform:translateY(.1em) rotate(225deg)}` +
+    `.${cls} details>div{position:absolute;inset-inline-start:0;top:calc(100% + 6px);z-index:30;display:flex;flex-direction:column;align-items:stretch;gap:2px;min-width:max-content;padding:6px;background-color:var(--s-bg);border:1px solid var(--s-line);border-radius:var(--s-radius);box-shadow:0 8px 24px rgb(0 0 0/.12)}` +
+    `.${cls} details[data-up]>div{top:auto;bottom:calc(100% + 6px)}${fold ? '' : `.${cls} details>div a{padding:.35em .7em}`}` +
+    // `foldOn: phone`: the summary and the links are 44 px tall; from the tablet width up, where a closed details can show its content, the panel is the link row (the menu's own flex, gap and wrap) and the summary is gone. Elsewhere it stays the dropdown.
+    (fold
+      ? `.${cls} summary{min-height:44px}@media (max-width:600px){.${cls} :where(details>div a){display:inline-flex;align-items:center;min-height:44px;padding:.35em .7em}}@supports not selector(::details-content){.${cls} :where(details>div a){display:inline-flex;align-items:center;min-height:44px;padding:.35em .7em}}@supports selector(::details-content){@media (min-width:601px){.${cls} details,.${cls} details>div{gap:inherit;flex-wrap:inherit}.${cls} details::details-content{content-visibility:visible;height:auto;overflow:visible${fix ? ';gap:inherit' : ''}}.${cls} summary{display:none}.${cls} details>div{position:static;flex-direction:row;align-items:inherit;min-width:0;padding:0;background:none;border:0;border-radius:0;box-shadow:none}}}`
+      : '') +
+    (toggle
+      ? `.${cls} summary{justify-content:center;width:44px;min-height:44px;padding:0;box-sizing:border-box;${toggle === 'box' ? 'background:color-mix(in srgb,currentColor 10%,transparent);border-radius:4px' : toggle === 'outline' ? 'border:1px solid color-mix(in srgb,currentColor 40%,transparent);border-radius:4px' : ''}}.${cls} summary::after{display:none}`
+      : '')
+/** `divide`: a thin line where the items of a row, a column, a list or a grid touch. `sigs` is the layout of each layer: `x` (side by side), `y` (stacked) or `gN` (a grid of N columns); a layer is written only where it differs from the one before. */
+export const divideRules =
+  (sigs: [string, string, string]) => (cls: string) => {
+    const line = (g: string) =>
+      g === 'x'
+        ? `.${cls}>*+*{border-inline-start-width:1px}`
+        : g === 'y'
+          ? `.${cls}>*+*{border-top-width:1px}`
+          : `.${cls}>:nth-child(n+${+g.slice(1) + 1}){border-top-width:1px}${g === 'g1' ? '' : `.${cls}>:not(:nth-child(${g.slice(1)}n+1)){border-inline-start-width:1px}`}`
+    let css = `.${cls}>*{border:0 solid var(--s-line)}${line(sigs[0])}`
+    if (sigs[1] !== sigs[0])
+      css += `@media (max-width:1024px){.${cls}>*{border-width:0}${line(sigs[1])}}`
+    if (sigs[2] !== sigs[1])
+      css += `@media (max-width:600px){.${cls}>*{border-width:0}${line(sigs[2])}}`
+    return css
+  }
 /** The links of a menu answering a pointer or focus (style `linkHover`; the layers write the --s-lh-* values this reads). Radius and room are on every link, so nothing shifts on hover. */
 export const linkHoverRules =
   (lh: NonNullable<Decl['linkHover']>[]) => (cls: string) => {
@@ -301,7 +329,13 @@ export function mirror<D extends Decl | undefined>(d: D): D {
   const o: Decl = { ...d }
   if (o.padding !== undefined) o.padding = swap4(o.padding, [0, 3, 2, 1])
   if (o.margin !== undefined) o.margin = swap4(o.margin, [0, 3, 2, 1])
-  if (o.radius !== undefined) o.radius = swap4(o.radius, [1, 0, 3, 2])
+  if (o.radius !== undefined) {
+    const r = o.radius
+    o.radius =
+      typeof r === 'object' && !Array.isArray(r) && 'n' in r
+        ? { ...r, n: swap4(r.n, [1, 0, 3, 2]) }
+        : swap4(r, [1, 0, 3, 2])
+  }
   if (o.border?.sides)
     o.border = {
       ...o.border,
@@ -309,6 +343,15 @@ export function mirror<D extends Decl | undefined>(d: D): D {
         x === 'left' ? 'right' : x === 'right' ? 'left' : x,
       ),
     }
+  if (o.borderLeft || o.borderRight) {
+    const { borderLeft: l, borderRight: r } = o
+    delete o.borderLeft
+    delete o.borderRight
+    if (r) o.borderLeft = r
+    if (l) o.borderRight = l
+  }
+  if (o.borderWidth !== undefined)
+    o.borderWidth = swap4(o.borderWidth, [0, 3, 2, 1])
   if (o.gradient)
     o.gradient = { ...o.gradient, angle: (360 - o.gradient.angle) % 360 }
   // A site shadow ({ style }) is one shared value, so it is left as it is.

@@ -1,5 +1,5 @@
 import type { Node, SiteDocument } from '../document/index.ts'
-import type { TreeRef } from './types.ts'
+import type { NodeRef, TreeRef } from './types.ts'
 
 /** An object with exactly one key, `page` or `component`. */
 const oneKey = (
@@ -67,4 +67,28 @@ export function trees(doc: SiteDocument): { tree: TreeRef; root: Node }[] {
       root: c.root,
     })),
   ]
+}
+
+/** A tree as a text: a page's id, `header`, `footer` or `component:<id>`. */
+export const treeKey = (tree: TreeRef): string =>
+  typeof tree === 'string'
+    ? tree
+    : 'page' in tree
+      ? tree.page
+      : `component:${tree.component}`
+
+/**
+ * The created nodes whose parent was not created in the same tree, each once as `"<tree>:<id>"`, in document order. A created
+ * node that is no longer in the document (a later operation removed it) is left out.
+ */
+export function createdRoots(doc: SiteDocument, created: NodeRef[]): string[] {
+  const made = new Set(created.map(c => `${treeKey(c.tree)}:${c.id}`))
+  const out: string[] = []
+  const go = (key: string, n: Node, parentMade: boolean) => {
+    const here = made.has(`${key}:${n.id}`)
+    if (here && !parentMade) out.push(`${key}:${n.id}`)
+    for (const c of n.children ?? []) go(key, c, here)
+  }
+  for (const t of trees(doc)) go(treeKey(t.tree), t.root, false)
+  return out
 }

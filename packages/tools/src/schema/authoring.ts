@@ -147,6 +147,7 @@ export function authoringSchema(registry: Registry): Record<string, unknown> {
         look: { type: 'object' },
         styles: { type: 'object' },
         fonts: { type: 'array', items: str },
+        centreMaxWidth: { type: 'boolean' },
         languages: {
           type: 'array',
           items: {

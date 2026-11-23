@@ -1,4 +1,4 @@
-import { PROPS, SPACE_STEPS, STYLE_ID_RE } from './decl.ts'
+import { hint, PROPS, SPACE_STEPS, STYLE_ID_RE } from './decl.ts'
 import { type Decl, type Look, type SiteStyles } from '../document/index.ts'
 import { isObj } from '../document/rules.ts'
 
@@ -106,15 +106,25 @@ export function checkSiteStyles(v: unknown): {
     r === undefined
       ? undefined
       : isObj(r) &&
-          Object.keys(r).length === 2 &&
+          Object.keys(r).every(k => ['min', 'max', 'displayMax'].includes(k)) &&
           Number.isInteger(r.min) &&
           Number.isInteger(r.max) &&
           (r.min as number) >= 1 &&
           (r.max as number) <= 400 &&
-          (r.min as number) <= (r.max as number)
-        ? { min: r.min as number, max: r.max as number }
+          (r.min as number) <= (r.max as number) &&
+          (r.displayMax === undefined ||
+            (Number.isInteger(r.displayMax) &&
+              (r.displayMax as number) >= (r.max as number) &&
+              (r.displayMax as number) <= 240))
+        ? {
+            min: r.min as number,
+            max: r.max as number,
+            ...(r.displayMax !== undefined
+              ? { displayMax: r.displayMax as number }
+              : {}),
+          }
         : (problems.push(
-            'styles.textRange needs a whole min and max, from 1 to 400, with min not above max',
+            'styles.textRange needs a whole min and max, from 1 to 400, with min not above max; optional displayMax is a whole number from max to 240',
           ),
           undefined)
   const list = (key: 'colors' | 'text' | 'shadows') => {
@@ -203,7 +213,7 @@ export function checkSiteStyles(v: unknown): {
         (isObj(ok) && 'style' in ok && !have.has(ok.style as string))
       ) {
         problems.push(
-          `styles.text "${t.id}".${k} has a value that is not allowed`,
+          `styles.text "${t.id}".${k} has a value that is not allowed; it takes ${hint(k as keyof Decl)}`,
         )
         return []
       }

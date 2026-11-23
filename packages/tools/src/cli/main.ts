@@ -3,12 +3,14 @@ import { join, relative, resolve, sep } from 'node:path'
 import { parseArgs } from 'node:util'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { buildSite, fileHashes } from '../build/bundle.ts'
-import { readAsset } from '../folder/files.ts'
+import { media, readAsset, refusal } from '../folder/files.ts'
 import { startDev } from '../dev/server.ts'
 import { expandShortForm } from '../folder/write.ts'
 import { fileStore } from '../folder/store.ts'
 import { loadFolder } from '../folder/load.ts'
-import type { Problem, TreeRef } from '@culmjs/core'
+import type { Problem, SiteDocument, TreeRef } from '@culmjs/core'
+import { fetchFor, type FetchOptions } from '../folder/fetch.ts'
+import { readHeld } from '../folder/held.ts'
 import { openProject, type Project } from '../folder/project.ts'
 import type { Located } from '../folder/plugins.ts'
 import { runMeasure } from '../measure/run.ts'
@@ -18,6 +20,7 @@ import { protect } from '../mcp/protect.ts'
 import { authoringSchema } from '../schema/authoring.ts'
 import { locateFinding } from '../folder/locateFinding.ts'
 import { formatLocated } from './print.ts'
+import { init } from './init.ts'
 
 export interface Io {
   /** The project folder; default: the working folder. */
@@ -29,12 +32,15 @@ export interface Io {
 const USAGE = `Usage: culm <command> [options]
 
 Commands:
+  init <folder> [--from folder]
+                               write a new bakery site into a new or empty folder
   dev [--port n]               serve the site, recompile on save (default port 4321)
   build                        write the compiled site to the output folder
   check [--chrome path]        validate, then measure every page in Chrome
   expand <file> <id>           rewrite the short form <id> in <file> as its nodes
   schema                       write culm.schema.json in the project folder
-  mcp [--port n] [--chrome path]
+  mcp [--port n] [--chrome path] [--json-ops | --full]
+                               JSON authoring by default; --full exposes the low-level tools
                                serve the site to an agent over standard input and
                                output; --port also opens a local port with a token
 
@@ -66,6 +72,7 @@ export async function folderMcpOptions(
   cwd: string,
   project: Project,
   executable?: string,
+  fetchOptions?: FetchOptions,
 ) {
   const { loaded } = project
   // ponytail: one extra load per tool call; read again only on a changed revision or file hash if that costs.
@@ -94,8 +101,22 @@ export async function folderMcpOptions(
     allow: protect,
     folder: true,
     executable,
-    // the same files and rule as `culm check`, read for each measure
+    // the hashes of assets/ and fonts/, read again for each measure
     files: () => fileHashes(cwd),
+    // a Google family a batch names is fetched once into fonts/ (the hosts are a parameter so tests can point at a local fake)
+    fetch: (ops: unknown[], doc: SiteDocument, offline?: boolean) =>
+      fetchFor(
+        cwd,
+        doc,
+        ops,
+        offline
+          ? {
+              ...fetchOptions,
+              get: () => Promise.reject(new Error('no network for a replay')),
+            }
+          : fetchOptions,
+      ),
+    held: () => readHeld(cwd),
     assets: (p: string) => readAsset(cwd, p),
     // a problem the store already located stays as it is
     locate: <P extends Problem>(p: P): P =>
@@ -126,6 +147,9 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
         help: { type: 'boolean' },
         port: { type: 'string' },
         chrome: { type: 'string' },
+        full: { type: 'boolean' },
+        'json-ops': { type: 'boolean' },
+        from: { type: 'string' },
       },
     })
   } catch (e) {
@@ -137,15 +161,23 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
     return 0
   }
   const [command, ...args] = positionals
-  const wants: Record<string, { args: number; port?: true; chrome?: true }> = {
+  const wants: Record<
+    string,
+    { args: number; port?: true; chrome?: true; from?: true }
+  > = {
     dev: { args: 0, port: true },
     build: { args: 0 },
     check: { args: 0, chrome: true },
     expand: { args: 2 },
     schema: { args: 0 },
     mcp: { args: 0, port: true, chrome: true },
+    init: { args: 1, from: true },
   }
   const want = command ? wants[command] : undefined
+  if ((values.full || values['json-ops']) && command !== 'mcp')
+    return usage('--json-ops and --full are for culm mcp.')
+  if (values.full && values['json-ops'])
+    return usage('Choose either --json-ops or --full.')
   if (!command || !want)
     return usage(command ? `Unknown command "${command}".` : undefined)
   if (args.length !== want.args)
@@ -156,6 +188,8 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
     return usage(`culm ${command} has no --port.`)
   if (values.chrome !== undefined && !want.chrome)
     return usage(`culm ${command} has no --chrome.`)
+  if (values.from !== undefined && !want.from)
+    return usage(`culm ${command} has no --from.`)
   let port: number | undefined
   if (values.port !== undefined) {
     port = /^\d{1,5}$/.test(values.port) ? Number(values.port) : NaN
@@ -163,6 +197,24 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
       return usage(
         `--port needs a number from 0 to 65535, not "${values.port}".`,
       )
+  }
+
+  if (command === 'init') {
+    try {
+      const r = await init(resolve(cwd, args[0]!), { from: values.from })
+      if (!r.ok) return (r.problems.forEach(p => err(`${p.message}\n`)), 1)
+      const dir = args[0]!
+      const shown = /^[\w@%+=:,./-]+$/.test(dir)
+        ? dir
+        : `'${dir.replaceAll("'", `'\\''`)}'`
+      out(
+        `Wrote ${r.files.length} files to ${dir}\nNext: cd ${shown} && npm install && npx culm dev\n`,
+      )
+      return 0
+    } catch (e) {
+      err(`${e instanceof Error ? e.message : String(e)}\n`)
+      return 1
+    }
   }
 
   try {
@@ -253,13 +305,20 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
     }
 
     if (command === 'check') {
+      const { refused, hashes } = await media(cwd)
+      if (refused.size) {
+        show([...refused].map(([rel, why]) => refusal(rel, why)))
+        return 1
+      }
       const report = await runMeasure({
         doc: loaded.doc!,
         registry: project.registry,
         data: loaded.data,
         revision: 0,
         executable: values.chrome,
-        files: await fileHashes(cwd),
+        files: hashes,
+        fonts: project.held.fonts,
+        icons: project.held.icons,
         assets: p => readAsset(cwd, p),
       })
       for (const f of report.findings)
@@ -280,7 +339,10 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
       return report.incomplete.length ? 2 : report.findings.length ? 1 : 0
     }
 
-    const options = await folderMcpOptions(cwd, project, values.chrome)
+    const options = {
+      ...(await folderMcpOptions(cwd, project, values.chrome)),
+      jsonOps: !values.full,
+    }
     const local =
       port === undefined
         ? undefined

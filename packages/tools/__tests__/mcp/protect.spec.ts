@@ -41,7 +41,12 @@ test('setRequired true, and false on a node that is not required: allowed', () =
 })
 
 test('setSiteStyles with textRange null, a lower min, or a higher max: refused; a narrower range, or no textRange key: allowed', () => {
-  for (const r of [null, { min: 10, max: 96 }, { min: 11, max: 97 }]) {
+  for (const r of [
+    null,
+    { min: 10, max: 96 },
+    { min: 11, max: 97 },
+    { min: 11, max: 96, displayMax: 240 },
+  ]) {
     const p = protect(range(r), doc())
     assert.equal(p?.code, 'POLICY_VIOLATION', JSON.stringify(r))
     assert.equal(p?.rule, 'textRange')

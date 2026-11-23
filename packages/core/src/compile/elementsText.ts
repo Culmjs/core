@@ -183,7 +183,7 @@ export function textElement(b: Build): HtmlNode | null {
     }
     case 'icon': {
       const name = str(p.name)
-      const g = glyph(name)
+      const g = glyph(name, {}, ctx.icons)
       if (!g) return null
       // A linked icon is a link named by its label (else its tooltip, else the icon's own name); a link that points nowhere leaves a plain icon.
       const to =
@@ -220,15 +220,17 @@ function button(b: Build): HtmlNode {
       : {
           style: `${p.iconAfter === true ? 'margin-inline-start' : 'margin-inline-end'}:0.5em;flex:none`,
         },
+    ctx.icons,
   )
   // An icon sits before the label; with `iconOnly` the label stays for assistive technology only.
   const words: HtmlNode | string =
     only && svg ? el('span', { class: 's-vh' }, [name]) : name
-  const label: (HtmlNode | string)[] = svg
-    ? p.iconAfter === true
-      ? [words, svg]
-      : [svg, words]
-    : [name]
+  // Shapes behind the label are written first, inside the same element.
+  const shapes = w.children?.length ? b.kids() : []
+  const label: (HtmlNode | string)[] = [
+    ...shapes,
+    ...(svg ? (p.iconAfter === true ? [words, svg] : [svg, words]) : [name]),
+  ]
   const real = (more: Attrs = {}) =>
     el('button', { ...attrs, ...more, type: 'button', disabled }, label)
   if (ctx.tabs?.get(w.id)?.role === 'tab') return real()
@@ -273,6 +275,8 @@ function button(b: Build): HtmlNode {
       'aria-current':
         here && to === ctx.links.page(here.slug) ? 'page' : undefined,
     },
-    mail.text !== undefined && mail.text !== name ? [mail.text] : label,
+    mail.text !== undefined && mail.text !== name
+      ? [...shapes, mail.text]
+      : label,
   )
 }

@@ -164,7 +164,13 @@ export async function buildSite(
 
   const { files: media_, refused, hashes } = await media(dir)
   for (const [rel, why] of refused) problems.push(refusal(rel, why))
-  const site = compileSite(doc, { registry, data: loaded.data, links })
+  const site = compileSite(doc, {
+    registry,
+    data: loaded.data,
+    links,
+    fonts: project.held.fonts,
+    icons: project.held.icons,
+  })
   problems.push(...site.problems.map(p => loaded.map.locateProblem(p)))
   problems.push(...fontProblems(site.files, hashes, loaded))
   if (problems.length) return { ok: false, problems }

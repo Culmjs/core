@@ -1,4 +1,4 @@
-import test from 'node:test'
+import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   lstat,
@@ -16,6 +16,8 @@ import { join } from 'node:path'
 import { buildIdentity } from '@culmjs/core'
 import { copyFixture } from '../fixtures.ts'
 import { CLIENT_MARKER } from '../../src/dev/client.ts'
+import { startFake } from '../fakeSources.ts'
+import { fetchFor } from '../../src/folder/fetch.ts'
 import { openProject } from '../../src/folder/project.ts'
 import { buildSite, fileHashes, MANIFEST_FILE } from '../../src/build/bundle.ts'
 
@@ -344,4 +346,63 @@ test('an asset or font linked to a project source file is refused by build, whic
       f,
     )
   assert.ok(!(await exists(join(dir, 'dist'))))
+})
+
+// ---- fetched fonts
+const fake = await startFake()
+after(() => fake.close())
+async function withSlab(use: boolean) {
+  const dir = await copyFixture('site-basic')
+  const r = await fetchFor(
+    dir,
+    (await openProject(dir)).loaded.doc!,
+    [{ op: 'setFonts', fonts: [{ google: 'Roboto Slab' }] }],
+    { hosts: fake.hosts },
+  )
+  assert.ok(r.ok)
+  if (use) {
+    const p = join(dir, 'site.json')
+    const t = await readFile(p, 'utf8')
+    const next = t.replace(
+      /"headingFont": "[^"]*"/,
+      '"headingFont": "up:roboto-slab"',
+    )
+    assert.notEqual(next, t)
+    await writeFile(p, next)
+  }
+  return dir
+}
+
+test('build writes _fonts/roboto-slab/ with its woff2 and LICENSE, and the page @font-face points at it', async () => {
+  const dir = await withSlab(true)
+  const r = await buildSite(await openProject(dir))
+  assert.ok(r.ok, JSON.stringify(r))
+  const names = await all(r.out)
+  for (const n of [
+    '_fonts/roboto-slab/400-700.woff2',
+    '_fonts/roboto-slab/LICENSE',
+  ])
+    assert.ok(names.includes(n), n)
+  const html = await readFile(join(r.out, 'index.html'), 'utf8')
+  assert.match(
+    html,
+    /@font-face\{font-family:"Roboto Slab";src:url\(\/_fonts\/roboto-slab\/400-700\.woff2\)/,
+  )
+  assert.match(html, /--s-head:"Roboto Slab", Georgia/)
+})
+
+test('a site that names no fetched font builds byte for byte as before the folder held one', async () => {
+  const plain = await buildSite(
+    await openProject(await copyFixture('site-basic')),
+  )
+  const held = await buildSite(await openProject(await withSlab(false)))
+  assert.ok(plain.ok && held.ok)
+  const pages = (await all(plain.out)).filter(n => /\.(html|css|js)$/.test(n))
+  assert.ok(pages.length > 0)
+  for (const n of pages)
+    assert.equal(
+      await readFile(join(held.out, n), 'utf8'),
+      await readFile(join(plain.out, n), 'utf8'),
+      n,
+    )
 })

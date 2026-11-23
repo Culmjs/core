@@ -12,8 +12,8 @@ import type { Node } from '../../src/document/index.ts'
 const w = (kind: string, props = {}) =>
   ({ id: 'a', kind, name: 'A', slot: {}, props }) as unknown as Node
 
-test('all 21 core kinds are registered with a display value', () => {
-  assert.equal(Object.keys(KINDS).length, 21)
+test('all 22 core kinds are registered with a display value', () => {
+  assert.equal(Object.keys(KINDS).length, 22)
   for (const [k, s] of Object.entries(KINDS)) assert.ok(s.display(w(k)), k)
   assert.equal(KINDS.free.display(w('free')), 'grid')
   assert.equal(KINDS.row.display(w('row')), 'flex')

@@ -16,7 +16,18 @@ export type NodeRaw = {
   fixedOrSticky: boolean
   /** the box is the union of several elements: a list's repeated rows, rolled up to one id */
   merged?: boolean
-  text?: { lines: number; longest: number; size: number; weight: number }
+  text?: {
+    lines: number
+    longest: number
+    last: number
+    /** a word has letters on two lines */
+    broken?: boolean
+    /** the left and right edge of the letters, in page coordinates */
+    x0?: number
+    x1?: number
+    size: number
+    weight: number
+  }
   tap?: { w: number; h: number }
 }
 
@@ -65,6 +76,8 @@ export type Finding = Cell & {
   observed: number | string
   expected: string
   cause?: string
+  /** advice for a class 2 finding */
+  fix?: string
   message: string
   key: string
 }

@@ -60,7 +60,9 @@ export const protect: Allow = (op, doc) => {
       })
     if (
       was &&
-      ((now?.min ?? was.min) < was.min || (now?.max ?? was.max) > was.max)
+      ((now?.min ?? was.min) < was.min ||
+        (now?.max ?? was.max) > was.max ||
+        (now?.displayMax ?? now?.max ?? was.max) > (was.displayMax ?? was.max))
     )
       return veto(
         `The text size range ${was.min} to ${was.max} cannot be widened.`,

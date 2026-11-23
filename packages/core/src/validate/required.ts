@@ -3,6 +3,7 @@ import {
   nodeSizes,
   reasonOf,
   textSizes,
+  textRangeFor,
   walkWithAncestors,
 } from '../document/required.ts'
 import type {
@@ -204,14 +205,18 @@ export function checkShown(doc: SiteDocument, registry: Registry): Problem[] {
       return l.rest ? `The part "${l.rest}" of "${l.top}"` : 'This block'
     }
     walkWithAncestors(tree, (n, up) => {
+      const range = textRangeFor(doc.styles, n.kind, n.props?.level)
       for (const s of nodeSizes(n))
-        if (outside(s.size))
+        if (range && (s.size < range.min || s.size > range.max))
           add(
             sizes,
             policy(
               'textRange',
               `A text size of ${s.size} is outside the site's range of ${range!.min} to ${range!.max}${locate(n.id).rest ? ` (the part "${n.id}")` : ''}.`,
-              { ...place(locate(n.id), s.path), allowed },
+              {
+                ...place(locate(n.id), s.path),
+                allowed: [String(range.min), String(range.max)],
+              },
             ),
           )
       if (!isReq(n, up)) return
@@ -223,7 +228,7 @@ export function checkShown(doc: SiteDocument, registry: Registry): Problem[] {
           required,
           policy(
             'required',
-            `${what(n)} must stay on the page, but it is hidden${by === n ? '' : ` by "${by.id}"`}.${
+            `${what(n)} must stay on the page, but it is hidden${by === n ? '' : ` by "${by.id}"`}${n.kind === 'menu' ? '; a menu can fold on phone with foldOn "phone"' : ''}.${
               m
                 ? ` The hiding is written in the component itself (components.${m.c.id}, the part "${m.x.id}", ${rel}), so changing it there fixes every use.`
                 : ''

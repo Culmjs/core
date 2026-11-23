@@ -114,7 +114,12 @@ export type Op =
       icon?: string
     }
   | { op: 'movePage'; page: string; index: number }
-  | { op: 'setSite'; name?: string; languages?: Language[] }
+  | {
+      op: 'setSite'
+      name?: string
+      languages?: Language[]
+      centreMaxWidth?: boolean
+    }
   | { op: 'setLook'; look: Look }
   | { op: 'setSiteStyles'; styles: Nullable<SiteStyles> }
   | { op: 'setFonts'; fonts: FontRef[] }

@@ -18,3 +18,4 @@ docs/superpowers/
 dist
 .pack
 docs/stage-2*-exit.md
+.DS_Store

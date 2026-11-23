@@ -159,17 +159,17 @@ test('a client can close and a new one reconnect', async () => {
   const l = await start()
   const a = await connectClient(l)
   const n = (await a.listTools()).tools.length
-  assert.equal(n, 9)
+  assert.equal(n, 11)
   await a.close()
   const b = await connectClient(l)
-  assert.equal((await b.listTools()).tools.length, 9)
+  assert.equal((await b.listTools()).tools.length, 11)
 })
 
 test('two clients at once both list tools', async () => {
   const l = await start()
   const [a, b] = [await connectClient(l), await connectClient(l)]
-  assert.equal((await a.listTools()).tools.length, 9)
-  assert.equal((await b.listTools()).tools.length, 9)
+  assert.equal((await a.listTools()).tools.length, 11)
+  assert.equal((await b.listTools()).tools.length, 11)
 })
 
 test('an unknown session id is refused', async () => {

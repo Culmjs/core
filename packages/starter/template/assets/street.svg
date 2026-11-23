@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 200" role="img" aria-label="A shop on a street corner">
+  <rect width="300" height="200" fill="#dbeafe"/>
+  <rect y="160" width="300" height="40" fill="#a8a29e"/>
+  <rect x="70" y="50" width="160" height="110" fill="#fafaf9" stroke="#1c1917" stroke-width="4"/>
+  <path d="M60 50 H240 L230 80 H70 Z" fill="#b45309" stroke="#1c1917" stroke-width="4"/>
+  <rect x="130" y="100" width="40" height="60" fill="#78350f"/>
+  <rect x="85" y="100" width="30" height="30" fill="#bae6fd" stroke="#1c1917" stroke-width="3"/>
+  <rect x="185" y="100" width="30" height="30" fill="#bae6fd" stroke="#1c1917" stroke-width="3"/>
+</svg>

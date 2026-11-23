@@ -34,7 +34,8 @@ test('check on the fixture exits 1 and prints the overflow finding with the file
   )
 })
 
-test('check on the fixture with the title repaired exits 0', async () => {
+// The fixture is a bare test site (no accent, one column, its own chrome): the 3b design findings now stand on it, so the repair is read as the overflow row going away.
+test('check on the fixture with the title repaired no longer reports the overflow', async () => {
   const dir = await copyFixture('site-basic')
   const file = join(dir, 'pages', 'home.json')
   await writeFile(
@@ -45,5 +46,7 @@ test('check on the fixture with the title repaired exits 0', async () => {
     ),
   )
   const r = await check(dir)
-  assert.equal(r.code, 0, r.err)
+  assert.doesNotMatch(r.err, /overflow/)
+  // what is left is design findings only
+  assert.match(r.err, /no-accent|all-stacked|bleed-gutter/)
 })

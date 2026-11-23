@@ -5,6 +5,7 @@ import type {
   PropValue,
   SiteDocument,
 } from '../document/index.ts'
+import { KINDS } from '../document/index.ts'
 import { STATES } from '../document/layers.ts'
 import { isRequired, requiredRefs } from '../document/required.ts'
 import { readSettings } from '../registry/block.ts'
@@ -25,7 +26,7 @@ export type SiteOutline = {
   cursor?: string
   name: string
   languages: { code: string; dir?: 'rtl' }[]
-  textRange?: { min: number; max: number }
+  textRange?: { min: number; max: number; displayMax?: number }
   required: number
   header: number
   footer: number
@@ -44,17 +45,17 @@ export type SiteOutline = {
     | { component: string; name: string; uses: number }
   )[]
 }
+/** Depth-first; `depth` rebuilds the tree. What is at its default (no name of its own, shown, not required, no children) is left out. */
 export type OutlineRow = {
   id: string
   kind: string
-  name: string
-  parent: string | null
-  index: number
-  hidden: Layout[]
+  depth: number
+  name?: string
+  hidden?: Layout[]
   block?: string
-  required: boolean
+  required?: true
   text?: string
-  children: number
+  children?: number
 }
 export type PageOutline = {
   ok: true
@@ -84,7 +85,7 @@ export type SearchResult = {
 
 // ---- limits. Every bound is a serialised length: `JSON.stringify(value).length`, never a count of characters.
 /** A preview of a node's text in a row. */
-const PREVIEW = 100
+const PREVIEW = 60
 /** A name, title, slug or kind in a row. */
 const LABEL = 100
 /** The site's name in the header of `siteOutline`. */
@@ -327,7 +328,15 @@ export const siteOutline = safe(function siteOutline(
     ...(isObj(range) &&
     typeof range.min === 'number' &&
     typeof range.max === 'number'
-      ? { textRange: { min: range.min, max: range.max } }
+      ? {
+          textRange: {
+            min: range.min,
+            max: range.max,
+            ...(typeof range.displayMax === 'number'
+              ? { displayMax: range.displayMax }
+              : {}),
+          },
+        }
       : {}),
     required: requiredRefs(site.doc).length,
     header: count(doc.header),
@@ -410,7 +419,7 @@ export const siteOutline = safe(function siteOutline(
 
 /**
  * One row per node in depth-first document order. `depth` counts from the outlined root (0 is the root alone), `from` outlines the
- * subtree of that node (its `parent` and `index` are the real ones). `hidden` lists the layouts where the node's own `hide` is set.
+ * subtree of that node. `hidden` lists the layouts where the node's own `hide` is set.
  */
 export const pageOutline = safe(function pageOutline(
   site: Head,
@@ -446,17 +455,24 @@ export const pageOutline = safe(function pageOutline(
         ? n.origin.block
         : undefined
     const preview = cut(textOf(n, PREVIEW), PREVIEW)
+    const name = cut(str(n.name), LABEL)
+    const label = (KINDS as Record<string, { label?: string } | undefined>)[
+      str(n.kind)
+    ]?.label
+    const hidden = LAYOUTS.filter(l => isObj(n.hide) && n.hide[l] === true)
+    const kids = arr(n.children).filter(isNode).length
     rows.push({
       id: cut(n.id, ID),
       kind: cut(str(n.kind), LABEL),
-      name: cut(str(n.name), LABEL),
-      parent: c.parent === null ? null : cut(c.parent, ID),
-      index: c.index,
-      hidden: LAYOUTS.filter(l => isObj(n.hide) && n.hide[l] === true),
+      depth: c.depth - base,
+      ...(name !== cut(n.id, ID) && name !== label && name !== ''
+        ? { name }
+        : {}),
+      ...(hidden.length ? { hidden } : {}),
       ...(own ? { block: own } : {}),
-      required: isRequired(n, c.form),
+      ...(isRequired(n, c.form) ? { required: true as const } : {}),
       ...(preview ? { text: preview } : {}),
-      children: arr(n.children).filter(isNode).length,
+      ...(kids ? { children: kids } : {}),
     })
     return o.depth === undefined || c.depth - base < (o.depth as number)
   })

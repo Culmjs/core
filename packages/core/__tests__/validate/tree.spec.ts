@@ -1278,3 +1278,46 @@ test('required: false on a text is INVALID_NODE; on a form and on a field it is 
   })
   assert.equal(codes(put(form)).includes('INVALID_NODE'), false)
 })
+
+test('a shape fill of "red" is refused with the four paint forms and their examples', () => {
+  const m = messages(
+    put({
+      id: 's',
+      kind: 'shape',
+      name: 'S',
+      slot: fs(),
+      props: { geometry: { type: 'rect', w: 10, h: 10 }, fill: 'red' },
+    }),
+  )
+  const s = m.find(x => x.includes('paint') || x.includes('gradient'))!
+  for (const e of [
+    '"brand"',
+    '"#1f2937"',
+    '{"from":"brand","to":"ink","angle":135}',
+    '"none"',
+  ])
+    assert.ok(s.includes(e), `${e} in ${s}`)
+})
+
+test('a bad gradient and a bad stroke each give one example', () => {
+  const m = (props: object) =>
+    messages(
+      put({
+        id: 's',
+        kind: 'shape',
+        name: 'S',
+        slot: fs(),
+        props: { geometry: { type: 'rect', w: 10, h: 10 }, ...props },
+      }),
+    ).join('|')
+  assert.ok(
+    m({ fill: { from: 'brand' } }).includes(
+      'for example {"from":"brand","to":"ink","angle":135}',
+    ),
+  )
+  assert.ok(
+    m({ stroke: { width: 'x' } }).includes(
+      'for example {"color":"ink","width":2}',
+    ),
+  )
+})

@@ -9,12 +9,15 @@ import { isObj } from '../document/rules.ts'
 import { type TabAttrs } from '../document/tabs.ts'
 import { type HtmlNode } from './html.ts'
 import { ICONS } from './icons.ts'
+import { ICON_NAME_RE, siteIcon, type SiteIcons } from './siteIcon.ts'
 import { type Links } from './links.ts'
 
 export type ElementCtx = {
   classOf: ReadonlyMap<string, string>
   doc: Pick<SiteDocument, 'pages'>
   links: Links
+  /** The icons the site's folder holds (`set:name`), read by the tools; core opens no file. */
+  icons?: SiteIcons
   mode: 'edit' | 'live'
   /** Measure mode: live output that also writes `data-id`. */
   ids?: boolean
@@ -71,8 +74,33 @@ export const el = (
   children: children.filter((c): c is HtmlNode | string => !!c || c === ''),
 })
 
-/** An inline icon glyph from the table, or null for a name outside it. */
-export function glyph(name: unknown, attrs: Attrs = {}): HtmlNode | null {
+/**
+ * An inline icon glyph from the table, or from a held `set:name` file, or null for a name outside both. A held file is read again here
+ * and drawn only if `siteIcon` accepts it; it carries its own `currentColor` fill and stroke, so the svg sets none.
+ */
+export function glyph(
+  name: unknown,
+  attrs: Attrs = {},
+  icons?: SiteIcons,
+): HtmlNode | null {
+  if (typeof name === 'string' && ICON_NAME_RE.test(name)) {
+    const file = icons && Object.hasOwn(icons, name) ? icons[name] : undefined
+    const s = file === undefined ? undefined : siteIcon(file)
+    if (!s) return null
+    return {
+      tag: 'svg',
+      attrs: {
+        viewBox: s.viewBox,
+        width: '1em',
+        height: '1em',
+        'aria-hidden': 'true',
+        // a body that sets no fill would draw black, so it follows the text colour
+        ...(s.body.includes(' fill="') ? {} : { fill: 'currentColor' }),
+        ...attrs,
+      },
+      raw: { kind: 'icon', content: s.body },
+    }
+  }
   if (typeof name !== 'string' || !Object.hasOwn(ICONS, name)) return null
   return {
     tag: 'svg',

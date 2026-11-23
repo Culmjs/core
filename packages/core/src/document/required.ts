@@ -5,6 +5,7 @@ import type {
   Node,
   Override,
   SiteDocument,
+  SiteStyles,
   Style,
   StyleLayer,
 } from './types.ts'
@@ -130,6 +131,21 @@ function indexOf(doc: SiteDocument): Index {
 }
 
 const num = (v: unknown): v is number => typeof v === 'number'
+
+/** The optional display ceiling applies only to semantic headings, never to a
+ * paragraph, container or shared text preset. The minimum remains site-wide. */
+export function textRangeFor(
+  styles: SiteStyles | undefined,
+  kind: string,
+  level: unknown,
+) {
+  const range = styles?.textRange
+  return range?.displayMax !== undefined &&
+    kind === 'text' &&
+    (level === 'h1' || level === 'h2')
+    ? { min: range.min, max: range.displayMax }
+    : range
+}
 
 /** The `size` of a declaration, and the `min` of its `fluidSize`; `at` is the path of the declaration. */
 function* sizesOf(

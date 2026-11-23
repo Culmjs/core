@@ -75,6 +75,8 @@ export async function startDev(
           registry: project.registry,
           data: loaded.data,
           links: project.links,
+          fonts: project.held.fonts,
+          icons: project.held.icons,
         })
         const files = await media(root)
         found = [

@@ -11,7 +11,8 @@ import { checkRows, type Registry } from '../registry/index.ts'
 import { BASE_CSS } from '../style/baseCss.ts'
 import { STATES } from '../style/decl.ts'
 import { stylesOf } from '../style/siteStyles.ts'
-import { fontFaceCss, fontFamily } from '../style/fonts.ts'
+import type { SiteIcons } from './siteIcon.ts'
+import { fontFaceCss, fontFamily, type SiteFonts } from '../style/fonts.ts'
 import type { FontRef } from '../document/index.ts'
 import {
   BASE_SCRIPT,
@@ -40,6 +41,10 @@ export type CompileOptions = {
   links?: Links
   lang?: string
   fontBase?: string
+  /** The fonts the site's folder holds (`up:<name>`), read by the tools; core opens no file. */
+  fonts?: SiteFonts
+  /** The icons the site's folder holds (`set:name`), read by the tools; core opens no file. */
+  icons?: SiteIcons
 }
 
 export type CompiledPage =
@@ -136,6 +141,8 @@ export function resolve(doc: SiteDocument, o: CompileOptions) {
     lang,
     rtl: doc.languages?.find(l => l.code === lang)?.dir === 'rtl',
     fontBase: o.fontBase ?? '/_fonts',
+    fonts: o.fonts,
+    icons: o.icons,
     data: o.data ?? { rows: {} },
     kinds: o.registry.kinds(),
   }
@@ -172,12 +179,16 @@ export function prepare(
   }
   const { css, rules, classOf } = compileStyles(shell, {
     look: doc.look,
+    centre: doc.centreMaxWidth === true,
     mode: r.mode,
     styles: doc.styles,
     dir: r.rtl ? 'rtl' : undefined,
     kinds: r.kinds,
     prefix,
-    style: { fileUrl: r.links.file, fontFamily },
+    style: {
+      fileUrl: r.links.file,
+      fontFamily: ref => fontFamily(ref, r.fonts),
+    },
   })
   classOf.delete(SHELL)
   return {
@@ -247,6 +258,7 @@ export function siteElement(
     classOf: p.classOf,
     doc,
     links: p.links,
+    ...(p.icons ? { icons: p.icons } : {}),
     mode,
     ...(p.ids ? { ids: true } : {}),
     kinds: p.kinds,
@@ -334,7 +346,8 @@ function build(
   }
 
   const statesCode = scripts.find(s => s.name === 'states')?.code ?? ''
-  const css = fontFaceCss(fontsOf(doc, p.shell), p.fontBase) + BASE_CSS + p.css
+  const css =
+    fontFaceCss(fontsOf(doc, p.shell), p.fontBase, p.fonts) + BASE_CSS + p.css
   const body: HtmlNode[] = [site]
   const written = scripts.map(s => s.code).join(';')
   if (scripts.length)

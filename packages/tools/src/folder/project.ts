@@ -1,5 +1,6 @@
 import type { Links, Registry } from '@culmjs/core'
 import { loadFiles, readFolder, type Loaded } from './load.ts'
+import { readHeld } from './held.ts'
 import { loadPlugins, type ProjectConfig } from './plugins.ts'
 
 export type Project = {
@@ -8,6 +9,8 @@ export type Project = {
   config: ProjectConfig
   loaded: Loaded
   links: Links
+  /** What the folder holds that a build uses (fonts so far). */
+  held: Awaited<ReturnType<typeof readHeld>>
 }
 
 /**
@@ -29,6 +32,7 @@ export async function openProject(dir: string): Promise<Project> {
     registry,
     config,
     loaded,
+    held: await readHeld(dir),
     // no `page`: the default, the slug itself, is right
     links: { page: slug => slug, file: id => `/assets/${id}` },
   }

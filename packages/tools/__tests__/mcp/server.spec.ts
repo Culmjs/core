@@ -24,7 +24,10 @@ import {
   text,
   twoPages,
 } from '../../../core/__tests__/kit.ts'
-import { createMcpServer } from '../../src/mcp/server.ts'
+import { createRegistry, emptySite } from '@culmjs/core'
+import starter, { LOOK as STARTER_LOOK, STYLES } from '@culmjs/starter'
+import { GUIDE } from '../../../core/src/ops/guide.ts'
+import { INSTRUCTIONS, createMcpServer } from '../../src/mcp/server.ts'
 import { protect } from '../../src/mcp/protect.ts'
 
 type Options = Parameters<typeof createMcpServer>[0]
@@ -98,7 +101,7 @@ async function all(
 
 const base = () => siteWith([text('t1', 'One')])
 
-test('the server lists exactly nine tools: describe, read, catalogue, plan, apply, measure, diff, restore, build', async () => {
+test('the server lists exactly eleven tools: describe, read, write, find, catalogue, plan, apply, measure, diff, restore, build', async () => {
   const { client } = await connect(base())
   const { tools } = await client.listTools()
   assert.deepEqual(tools.map(t => t.name).sort(), [
@@ -107,10 +110,12 @@ test('the server lists exactly nine tools: describe, read, catalogue, plan, appl
     'catalogue',
     'describe',
     'diff',
+    'find',
     'measure',
     'plan',
     'read',
     'restore',
+    'write',
   ])
   for (const n of ['plan', 'apply']) {
     const t = tools.find(x => x.name === n)!
@@ -199,7 +204,7 @@ test('CUJ 1, fixture form, on the memory store', async () => {
   const applied = await call('apply', { baseRevision: 0, key: 'k1', ops })
   assert.equal(applied.error, false, JSON.stringify(applied.json))
   assert.equal(applied.json.revision, 1)
-  const ids: string[] = applied.json.created.map((c: { id: string }) => c.id)
+  const ids: string[] = applied.json.roots.map((r: string) => r.split(':')[1])
   assert.ok(ids.includes('s1') && ids.includes('d1'))
   for (const id of ids) {
     const r = await call('read', { what: 'node', tree: T, id })
@@ -276,12 +281,10 @@ test('CUJ 2, fixture form, on the memory store', async () => {
       ...t.changed.map((c: { id: string }) => c.id),
     ])
       listed.add(id)
-  const result = new Set<string>(
-    [...first.json.created, ...first.json.changed].map(
-      (c: { id: string }) => c.id,
-    ),
+  assert.equal(
+    listed.size,
+    first.json.counts.created + first.json.counts.changed,
   )
-  assert.deepEqual([...listed].sort(), [...result].sort())
   assert.ok(listed.has('ct') && !listed.has('t1'))
 
   const late = await call('apply', {
@@ -407,7 +410,7 @@ test('every tool reply is within READ_CAP on a 2,000-node site, and its cursor c
   assert.equal(bad.error, true)
 })
 
-test('apply returns counts and the first ids up to the cap; diff gives the rest', async () => {
+test('apply returns counts and the created roots; diff gives every id', async () => {
   const { call } = await connect(siteWith([]))
   const ops = Array.from({ length: 12 }, (_, i) => ({
     op: 'add',
@@ -428,9 +431,10 @@ test('apply returns counts and the first ids up to the cap; diff gives the rest'
   assert.equal(r.error, false, JSON.stringify(r.json).slice(0, 400))
   assert.equal(r.json.revision, 1)
   assert.equal(r.json.counts.created, 12 * 51)
-  assert.equal(r.json.cut, true)
-  assert.ok(r.json.created.length > 0 && r.json.created.length < 12 * 51)
-  assert.deepEqual(r.json.created[0], { tree: T, id: 'n0' })
+  assert.equal(r.json.cut, false)
+  assert.equal(r.json.roots.length, 12)
+  assert.deepEqual(r.json.roots[0], 'home:n0')
+  assert.equal('created' in r.json, false)
   const replies = await all(call, 'diff', { from: 0, to: 1 })
   const added = replies.flatMap(x =>
     x.trees.flatMap((t: { added: string[] }) => t.added),
@@ -546,4 +550,199 @@ test('a measure cursor for a report that is no longer held is refused, and no br
   const r = await call('measure', { cursor: '0:1:[null,null,null,null]' })
   assert.equal(r.error, true)
   assert.match(r.json.problems[0].message, /run measure again/)
+})
+
+// ---- token cuts: apply and plan replies
+const blockOps = [
+  ['page-header', 'bar', 'top1'],
+  ['hero', 'plain', 'hero1'],
+  ['card-grid', 'cards', 'grid1'],
+].map(([block, look, id], index) => ({
+  op: 'insertBlock',
+  tree: T,
+  parent: 'homeroot',
+  index,
+  block,
+  look,
+  id,
+}))
+function starterSite() {
+  const registry = createRegistry()
+  registry.use(starter)
+  registry.use({
+    name: 'rows',
+    version: 1,
+    api: [1],
+    runs: ['build'],
+    trust: 'declarative',
+    sources: [
+      {
+        name: 'menu',
+        fields: { name: 'text', text: 'text', price: 'text', image: 'text' },
+        sample: [],
+      },
+    ],
+  })
+  return connect(
+    { ...emptySite('Ada', STARTER_LOOK), styles: STYLES },
+    { registry },
+  )
+}
+
+test('apply of page-header, hero and card-grid replies counts, roots ["home:<id>" x 3], pages and the hint, no created list, in at most 600 characters', async () => {
+  const { call } = await starterSite()
+  const r = await call('apply', { baseRevision: 0, key: 'a', ops: blockOps })
+  assert.equal(r.error, false, JSON.stringify(r.json))
+  assert.deepEqual(r.json.roots, ['home:top1', 'home:hero1', 'home:grid1'])
+  assert.equal('created' in r.json, false)
+  assert.equal(r.json.counts.created > 3, true)
+  assert.deepEqual(r.json.pages, ['home'])
+  assert.equal(r.json.hint, 'All ids: read, or diff(from, to).')
+  const n = JSON.stringify(r.json).length
+  assert.ok(n <= 600, `${n}`)
+})
+
+test('plan replies the same shape without from; a batch of 30 changes lists 20 and more: 10', async () => {
+  const { call } = await starterSite()
+  const p = await call('plan', { baseRevision: 0, ops: blockOps })
+  assert.deepEqual(p.json.roots, ['home:top1', 'home:hero1', 'home:grid1'])
+  assert.equal('from' in p.json, false)
+  const adds = Array.from({ length: 30 }, (_, i) => ({
+    op: 'add',
+    tree: T,
+    parent: 'homeroot',
+    index: i,
+    node: { id: `n${i}`, kind: 'column' },
+  }))
+  const r = await call('plan', { baseRevision: 0, ops: adds })
+  assert.equal(r.json.roots.length, 20)
+  assert.equal(r.json.more.roots, 10)
+})
+
+test('createdRoots lists a created node once and none of its created children', async () => {
+  const { call } = await starterSite()
+  const r = await call('apply', {
+    baseRevision: 0,
+    key: 'nest',
+    ops: [
+      {
+        op: 'add',
+        tree: T,
+        parent: 'homeroot',
+        index: 0,
+        node: {
+          id: 'outer',
+          kind: 'column',
+          children: [{ id: 'inner', kind: 'column' }],
+        },
+      },
+    ],
+  })
+  assert.deepEqual(r.json.roots, ['home:outer'])
+  assert.equal(r.json.counts.created, 2)
+})
+
+test('a cursor still pages the compact rows', async () => {
+  const shapes = Array.from({ length: 200 }, (_, i) => ({
+    id: `s${i}`,
+    kind: 'shape',
+    name: `Shape ${i}`,
+    slot: {},
+    // One brand stroke below the first section, so `no-accent` stays quiet and the rows are the 200 raw colours.
+    props: {
+      geometry: { type: 'rect' },
+      fill: '#ff0000',
+      ...(i === 1 ? { stroke: { color: 'brand', width: 1 } } : {}),
+    },
+  }))
+  const page = {
+    close: async () => {},
+    blocked: [] as string[],
+    errors: [] as string[],
+    setViewport: async () => {},
+    setScheme: async () => {},
+    setScripts: async () => {},
+    unblock: async () => {},
+    answer: async () => {},
+    goto: async () => ({ ok: true }),
+    screenshot: async () => new Uint8Array(),
+    evaluate: async (expr: string) => {
+      const m = /\)\(document, window, (\d+)\)$/.exec(expr)
+      if (m) return { width: +m[1]!, docWidth: +m[1]!, nodes: [], wide: [] }
+      return expr.includes('fonts.ready') ? true : []
+    },
+  }
+  const browser = {
+    version: 'Fake/1',
+    newPage: async () => page,
+    close: async () => {},
+  }
+  const { call } = await connect(siteWith(shapes as never), {
+    browser: browser as never,
+  })
+  const first = await call('measure', {})
+  assert.equal(first.error, false, JSON.stringify(first.json).slice(0, 300))
+  assert.equal(first.json.cut, true)
+  assert.ok(first.json.cursor)
+  assert.deepEqual(Object.keys(first.json.findings[0]).sort(), [
+    'at',
+    'check',
+    'fix',
+    'message',
+    'nodes',
+    'page',
+  ])
+  const rows = [...first.json.findings]
+  let next = first.json
+  while (next.cursor) {
+    next = (await call('measure', { cursor: next.cursor })).json
+    rows.push(...next.findings)
+  }
+  assert.equal(rows.length, 200)
+})
+
+test('the initialize result carries INSTRUCTIONS exactly', async () => {
+  const { client } = await connect(siteWith([text('t', 'Hi')]))
+  assert.equal(client.getInstructions(), INSTRUCTIONS)
+  assert.ok(
+    INSTRUCTIONS.startsWith(
+      'Culm builds a site from HTML/CSS, literal JSX or JSON',
+    ),
+  )
+  assert.ok(INSTRUCTIONS.endsWith('then move on.'))
+  assert.match(
+    INSTRUCTIONS,
+    /\{google:"Name",weights:\[400,700\]\}.*Iconify set:name\./,
+  )
+})
+
+test('INSTRUCTIONS and the last GUIDE row carry the one-pass rule', () => {
+  assert.match(INSTRUCTIONS, /Fix each finding once on each node;/)
+  assert.match(INSTRUCTIONS, /try the other way its fix names once/)
+  const last = GUIDE.at(-1)!
+  assert.match(last, /fix each finding once on each node;/)
+  assert.match(last, /try the other way its fix names once, then move on\.$/)
+  assert.doesNotMatch(GUIDE.join(' '), /textFill/)
+  assert.match(
+    GUIDE.join(' '),
+    /inner column with a max width needs slot align center, or it sits at the start/,
+  )
+})
+
+test('the catalogue description lists guide first', async () => {
+  const { client } = await connect(siteWith([text('t', 'Hi')]))
+  const t = (await client.listTools()).tools.find(x => x.name === 'catalogue')!
+  assert.match(
+    t.description!,
+    /what: guide \| kinds \| operations \| recipes \| blocks \| sources/,
+  )
+  const what = (t.inputSchema.properties as { what: { enum: string[] } }).what
+  assert.deepEqual(what.enum, [
+    'guide',
+    'kinds',
+    'operations',
+    'recipes',
+    'blocks',
+    'sources',
+  ])
 })

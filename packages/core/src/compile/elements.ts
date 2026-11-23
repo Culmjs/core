@@ -28,6 +28,7 @@ import {
   type Props,
 } from './elementsBase.ts'
 import { formElement } from './elementsForm.ts'
+import { shapeElement } from './elementsShape.ts'
 import { textElement } from './elementsText.ts'
 import { type HtmlNode } from './html.ts'
 import { href } from './links.ts'
@@ -47,6 +48,13 @@ export function triggerTargets(...trees: Node[]): Map<string, Node> {
         if (id) ids.add(id)
       }
       if (typeof w.props?.labelledBy === 'string') ids.add(w.props.labelledBy)
+      const anchor = (l: unknown) => {
+        if (isObj(l) && typeof l.url === 'string' && l.url.startsWith('#'))
+          ids.add(l.url.slice(1))
+      }
+      anchor(w.props?.link)
+      if (Array.isArray(w.props?.runs))
+        for (const r of w.props.runs) if (isObj(r)) anchor(r.link)
     })
   for (const t of trees)
     walk(t, w => void (ids.has(w.id) && found.set(w.id, w)))
@@ -293,6 +301,8 @@ function build(
     case 'field':
     case 'details':
       return formElement(b)
+    case 'shape':
+      return shapeElement(b)
     case 'divider':
       return { tag: 'hr', attrs }
     case 'table':
@@ -391,9 +401,14 @@ export function toElements(
   ctx: ElementCtx,
   parent: Kind | null = null,
 ): HtmlNode | null {
+  const targets = ctx.targets ?? triggerTargets(node)
   const inner: Inner = {
     ...ctx,
-    targets: ctx.targets ?? triggerTargets(node),
+    targets,
+    links: {
+      ...ctx.links,
+      fragment: id => (targets.has(id) && SAFE_ID.test(id) ? domId(id) : id),
+    },
     tabs: tabInfo(node, id => (SAFE_ID.test(id) ? domId(id) : undefined)),
   }
   return build(node, inner, parent, null, false)

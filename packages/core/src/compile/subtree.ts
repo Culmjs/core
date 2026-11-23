@@ -102,7 +102,7 @@ function pageWideCss(doc: SiteDocument, p: ReturnType<typeof prepare>): string {
     throw new Error('the page css does not end with its rules')
   const look = p.css.slice(0, p.css.length - p.rules.length)
   return (
-    fontFaceCss(fontsOf(doc, p.shell), p.fontBase) +
+    fontFaceCss(fontsOf(doc, p.shell), p.fontBase, p.fonts) +
     BASE_CSS +
     look +
     split(p.rules, new Set(p.classOf.values()), false)

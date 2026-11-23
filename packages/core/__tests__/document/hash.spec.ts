@@ -97,8 +97,8 @@ test('sha256 of "abc"', async () =>
     'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
   ))
 
-test('the six new codes come last, in order, and Problem takes op', () => {
-  assert.deepEqual(CODES.slice(-6), [
+test('the six new codes come in order, FETCH_FAILED last, and Problem takes op', () => {
+  assert.deepEqual(CODES.slice(-7, -1), [
     'REVISION_CONFLICT',
     'INVALID_OPERATION',
     'KEY_CONFLICT',
@@ -106,6 +106,7 @@ test('the six new codes come last, in order, and Problem takes op', () => {
     'UNSUPPORTED_CAPABILITY',
     'MEASUREMENT_INCOMPLETE',
   ])
+  assert.equal(CODES.at(-1), 'FETCH_FAILED')
   const p: Problem = { code: 'INVALID_OPERATION', message: 'm', op: 2 }
   assert.equal(p.op, 2)
 })

@@ -32,6 +32,7 @@ const STRUCTURE = new Set([
   'free',
   'divider',
   'icon',
+  'shape',
   'table',
   'table-row',
   'table-cell',

@@ -6,6 +6,7 @@ import {
   applySetting,
   createRegistry,
   insertBlock,
+  isAsInserted,
   readSettings,
 } from '../../src/registry/index.ts'
 import type { BlockDef, Setting, SettingFn } from '../../src/registry/index.ts'
@@ -232,4 +233,24 @@ test('a setting function gets a copy, so it cannot change the input', () => {
   assert.ok(out.ok)
   assert.equal(out.root.name, 'Mutated')
   assert.equal(root.name, 'Demo')
+})
+
+test('isAsInserted is true for an inserted block, also after setBlockSetting-style changes of its settings; false after a style change, and when origin.version is not the block version', () => {
+  const root = inserted()
+  assert.equal(isAsInserted(reg, root), true)
+  const t = applied(root, 'heading', 'Other words')
+  assert.equal(isAsInserted(reg, t), true)
+  const styled: Node = JSON.parse(JSON.stringify(root))
+  styled.style = { base: { gap: 3 } }
+  assert.equal(isAsInserted(reg, styled), false)
+  const old: Node = JSON.parse(JSON.stringify(root))
+  old.origin = { ...old.origin!, version: 0 }
+  assert.equal(isAsInserted(reg, old), false)
+  const gone: Node = JSON.parse(JSON.stringify(root))
+  gone.children = gone.children!.slice(0, -1)
+  assert.equal(isAsInserted(reg, gone), true)
+  const added: Node = JSON.parse(JSON.stringify(root))
+  added.children!.push({ id: 'x', kind: 'box', name: 'x', slot: {} })
+  assert.equal(isAsInserted(reg, added), false)
+  assert.equal(isAsInserted(reg, { ...root, origin: undefined }), false)
 })

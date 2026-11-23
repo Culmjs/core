@@ -1,0 +1,46 @@
+// The About page.
+{
+  "$schema": "../culm.schema.json",
+  "id": "about",
+  "title": "About",
+  "slug": "/about",
+  "on": true,
+  "inMenu": true,
+  "inFooter": true,
+  "icon": "",
+  "root": {
+    "id": "aboutroot",
+    "kind": "column",
+    "name": "Page",
+    "children": [
+      {
+        "block": "hero",
+        "look": "plain",
+        "id": "abouthero",
+        "title": "Our bakery",
+        "lead": "A small shop with one oven and a long habit of getting up early.",
+        "buttonLabel": "See the menu",
+        "buttonLink": { "page": "/menu" }
+      },
+      {
+        "block": "image-text",
+        "look": "image-left",
+        "id": "aboutstory",
+        "heading": "How we started",
+        "body": "We opened on a quiet street with one oven and one recipe for sourdough. The bread was good, the street told its friends, and the queue has not stopped since.",
+        "image": "counter.svg"
+      },
+      {
+        "block": "text-section",
+        "id": "aboutwork",
+        "heading": "How we work",
+        "body": "We mix the dough the evening before and let it rise slowly overnight. We bake in small batches, so what is on the counter is never more than a few hours old."
+      },
+      {
+        "use": "../pieces/visit-card.json",
+        "id": "aboutvisit",
+        "note": "Come and say hello"
+      }
+    ]
+  }
+}

@@ -1,0 +1,66 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { createRegistry, emptySite, type Data } from '@culmjs/core'
+import { memoryStore } from '@culmjs/core/ops'
+import starter, { LOOK } from '@culmjs/starter'
+import { createMcpServer } from '../../src/mcp/server.ts'
+
+const data: Data = { rows: {} }
+async function connect() {
+  const registry = createRegistry()
+  registry.use(starter)
+  const store = memoryStore({ s: emptySite('Ada', LOOK) })
+  const server = createMcpServer({ store, registry, site: 's', data })
+  const [a, b] = InMemoryTransport.createLinkedPair()
+  const client = new Client({ name: 'test', version: '0' })
+  await Promise.all([server.connect(b), client.connect(a)])
+  const call = async (name: string, args: Record<string, unknown> = {}) => {
+    const r = await client.callTool({ name, arguments: args })
+    return (r.content as { text: string }[])[0]!.text
+  }
+  return { client, call }
+}
+
+test('tools/list is byte-identical between two calls and between two servers', async () => {
+  const a = await connect()
+  const b = await connect()
+  const one = JSON.stringify(await a.client.listTools())
+  assert.equal(JSON.stringify(await a.client.listTools()), one)
+  assert.equal(JSON.stringify(await b.client.listTools()), one)
+})
+
+test('each catalogue list reply is byte-identical at revisions 0 and 1 of a site whose first page did not change; the starter blocks list is at most 1,500 characters', async () => {
+  const { call } = await connect()
+  const before = {} as Record<string, string>
+  for (const what of [
+    'guide',
+    'kinds',
+    'operations',
+    'recipes',
+    'blocks',
+    'sources',
+  ])
+    before[what] = await call('catalogue', { what })
+  assert.ok(before.blocks!.length <= 1500, `${before.blocks!.length}`)
+  const r = JSON.parse(
+    await call('apply', {
+      baseRevision: 0,
+      key: 'k1',
+      ops: [{ op: 'setSite', name: 'Other' }],
+    }),
+  )
+  assert.equal(r.revision, 1)
+  for (const what of Object.keys(before))
+    assert.equal(await call('catalogue', { what }), before[what], what)
+})
+
+// Decision 13: the 2d `catalogue operations` reply, 10,500 characters, is the whole first read.
+test('the five list replies guide, kinds, operations, recipes and blocks on the starter registry total at most 10,500 characters', async () => {
+  const { call } = await connect()
+  let total = 0
+  for (const what of ['guide', 'kinds', 'operations', 'recipes', 'blocks'])
+    total += (await call('catalogue', { what })).length
+  assert.ok(total <= 10500, `${total}`)
+})

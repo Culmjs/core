@@ -87,11 +87,17 @@ export type CoreKind =
   | 'details'
   | 'embed'
   | 'instance'
+  | 'shape'
 /** A core kind, or the name of a kind a plug-in adds. */
 export type Kind = CoreKind | (string & {})
 export type Size =
   'fit' | 'fill' | { n: number; unit: 'px' | '%' | 'ch' | 'vh' | 'vw' }
 /** top, right, bottom, left */
+export type SideBorder = {
+  width: number
+  color: Color
+  style?: 'solid' | 'dashed' | 'dotted' | 'double'
+}
 export type Box4 = number | [number, number, number, number]
 export type Color =
   | `#${string}`
@@ -110,7 +116,8 @@ export type Color =
   | 'accentSoft'
   | { style: string }
 /** A length in px, or a named step of the site's spacing scale. */
-export type Space = number | { step: keyof SiteStyles['space'] }
+export type Space =
+  number | { step: keyof SiteStyles['space'] } | { n: number; unit: '%' }
 export type SpaceBox = Space | [Space, Space, Space, Space]
 /** Named colours, text styles, spacing steps and shadows kept on the site; every style field can point at them. */
 export type SiteStyles = {
@@ -145,7 +152,11 @@ export type SiteStyles = {
   /** Site styles › Motion: absent is Smooth; "off" leaves the default motion out. A block's own motion stays either way. */
   motion?: 'off'
   /** The allowed text size in px: every text size in the document lies inside it. Absent: no size rule. */
-  textRange?: { min: number; max: number }
+  textRange?: {
+    min: number
+    max: number
+    /** Opt-in H1/H2 display scale, with tighter default leading and tracking. */ displayMax?: number
+  }
 }
 /** a FileRef id */
 export type AssetId = string
@@ -200,11 +211,17 @@ export type Decl = Partial<{
   color: Color
   border: {
     width: number
-    style: 'solid' | 'dashed' | 'dotted' | 'double'
+    style?: 'solid' | 'dashed' | 'dotted' | 'double'
     color: Color
     sides?: ('top' | 'right' | 'bottom' | 'left')[]
   }
-  radius: number | Box4 | { n: number; unit: '%' }
+  borderTop: SideBorder
+  borderRight: SideBorder
+  borderBottom: SideBorder
+  borderLeft: SideBorder
+  borderWidth: number | [number, number, number, number]
+  borderColor: Color
+  radius: Box4 | { n: Box4; unit: '%' }
   shadow:
     | 'soft'
     | 'strong'
@@ -251,6 +268,8 @@ export type Decl = Partial<{
   grain: number
   // The footer's top block only, live pages only. The footer is pinned to the bottom of the window behind the page, which scrolls away to uncover it (CSS only).
   reveal: boolean
+  // The header's top blocks only, live pages only. At 901 px and wider the header is a left column of this many px (160 to 480) beside the page and footer; narrower it stays a bar on top (CSS only).
+  side: number
   order: number
   float: 'start' | 'end'
   sticky: 'top'
@@ -292,7 +311,7 @@ export type Decl = Partial<{
   }
   // Appears only once the page has scrolled this many viewport heights (10 to 400), where the browser supports scroll-driven animation; elsewhere, and for reduced motion, always shown.
   appearAfter: number
-  fluidSize: { min: number; max: number }
+  fluidSize: { min: number; max: number; vw?: number }
   textColumns: number
   clampLines: number
   balance: boolean
@@ -380,7 +399,10 @@ export type FlowSlot = {
   align?: 'start' | 'center' | 'end' | 'stretch'
 }
 export type GridSlot = { cols?: number; rows?: number }
-export type Slot = FreeSlot | FlowSlot | GridSlot | Record<string, never>
+/** A shape inside a group: its box in the group's `view` units. */
+export type ShapeSlot = { x: number; y: number; w: number; h: number }
+export type Slot =
+  FreeSlot | FlowSlot | GridSlot | ShapeSlot | Record<string, never>
 
 /** `outer: 0` (or omitted) is the current item; 1 is its enclosing item. `site` reads from the values the caller supplies, by dotted field name. */
 export type Ref = { from: 'item' | 'site'; field: string; outer?: number }
@@ -479,7 +501,40 @@ export type Pattern = {
 export type FxValue = {
   [k: string]: string | number | boolean | string[] | undefined
 }
+/** What a shape draws (props.geometry). Absent optional fields take the defaults the compiler states. `view` is the proportion (rect, ellipse, line) or the drawing's own size (path, group). */
+export type ShapeGeometry =
+  | {
+      type: 'rect'
+      radius?: number | [number, number, number, number]
+      view?: [number, number]
+    }
+  | { type: 'ellipse'; view?: [number, number] }
+  | { type: 'polygon'; sides: number; rotate?: number }
+  | { type: 'star'; points: number; inner: number; rotate?: number }
+  | {
+      type: 'line'
+      from: [number, number]
+      to: [number, number]
+      view?: [number, number]
+    }
+  | { type: 'blob'; seed: number; smooth?: number; points?: number }
+  | { type: 'path'; d: string; view?: [number, number] }
+  | {
+      type: 'group'
+      view?: [number, number]
+      combine?: 'layer' | 'union' | 'subtract'
+    }
+export type ShapePaint =
+  Color | { from: Color; to: Color; angle?: number } | 'none'
+export type ShapeStroke = {
+  color: Color
+  width: number
+  dash?: [number, number]
+}
 export type PropValue =
+  | ShapeGeometry
+  | ShapePaint
+  | ShapeStroke
   | string
   | number
   | boolean
@@ -602,4 +657,6 @@ export type SiteDocument = {
   styles?: SiteStyles
   look: Look
   languages?: Language[]
+  /** True: a block with a max width and no slot align of its own centres in its parent (like `margin-inline:auto`). Absent: it sits at the start, as sites made before it do. */
+  centreMaxWidth?: boolean
 }

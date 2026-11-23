@@ -2,7 +2,13 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Layout, Node, SiteDocument } from '../../src/document/index.ts'
 import type { Problem } from '../../src/document/problems.ts'
-import { findingKey, runChecks, THRESHOLDS } from '../../src/measure/checks.ts'
+import {
+  FIX,
+  findingKey,
+  runChecks,
+  THRESHOLDS,
+} from '../../src/measure/checks.ts'
+import { RECIPES } from '../../src/ops/recipes.ts'
 import type {
   ContrastRaw,
   Finding,
@@ -10,6 +16,7 @@ import type {
   MeasuredBox,
   NodeRaw,
 } from '../../src/measure/types.ts'
+import { search } from '../../src/ops/read.ts'
 import { node, sampleRegistry, siteWith, text } from '../kit.ts'
 
 type Box = MeasuredBox
@@ -37,7 +44,17 @@ const layout = (
 ): LayoutRaw => ({ layout: l, width, docWidth, nodes, wide })
 const heading = (id: string, words: string, level = 'h2') =>
   text(id, words, { props: { level, runs: [{ text: words }] } })
-type Kind = 'row' | 'column' | 'box' | 'text' | 'button' | 'list' | 'instance'
+type Kind =
+  | 'row'
+  | 'column'
+  | 'box'
+  | 'text'
+  | 'button'
+  | 'list'
+  | 'instance'
+  | 'shape'
+  | 'menu'
+  | 'form'
 const w = (
   kind: Kind,
   id: string,
@@ -449,7 +466,7 @@ test('a paragraph with lines over 90 characters on desktop is a line-length find
   const at = (longest: number) => [
     nr('p', b(80, 0, 1120, 100), {
       tag: 'p',
-      text: { lines: 3, longest, size: 16, weight: 400 },
+      text: { lines: 3, longest, last: longest, size: 16, weight: 400 },
     }),
   ]
   const f = run([layout('desktop', 1280, at(120))], root)
@@ -875,7 +892,7 @@ test('fonts: false is carried into every finding of the call', () => {
   )
 })
 
-test('the thresholds keep their old values', () => {
+test('the thresholds keep their old values, and add the design ones', () => {
   assert.deepEqual(THRESHOLDS, {
     align: 4,
     symmetry: 4,
@@ -888,6 +905,26 @@ test('the thresholds keep their old values', () => {
     contrastLarge: 3,
     largePx: 24,
     largeBoldPx: 19,
+    shapeParts: 16,
+    shapePath: 3000,
+    accentHue: 20,
+    accentText: 20,
+    chroma: 32,
+    stripeSide: 2,
+    stripeFlat: 3,
+    stripeEdge: [3, 12],
+    emojiCount: 3,
+    stretchShare: 0.8,
+    stretchMin: 280,
+    stretchLabel: 2.5,
+    charEm: 0.55,
+    heroInk: 0.75,
+    heroOut: 0.25,
+    visualArea: 0.04,
+    coverShare: 0.9,
+    orphanShare: 0.25,
+    gutter: 56,
+    longForm: 0.7,
   })
 })
 
@@ -940,4 +977,1064 @@ test('an overflow inside the header and inside a component instance is found, wi
     g.filter(x => x.check === 'overflow').map(x => x.nodes),
     [['inst.cr.title']],
   )
+})
+
+// Task 4: shape findings and `fix`.
+const shapeNode = (
+  id: string,
+  props: Record<string, unknown>,
+  more: Partial<Node> = {},
+  children?: Node[],
+): Node =>
+  ({
+    id,
+    kind: 'shape',
+    name: id,
+    slot: {},
+    props,
+    ...(children ? { children } : {}),
+    ...more,
+  }) as Node
+const rect = { geometry: { type: 'rect' } }
+const req = (id: string, words: string, more: Partial<Node> = {}): Node => ({
+  ...heading(id, words),
+  required: true,
+  ...more,
+})
+const textBox = (id: string, bx: Box) =>
+  nr(id, bx, {
+    tag: 'h2',
+    text: { lines: 1, longest: 10, last: 10, size: 24, weight: 700 },
+  })
+
+test('a front shape over a required heading is shape-covers at each layout where the boxes meet, and not where they do not', () => {
+  const root = page(
+    req('h', 'Welcome'),
+    shapeNode('s', rect, { placement: { mode: 'front' } }),
+  )
+  const at = (l: Layout, wd: number, sx: number) =>
+    layout(l, wd, [
+      textBox('h', b(0, 0, 200, 40)),
+      nr('s', b(sx, 10, 100, 100)),
+    ])
+  const f = run(
+    [at('desktop', 1280, 50), at('tablet', 834, 50), at('phone', 390, 400)],
+    root,
+  )
+  assert.deepEqual(only(f, 'shape-covers'), [
+    [2, 1280, ['s', 'h']],
+    [2, 834, ['s', 'h']],
+  ])
+})
+
+test('the same shape behind, or over a text that is not required, gives no shape-covers', () => {
+  const boxes = [textBox('h', b(0, 0, 200, 40)), nr('s', b(50, 10, 100, 100))]
+  const behind = page(
+    req('h', 'Welcome'),
+    shapeNode('s', rect, { placement: { mode: 'behind' } }),
+  )
+  assert.deepEqual(
+    only(run([layout('desktop', 1280, boxes)], behind), 'shape-covers'),
+    [],
+  )
+  const loose = page(
+    heading('h', 'Welcome'),
+    shapeNode('s', rect, { placement: { mode: 'front' } }),
+  )
+  assert.deepEqual(
+    only(run([layout('desktop', 1280, boxes)], loose), 'shape-covers'),
+    [],
+  )
+})
+
+test('a text inside a required column counts as required', () => {
+  const root = page(
+    w('column', 'c', [heading('h', 'Welcome')], { required: true }),
+    shapeNode('s', rect, { placement: { mode: 'front' } }),
+  )
+  const f = run(
+    [
+      layout('desktop', 1280, [
+        nr('c', b(0, 0, 300, 60)),
+        textBox('h', b(0, 0, 200, 40)),
+        nr('s', b(50, 10, 100, 100)),
+      ]),
+    ],
+    root,
+  )
+  assert.deepEqual(only(f, 'shape-covers'), [[2, 1280, ['s', 'h']]])
+})
+
+test('a root shape of 17 parts, or with 3,001 characters of path, is one shape-complex finding at 1280 light; 16 and 3,000 are not', () => {
+  const parts = (n: number) =>
+    shapeNode(
+      'g',
+      { geometry: { type: 'group' } },
+      {},
+      Array.from({ length: n }, (_, i) => shapeNode(`p${i}`, rect)),
+    )
+  const path = (n: number) =>
+    shapeNode('p', { geometry: { type: 'path', d: 'M'.padEnd(n, '0') } })
+  const found = (n: Node) =>
+    only(run([layout('desktop', 1280, [])], page(n)), 'shape-complex')
+  assert.deepEqual(found(parts(17)), [[2, 1280, ['g']]])
+  assert.deepEqual(found(parts(16)), [])
+  assert.deepEqual(found(path(3001)), [[2, 1280, ['p']]])
+  assert.deepEqual(found(path(3000)), [])
+  assert.equal(THRESHOLDS.shapeParts, 16)
+  assert.equal(THRESHOLDS.shapePath, 3000)
+})
+
+test('a shape with a #ff0000 fill, gradient stop or stroke is one raw-colour finding; site colours give none', () => {
+  const found = (props: Record<string, unknown>) =>
+    only(
+      run(
+        [layout('desktop', 1280, [])],
+        page(shapeNode('s', { ...rect, ...props })),
+      ),
+      'raw-colour',
+    )
+  const one1 = [[2, 1280, ['s']]]
+  assert.deepEqual(found({ fill: '#ff0000' }), one1)
+  assert.deepEqual(found({ fill: { from: 'brand', to: '#ff0000' } }), one1)
+  assert.deepEqual(
+    found({ fill: '#ff0000', stroke: { color: '#00ff00', width: 2 } }),
+    one1,
+  )
+  assert.deepEqual(found({ stroke: { color: '#00ff00', width: 2 } }), one1)
+  assert.deepEqual(
+    found({ fill: 'brand', stroke: { color: 'ink', width: 2 } }),
+    [],
+  )
+})
+
+test('every class 2 finding carries the fix of decision 11', () => {
+  const root = page(
+    w('box', 'a'),
+    w('box', 'b'),
+    heading('h', 'Hi'),
+    shapeNode(
+      's',
+      { ...rect, fill: '#ff0000' },
+      { placement: { mode: 'front' } },
+    ),
+  )
+  const f = run(
+    [
+      layout(
+        'phone',
+        390,
+        [
+          nr('a', b(0, 0, 500, 300)),
+          nr('b', b(100, 100, 100, 100), { tap: { w: 30, h: 30 } }),
+          textBox('h', b(0, 0, 10, 10)),
+        ],
+        [{ id: 'a', by: 110 }],
+        500,
+      ),
+    ],
+    root,
+    {
+      contrast: [
+        {
+          id: 'h',
+          scheme: 'light',
+          width: 390,
+          ratio: 2,
+          large: false,
+          sampled: false,
+        },
+      ],
+    },
+  )
+  const FIX: Record<string, string> = {
+    'off-screen': 'Let it wrap, or give it a smaller width on phone.',
+    overflow: 'Let its row wrap, or shrink it to fit its parent.',
+    'h-scroll':
+      'Find the widest block at this width and let it wrap or shrink.',
+    overlap: 'Space the two blocks apart, or place one behind.',
+    'tap-target': 'Give it at least 44 px each way, with padding.',
+    contrast: 'Use a site colour with more contrast, or change the background.',
+    'shape-covers': 'Place the shape behind, or move it off the text.',
+    'shape-complex': 'Use a preset geometry or fewer parts.',
+    'raw-colour': 'Use a site colour by name, so dark mode follows.',
+    'no-accent':
+      'Use the brand colour once below the hero: on a large heading, a divider, a short bar above a heading, or a button.',
+  }
+  const seen = new Set<string>()
+  for (const x of f) {
+    if (x.class !== 2) continue
+    seen.add(x.check)
+    assert.equal(x.fix, FIX[x.check], x.check)
+  }
+  for (const c of ['off-screen', 'h-scroll', 'tap-target', 'contrast'])
+    assert.ok(seen.has(c), c)
+  for (const x of f) if (x.class !== 2) assert.equal(x.fix, undefined)
+  const o = run(
+    [
+      layout('desktop', 1280, [
+        nr('a', b(0, 0, 100, 100)),
+        nr('b', b(50, 50, 100, 100)),
+      ]),
+    ],
+    page(w('box', 'a'), w('box', 'b')),
+  )
+  assert.equal(one(o, 'overlap').fix, FIX.overlap)
+})
+
+test('a labelled shape has no text in the probe and is not found by search text', () => {
+  const root = page(
+    req('h', ''),
+    shapeNode('s', { ...rect, label: 'Welcome' }, { name: 'Wave' }),
+  )
+  const hits = search({ doc: docOf(root), revision: 1 }, { text: 'Welcome' })
+  assert.ok(hits.ok)
+  assert.deepEqual(
+    hits.rows.filter(r => r.kind === 'shape'),
+    [],
+  )
+})
+
+// Document design findings: no-accent and the AI tells.
+const hsl = (h: number) => {
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12
+    return Math.round(
+      255 * (0.5 - 0.35 * Math.max(-1, Math.min(k - 3, 9 - k, 1))),
+    )
+  }
+  return `#${[f(0), f(8), f(4)].map(x => x.toString(16).padStart(2, '0')).join('')}`
+}
+const DOC_FIND = [
+  'no-accent',
+  'starter-chrome',
+  'side-stripe',
+  'gradient-text',
+  'glow',
+  'emoji-icon',
+]
+const designOf = (root: Node, more: Partial<SiteDocument> = {}) =>
+  run([], root, { doc: docOf(root, more) }).filter(f =>
+    DOC_FIND.includes(f.check),
+  )
+const sect = (
+  id: string,
+  base: Record<string, unknown> = {},
+  kids: Node[] = [],
+) =>
+  w('column', id, [heading(`${id}h`, 'Words'), ...kids], {
+    style: { base },
+  } as Partial<Node>)
+const plain = (...extra: Node[]) =>
+  page(sect('s1'), sect('s2'), sect('s3'), ...extra)
+const kinds = (f: Finding[]) => f.map(x => x.check)
+const BORDER = (width: number, color: string, side: string) => ({
+  border: { width, style: 'solid', color, sides: [side] },
+})
+const card = (base: Record<string, unknown>, id = 'card') =>
+  page(
+    sect('s1'),
+    sect('s2', {}, [
+      w('box', id, [text(`${id}t`, 'hi')], {
+        style: { base },
+      } as Partial<Node>),
+    ]),
+  )
+
+test('no-accent fires on a page whose sections below the first and footer carry no accent paint; nodes [root]', () => {
+  const f = designOf(plain())
+  assert.deepEqual(only(f, 'no-accent'), [[2, 1280, ['root']]])
+  assert.equal(one(f, 'no-accent').fix?.includes('brand colour'), true)
+})
+
+test('no-accent clears with a brand bg block, a 2 px brand border, a shape with no fill, or a brand h2; not with a brand 16 px p or a brand menu', () => {
+  const base = (b: Record<string, unknown>, kids: Node[] = []) =>
+    page(sect('s1'), sect('s2', b, kids), sect('s3'))
+  const clears = (r: Node) => assert.deepEqual(kinds(designOf(r)), [])
+  clears(base({ bg: 'brand' }))
+  clears(base({ border: { width: 2, style: 'solid', color: 'brand' } }))
+  clears(
+    base({}, [
+      w('shape', 'sh', undefined, { props: { geometry: { type: 'rect' } } }),
+    ]),
+  )
+  clears(
+    base({}, [
+      text('h', 'Hello', {
+        props: { level: 'h2', runs: [{ text: 'Hello' }] },
+        style: { base: { color: 'brand' } },
+      }),
+    ]),
+  )
+  const fires = (r: Node) => assert.deepEqual(kinds(designOf(r)), ['no-accent'])
+  fires(
+    base({}, [
+      text('p', 'Body', { style: { base: { color: 'brand', size: 16 } } }),
+    ]),
+  )
+  fires(
+    base({}, [
+      w('menu', 'm', undefined, {
+        style: { base: { color: 'brand', size: 30 } },
+      }),
+    ]),
+  )
+  fires(base({ border: { width: 1, style: 'solid', color: 'brand' } }))
+})
+
+test('a site colour within 20 degrees of the brand hue counts as accent; 21 degrees does not; look.accent equal to ink stands down', () => {
+  const brandHue = 217.5
+  const tint = (deg: number) =>
+    page(sect('s1'), sect('s2', { bg: hsl(brandHue + deg) }), sect('s3'))
+  assert.deepEqual(kinds(designOf(tint(19))), [])
+  assert.deepEqual(kinds(designOf(tint(-19))), [])
+  assert.deepEqual(kinds(designOf(tint(22))), ['no-accent'])
+  assert.deepEqual(kinds(designOf(tint(-22))), ['no-accent'])
+  const look = { ...docOf(plain()).look, accent: '#111111' as const }
+  assert.deepEqual(kinds(designOf(plain(), { look })), [])
+})
+
+test('a page with one section gives no no-accent', () => {
+  assert.deepEqual(kinds(designOf(page(sect('s1')))), [])
+})
+
+test('side-stripe: left 2 px brand border on a card fires; 1 px, a line-coloured side, a full border, a page section and a button do not; radius 0 needs 3 px', () => {
+  const fires = (base: Record<string, unknown>, n = 1) =>
+    assert.equal(
+      kinds(designOf(card(base))).filter(c => c === 'side-stripe').length,
+      n,
+    )
+  fires({ radius: 8, ...BORDER(2, 'brand', 'left') })
+  fires({ radius: 8, ...BORDER(1, 'brand', 'left') }, 0)
+  fires({ radius: 8, ...BORDER(2, 'line', 'left') }, 0)
+  fires({ radius: 8, border: { width: 2, style: 'solid', color: 'brand' } }, 0)
+  fires({ radius: 0, ...BORDER(2, 'brand', 'left') }, 0)
+  fires({ radius: 0, ...BORDER(3, 'brand', 'left') })
+  fires({ radius: 8, ...BORDER(2, 'brand', 'right') })
+  const sec = page(
+    sect('s1'),
+    sect('s2', { radius: 8, ...BORDER(4, 'brand', 'left') }),
+  )
+  assert.equal(kinds(designOf(sec)).includes('side-stripe'), false)
+  const btn = sect('s2', {}, [
+    w('button', 'b', undefined, {
+      style: { base: { radius: 8, ...BORDER(4, 'brand', 'left') } },
+    } as Partial<Node>),
+  ])
+  assert.equal(
+    kinds(designOf(page(sect('s1'), btn))).includes('side-stripe'),
+    false,
+  )
+})
+
+test('side-stripe top or bottom fires at 3 to 12 px on a block with bg or radius, not at 2 or 13', () => {
+  const at = (width: number, extra: Record<string, unknown>) =>
+    kinds(
+      designOf(card({ ...extra, ...BORDER(width, 'brand', 'top') })),
+    ).includes('side-stripe')
+  assert.equal(at(3, { bg: 'bg' }), true)
+  assert.equal(at(12, { radius: 6 }), true)
+  assert.equal(at(2, { radius: 6 }), false)
+  assert.equal(at(13, { radius: 6 }), false)
+  assert.equal(at(4, {}), false)
+})
+
+test('gradient-text fires on a text or a button with textFill at any layout', () => {
+  const fill = { from: 'brand', to: 'ink', angle: 90 }
+  const t = text('g', 'Loud', {
+    style: { phone: { textFill: fill } },
+  } as Partial<Node>)
+  const bt = w('button', 'gb', undefined, {
+    style: { base: { textFill: fill } },
+  } as Partial<Node>)
+  const f = designOf(page(sect('s1'), sect('s2', {}, [t, bt])))
+  assert.deepEqual(
+    only(f, 'gradient-text').map(x => x[2]),
+    [['g'], ['gb']],
+  )
+})
+
+test('glow fires on look.shadow glow (nodes []) and on a zero-offset blurred brand shadow; a soft offset shadow and a zero-offset grey one do not', () => {
+  const look = { ...docOf(plain()).look, shadow: 'glow' as const }
+  assert.deepEqual(only(designOf(plain(), { look }), 'glow'), [[2, 1280, []]])
+  const sh = (s: unknown) =>
+    only(designOf(card({ shadow: s })), 'glow').map(x => x[2])
+  assert.deepEqual(sh({ x: 0, y: 0, blur: 24, spread: 0, color: 'brand' }), [
+    ['card'],
+  ])
+  assert.deepEqual(sh({ x: 0, y: 4, blur: 24, spread: 0, color: 'brand' }), [])
+  assert.deepEqual(
+    sh({ x: 0, y: 0, blur: 24, spread: 0, color: '#888888' }),
+    [],
+  )
+  assert.deepEqual(sh('soft'), [])
+  const tx = designOf(
+    card({ textShadow: { x: 0, y: 0, blur: 8, color: '#ff00aa' } }),
+  )
+  assert.deepEqual(
+    only(tx, 'glow').map(x => x[2]),
+    [['card']],
+  )
+})
+
+test('emoji-icon fires on a text whose words are only emoji and on each text of a page with 3 emoji; two emoji in a sentence do not', () => {
+  const t = (id: string, words: string) => text(id, words)
+  const on = (...ts: Node[]) =>
+    only(designOf(page(sect('s1'), sect('s2', {}, ts))), 'emoji-icon').map(
+      x => x[2],
+    )
+  assert.deepEqual(on(t('a', '🚀 ✨')), [['a']])
+  assert.deepEqual(on(t('a', 'Fast 🚀 and new ✨')), [])
+  assert.deepEqual(on(t('a', 'Fast 🚀'), t('b', 'New ✨'), t('c', 'Hot 🔥')), [
+    ['a'],
+    ['b'],
+    ['c'],
+  ])
+  assert.deepEqual(on(t('a', 'Fast 🚀'), t('b', 'New ✨')), [])
+})
+
+test('each design finding is class 2 and carries the fix of decision 14', () => {
+  const look = { ...docOf(plain()).look, shadow: 'glow' as const }
+  const fill = { from: 'brand', to: 'ink', angle: 90 }
+  const r = page(
+    sect('s1'),
+    sect('s2', {}, [
+      text('g', '🚀', { style: { base: { textFill: fill } } } as Partial<Node>),
+      w('box', 'c', [], {
+        style: { base: { radius: 6, ...BORDER(3, 'brand', 'left') } },
+      } as Partial<Node>),
+    ]),
+  )
+  const f = designOf(r, { look })
+  assert.deepEqual([...new Set(kinds(f))].sort(), [
+    'emoji-icon',
+    'glow',
+    'gradient-text',
+    'side-stripe',
+  ])
+  for (const x of f) {
+    assert.equal(x.class, 2)
+    assert.ok(x.fix && x.fix.length > 20, x.check)
+  }
+  assert.equal(
+    one(f, 'glow').fix,
+    'Use a shadow with an offset, such as soft, or none.',
+  )
+})
+
+test('document design rows come once per direction at 1280 light, the same in ltr and rtl', () => {
+  const r = page(sect('s1'), sect('s2', {}, [text('g', '🚀')]), sect('s3'))
+  const rows = (dir: 'ltr' | 'rtl') =>
+    run([], r, { doc: docOf(r), dir })
+      .filter(f => DOC_FIND.includes(f.check))
+      .map(f => [f.check, f.width, f.theme, f.nodes, f.observed])
+  assert.deepEqual(rows('ltr'), rows('rtl'))
+  assert.ok(rows('ltr').length >= 2)
+  assert.ok(rows('ltr').every(x => x[1] === 1280 && x[2] === 'light'))
+  const all = run([layout('desktop', 1280, []), layout('phone', 390, [])], r, {
+    doc: docOf(r),
+  })
+  assert.equal(all.filter(f => f.check === 'no-accent').length, 1)
+})
+
+// ---- probe design findings (stage 3b task 3)
+const tx = (
+  id: string,
+  box: Box,
+  more: Partial<NodeRaw> = {},
+  lines = 1,
+  size = 16,
+): NodeRaw =>
+  nr(id, box, {
+    tag: 'p',
+    text: { lines, longest: 20, last: 10, size, weight: 400 },
+    ...more,
+  })
+const desk = (nodes: NodeRaw[], width = 1280) =>
+  layout(width === 1280 ? 'desktop' : 'tablet', width, nodes)
+const ids = (f: Finding[], check: string) =>
+  f.filter(x => x.check === check).map(x => x.nodes.join())
+
+test('stretched-button: 1120 px for a 12-character label at 1280 fires; at 390 not; inside a form not; 279 px not; 0.79 of the parent not', () => {
+  const btn = () =>
+    w('button', 'b', undefined, { props: { label: 'Visit a shop' } })
+  const at = (tapW: number, parentW: number, lw = 1280) => {
+    const nodes = [
+      nr('c', b(80, 0, parentW, 100)),
+      tx('b', b(80, 0, tapW, 48), { tap: { w: tapW, h: 48 } }),
+    ]
+    return layout(
+      lw === 390 ? 'phone' : lw === 1280 ? 'desktop' : 'tablet',
+      lw,
+      nodes,
+    )
+  }
+  const root = (inner: Node) => page(w('column', 'c', [inner]))
+  const f = run([at(1120, 1120)], root(btn()))
+  const hit = one(f, 'stretched-button')
+  assert.deepEqual(hit.nodes, ['b'])
+  assert.equal(hit.observed, 1120)
+  assert.equal(hit.class, 2)
+  assert.equal(
+    hit.fix,
+    'Set its slot align to start or center, or its width to fit, so it is as wide as its label (recipe buttons).',
+  )
+  assert.equal(
+    only(run([at(700, 700, 834)], root(btn())), 'stretched-button').length,
+    1,
+  )
+  assert.deepEqual(
+    only(run([at(300, 300, 390)], root(btn())), 'stretched-button'),
+    [],
+  )
+  assert.deepEqual(
+    only(
+      run([at(1120, 1120)], page(w('form', 'c', [btn()]))),
+      'stretched-button',
+    ),
+    [],
+  )
+  assert.deepEqual(
+    only(run([at(279, 279)], root(btn())), 'stretched-button'),
+    [],
+  )
+  assert.deepEqual(
+    only(run([at(1185, 1500)], root(btn())), 'stretched-button'),
+    [],
+  )
+})
+
+/** A header 'hd' with one text 'hl', and two sections with one text each, at the given left edges. */
+const edges = (
+  header: [number, number],
+  secs: [number, number],
+  width = 1280,
+) => {
+  const root = page(
+    w('column', 's1', [text('t1', 'One')]),
+    w('column', 's2', [text('t2', 'Two')]),
+  )
+  const doc = docOf(root, {
+    header: w('row', 'hd', [text('hl', 'Logo')]),
+  })
+  const nodes = [
+    nr('root', b(0, 100, width, 600)),
+    nr('s1', b(0, 100, width, 200)),
+    tx('t1', b(secs[0], 100, 300, 40)),
+    nr('s2', b(0, 300, width, 200)),
+    tx('t2', b(secs[1], 300, 300, 40)),
+    nr('hd', b(0, 0, width, 60)),
+    tx('hl', b(header[0], 10, header[1], 40)),
+  ]
+  return { doc, nodes, root }
+}
+
+test('header-edge: header ink at 16 against sections at 32 fires at 1280 and 834; 35 does not; a centred header does not; one section sharing no edge skips', () => {
+  const go = (header: [number, number], secs: [number, number]) => {
+    const e = edges(header, secs)
+    const e2 = edges(header, secs, 834)
+    return run([desk(e.nodes), desk(e2.nodes, 834)], e.root, { doc: e.doc })
+  }
+  const f = go([16, 200], [32, 32])
+  assert.deepEqual(
+    f
+      .filter(x => x.check === 'header-edge')
+      .map(x => [x.width, x.nodes, x.observed]),
+    [
+      [1280, ['hd'], 16],
+      [834, ['hd'], 16],
+    ],
+  )
+  assert.equal(
+    one(
+      f.filter(x => x.width === 1280),
+      'header-edge',
+    ).fix,
+    'Give it the side padding of the sections, or hold its content in a centred column with their max width.',
+  )
+  assert.deepEqual(ids(go([35, 200], [32, 32]), 'header-edge'), [])
+  const c = edges([490, 300], [32, 32])
+  assert.deepEqual(
+    ids(run([desk(c.nodes)], c.root, { doc: c.doc }), 'header-edge'),
+    [],
+  )
+  assert.deepEqual(ids(go([16, 200], [32, 40]), 'header-edge'), [])
+})
+
+test('header-edge in rtl compares right edges', () => {
+  // sections end at 1248; the header text starts where they do and ends at 1264
+  const e = edges([948, 316], [948, 948])
+  assert.deepEqual(
+    ids(
+      run([desk(e.nodes)], e.root, { doc: e.doc, dir: 'rtl' }),
+      'header-edge',
+    ),
+    ['hd'],
+  )
+  assert.deepEqual(
+    ids(run([desk(e.nodes)], e.root, { doc: e.doc }), 'header-edge'),
+    [],
+  )
+})
+
+test('the footer is judged as the header is', () => {
+  const root = page(
+    w('column', 's1', [text('t1', 'One')]),
+    w('column', 's2', [text('t2', 'Two')]),
+  )
+  const doc = docOf(root, { footer: w('row', 'ft', [text('fl', 'Foot')]) })
+  const nodes = [
+    nr('s1', b(0, 100, 1280, 200)),
+    tx('t1', b(32, 100, 300, 40)),
+    nr('s2', b(0, 300, 1280, 200)),
+    tx('t2', b(32, 300, 300, 40)),
+    nr('ft', b(0, 600, 1280, 60)),
+    tx('fl', b(16, 610, 200, 40)),
+  ]
+  assert.deepEqual(ids(run([desk(nodes)], root, { doc }), 'header-edge'), [
+    'ft',
+  ])
+})
+
+test('hero-bare: text ink 54% of the column with nothing on the right fires; a shape on the right of 4% area clears; a full-cover behind shape does not; bgImage clears; no h1 in secs[0] skips', () => {
+  const hero = (kids: Node[], more: Partial<Node> = {}) =>
+    page(
+      w('column', 's1', [heading('h', 'Welcome', 'h1'), ...kids], more),
+      w('column', 's2', [text('t2', 'x')]),
+    )
+  const base = [
+    nr('s1', b(0, 0, 1280, 600), { bg: '#fafafa' }),
+    tx('h', b(80, 100, 604, 80), { tag: 'h1' }),
+    nr('s2', b(0, 600, 1280, 100)),
+    tx('t2', b(80, 600, 300, 40)),
+  ]
+  const shape = (id: string, box: Box, mode?: 'behind') =>
+    w('shape', id, undefined, {
+      props: { geometry: { type: 'rect' } },
+      ...(mode ? { placement: { mode } } : {}),
+    })
+  const f = run([desk(base)], hero([]))
+  const hit = one(f, 'hero-bare')
+  assert.deepEqual(hit.nodes, ['s1'])
+  assert.equal(hit.observed, '54%')
+  assert.equal(
+    hit.fix,
+    'Give the hero a visual on its empty side: an image, shapes placed on that side, or a split into two columns (recipe hero).',
+  )
+  // a shape on the right: 300 x 104 is 4.06% of the 1280 x 600 section
+  assert.deepEqual(
+    ids(
+      run(
+        [desk([...base, nr('sh', b(780, 100, 300, 104))])],
+        hero([shape('sh', b(0, 0, 0, 0))]),
+      ),
+      'hero-bare',
+    ),
+    [],
+  )
+  // a full-cover shape behind is a background, not a visual
+  assert.deepEqual(
+    ids(
+      run(
+        [desk([...base, nr('sh', b(0, 0, 1280, 600))])],
+        hero([shape('sh', b(0, 0, 0, 0), 'behind')]),
+      ),
+      'hero-bare',
+    ),
+    ['s1'],
+  )
+  // a group behind that covers the hero draws its own parts, so it is a visual
+  assert.deepEqual(
+    ids(
+      run(
+        [desk([...base, nr('sh', b(0, 0, 1280, 600))])],
+        hero([
+          w('shape', 'sh', undefined, {
+            props: { geometry: { type: 'group' } },
+            placement: { mode: 'behind' },
+          }),
+        ]),
+      ),
+      'hero-bare',
+    ),
+    [],
+  )
+  // a shape of 3% area does not count as a visual
+  assert.deepEqual(
+    ids(
+      run(
+        [desk([...base, nr('sh', b(780, 100, 300, 76))])],
+        hero([shape('sh', b(0, 0, 0, 0))]),
+      ),
+      'hero-bare',
+    ),
+    ['s1'],
+  )
+  assert.deepEqual(
+    ids(
+      run(
+        [desk(base)],
+        hero([], { style: { base: { bgImage: 'photo' } } } as Partial<Node>),
+      ),
+      'hero-bare',
+    ),
+    [],
+  )
+  const noH1 = page(
+    w('column', 's1', [heading('h', 'Welcome', 'h2')]),
+    w('column', 's2', [text('t2', 'x')]),
+  )
+  assert.deepEqual(
+    ids(
+      run(
+        [
+          desk([
+            ...base.slice(0, 1),
+            tx('h', b(80, 100, 604, 80), { tag: 'h2' }),
+            ...base.slice(2),
+          ]),
+        ],
+        noH1,
+      ),
+      'hero-bare',
+    ),
+    [],
+  )
+})
+
+test('broken-word: a text whose word is split across lines fires with its two-device fix; a whole-word text does not', () => {
+  const at = (broken: boolean) =>
+    run(
+      [
+        desk([
+          nr('h', b(80, 0, 400, 100), {
+            tag: 'p',
+            text: {
+              lines: 2,
+              longest: 10,
+              last: 1,
+              broken,
+              size: 16,
+              weight: 400,
+            },
+          }),
+        ]),
+      ],
+      page(heading('h', 'Permissions', 'h2')),
+    )
+  const hit = one(at(true), 'broken-word')
+  assert.equal(hit.class, 2)
+  assert.deepEqual(hit.nodes, ['h'])
+  assert.equal(
+    hit.fix,
+    'Give the column more room, or use a smaller size on phone.',
+  )
+  assert.deepEqual(ids(at(false), 'broken-word'), [])
+})
+
+test('orphan-heading: last line one word fires; last 5 of longest 21 fires; last 6 of 21 with two words does not; one line does not; h3 does not', () => {
+  const at = (words: string, last: number, lines = 3, tag = 'h2') =>
+    run(
+      [
+        desk([
+          nr('h', b(80, 0, 400, 100), {
+            tag,
+            text: { lines, longest: 21, last, size: 32, weight: 700 },
+          }),
+        ]),
+      ],
+      page(heading('h', words, tag)),
+    )
+  const hit = one(at('abcdefghij abcdefghij abcdef', 6), 'orphan-heading')
+  assert.equal(hit.observed, 6)
+  assert.deepEqual(hit.nodes, ['h'])
+  assert.equal(
+    hit.fix,
+    'Set balance on the heading, or change its max width or its words, so the last line holds more than one word.',
+  )
+  assert.deepEqual(
+    ids(at('abcdefghij abcdefghij ab cd', 5), 'orphan-heading'),
+    ['h'],
+  )
+  assert.deepEqual(
+    ids(at('abcdefghij abcdefghij ab cde', 6), 'orphan-heading'),
+    [],
+  )
+  assert.deepEqual(
+    ids(at('abcdefghij abcdefghij ab', 2, 1), 'orphan-heading'),
+    [],
+  )
+  assert.deepEqual(
+    ids(at('abcdefghij abcdefghij abcdef', 1, 3, 'h3'), 'orphan-heading'),
+    [],
+  )
+})
+
+test('bleed-gutter: a bleed section with text at 32 px fires; at 56 not; a non-bleed section never; column and bleed-gutter never name one section', () => {
+  const at = (x: number, bg: string | null) => {
+    const f = run(
+      [
+        desk([
+          nr('s1', b(0, 0, 1280, 300), { bg }),
+          tx('t', b(x, 40, 400, 40)),
+        ]),
+      ],
+      page(w('column', 's1', [text('t', 'Words')])),
+    )
+    return f
+  }
+  const f = at(32, '#eeeeee')
+  const hit = one(f, 'bleed-gutter')
+  assert.deepEqual(hit.nodes, ['s1'])
+  assert.equal(hit.observed, 32)
+  assert.equal(
+    hit.fix,
+    'Hold the content in an inner column of max width 1120, centred, or give the section at least 56 px of side padding.',
+  )
+  assert.deepEqual(ids(f, 'column'), [])
+  assert.deepEqual(ids(at(56, '#eeeeee'), 'bleed-gutter'), [])
+  assert.deepEqual(ids(at(32, null), 'bleed-gutter'), [])
+})
+
+test('all-stacked: a page of stacked sections fires with nodes [root]; one split row clears; a row of buttons or a nav row does not clear; a long-form page skips', () => {
+  const sec = (id: string, kids?: Node[]) =>
+    w('column', id, kids ?? [heading(`${id}h`, 'Head'), text(`${id}p`, 'Body')])
+  const stacked = (y: number) => [
+    nr(`s${y}`, b(0, y * 200, 1280, 200), { bg: '#fafafa' }),
+    tx(`s${y}h`, b(80, y * 200, 400, 40), { tag: 'h2' }),
+    tx(`s${y}p`, b(80, y * 200 + 60, 400, 40)),
+  ]
+  const base = [...stacked(0), ...stacked(1)]
+  const f = run([desk(base)], page(sec('s0'), sec('s1')))
+  const hit = one(f, 'all-stacked')
+  assert.deepEqual(hit.nodes, ['root'])
+  assert.equal(hit.observed, 2)
+  assert.equal(
+    hit.fix,
+    'Set one section as two columns: a grid with the heading beside its text, or text beside an image or a shape (recipe split).',
+  )
+  // one row with two items side by side clears
+  const split = [
+    nr('s0', b(0, 0, 1280, 200), { bg: '#fafafa' }),
+    tx('s0h', b(80, 0, 400, 40), { tag: 'h2' }),
+    tx('s0p', b(700, 0, 400, 40)),
+    ...stacked(1),
+  ]
+  assert.deepEqual(
+    ids(run([desk(split)], page(sec('s0'), sec('s1'))), 'all-stacked'),
+    [],
+  )
+  // buttons beside each other are not a split
+  const buttons = (as?: string) => [
+    nr('s0', b(0, 0, 1280, 200), { bg: '#fafafa' }),
+    tx('s0h', b(80, 0, 400, 40), { tag: 'h2' }),
+    nr('r', b(80, 60, 400, 48)),
+    tx('b1', b(80, 60, 150, 48)),
+    tx('b2', b(250, 60, 150, 48)),
+    ...stacked(1),
+    ...(as ? [] : []),
+  ]
+  assert.deepEqual(
+    ids(
+      run(
+        [desk(buttons())],
+        page(
+          sec('s0', [
+            heading('s0h', 'Head'),
+            w('row', 'r', [w('button', 'b1'), w('button', 'b2')]),
+          ]),
+          sec('s1'),
+        ),
+      ),
+      'all-stacked',
+    ),
+    ['root'],
+  )
+  assert.deepEqual(
+    ids(
+      run(
+        [desk(buttons())],
+        page(
+          sec('s0', [
+            heading('s0h', 'Head'),
+            w('row', 'r', [text('b1', 'Home'), text('b2', 'Work')], {
+              props: { as: 'nav' },
+            }),
+          ]),
+          sec('s1'),
+        ),
+      ),
+      'all-stacked',
+    ),
+    ['root'],
+  )
+  // a page of long paragraphs is long form
+  const long = [
+    nr('s0', b(0, 0, 1280, 800), { bg: '#fafafa' }),
+    tx('s0h', b(80, 0, 400, 40), { tag: 'h2' }),
+    tx('s0p', b(80, 60, 600, 700), {}, 8),
+    ...stacked(1).slice(0, 1),
+    tx('s1h', b(80, 800, 400, 40), { tag: 'h2' }),
+    tx('s1p', b(80, 860, 400, 40)),
+  ]
+  assert.deepEqual(
+    ids(run([desk(long)], page(sec('s0'), sec('s1'))), 'all-stacked'),
+    [],
+  )
+  // fewer than two sections: nothing to compare
+  assert.deepEqual(
+    ids(run([desk(stacked(0))], page(sec('s0'))), 'all-stacked'),
+    [],
+  )
+})
+
+test('header-edge fires on a header with its end button shown and on a full-width footer note, against sections at 32', () => {
+  const root = page(
+    w('column', 's1', [text('t1', 'One')]),
+    w('column', 's2', [text('t2', 'Two')]),
+  )
+  const secs = [
+    nr('s1', b(0, 100, 1280, 200)),
+    tx('t1', b(32, 100, 300, 40)),
+    nr('s2', b(0, 300, 1280, 200)),
+    tx('t2', b(32, 300, 300, 40)),
+  ]
+  const head = docOf(root, {
+    header: w('row', 'hd', [
+      text('hl', 'Logo'),
+      w('button', 'hb', undefined, { props: { label: 'Order' } }),
+    ]),
+  })
+  const f = run(
+    [
+      desk([
+        ...secs,
+        nr('hd', b(0, 0, 1280, 60)),
+        tx('hl', b(16, 10, 200, 40)),
+        tx('hb', b(1114, 10, 150, 40), { tag: 'a' }),
+      ]),
+    ],
+    root,
+    { doc: head },
+  )
+  assert.deepEqual(ids(f, 'header-edge'), ['hd'])
+  const foot = docOf(root, { footer: w('row', 'ft', [text('fl', 'Foot')]) })
+  const g = run(
+    [
+      desk([
+        ...secs,
+        nr('ft', b(0, 600, 1280, 60)),
+        tx('fl', b(16, 610, 1248, 40)),
+      ]),
+    ],
+    root,
+    { doc: foot },
+  )
+  assert.deepEqual(ids(g, 'header-edge'), ['ft'])
+})
+
+test('hero-bare reads a stretched button as its label: it fires before and after the button is narrowed', () => {
+  const hero = page(
+    w('column', 's1', [
+      heading('h', 'Welcome', 'h1'),
+      w('button', 'bt', undefined, { props: { label: 'Visit a shop' } }),
+    ]),
+    w('column', 's2', [text('t2', 'x')]),
+  )
+  const at = (bw: number) =>
+    run(
+      [
+        desk([
+          nr('s1', b(0, 0, 1280, 600), { bg: '#fafafa' }),
+          tx('h', b(80, 100, 604, 80), { tag: 'h1' }),
+          tx('bt', b(80, 200, bw, 48), { tag: 'a', tap: { w: bw, h: 48 } }),
+          nr('s2', b(0, 600, 1280, 100)),
+          tx('t2', b(80, 600, 300, 40)),
+        ]),
+      ],
+      hero,
+    )
+  assert.deepEqual(ids(at(1120), 'hero-bare'), ['s1'])
+  assert.deepEqual(ids(at(150), 'hero-bare'), ['s1'])
+})
+
+test('all-stacked: text beside a shape of visual size clears it; beside a 64 x 4 bar it does not', () => {
+  const sec = (id: string, bar: Box) => [
+    nr(id, b(0, id === 's0' ? 0 : 300, 1280, 300), { bg: '#fafafa' }),
+    tx(`${id}h`, b(80, id === 's0' ? 0 : 300, 400, 40), { tag: 'h2' }),
+    nr(`${id}s`, bar),
+  ]
+  const root = page(
+    w('column', 's0', [heading('s0h', 'Head'), w('shape', 's0s')]),
+    w('column', 's1', [heading('s1h', 'Head'), text('s1p', 'Body')]),
+  )
+  const more = [tx('s1p', b(80, 360, 400, 40))]
+  const art = (bar: Box) => [
+    ...sec('s0', bar),
+    ...sec('s1', b(0, 0, 0, 0)).slice(0, 2),
+    ...more,
+  ]
+  assert.deepEqual(
+    ids(run([desk(art(b(700, 0, 240, 240)))], root), 'all-stacked'),
+    [],
+  )
+  assert.deepEqual(
+    ids(run([desk(art(b(700, 0, 64, 4)))], root), 'all-stacked'),
+    ['root'],
+  )
+})
+
+// Review Focus 2: a fix names devices, never a colour, a geometry or a font, so repaired sites do not converge on one look.
+test('every design fix names two devices of its row in DEVICES, names only recipes in RECIPES, and holds no #hex, no geometry type and no font id', () => {
+  const DEVICES: Record<string, string[]> = {
+    'stretched-button': ['slot align', 'width'],
+    'header-edge': ['side padding', 'centred column'],
+    'hero-bare': ['image', 'split'],
+    'orphan-heading': ['balance', 'max width'],
+    'bleed-gutter': ['inner column', 'side padding'],
+    'all-stacked': ['grid', 'image'],
+    'no-accent': ['divider', 'button'],
+    'starter-chrome': ['padding', 'divider'],
+    'side-stripe': ['tint', 'hairline'],
+    'gradient-text': ['weight', 'shape behind'],
+    glow: ['offset', 'none'],
+    'emoji-icon': ['icon kind', 'small shape'],
+  }
+  const ids = new Set(RECIPES.map(r => r.id))
+  for (const [check, devices] of Object.entries(DEVICES)) {
+    const fix = FIX[check as keyof typeof FIX]!
+    for (const d of devices) assert.ok(fix.includes(d), `${check}: ${d}`)
+    for (const m of fix.matchAll(/recipe ([a-z-]+)/g))
+      assert.ok(ids.has(m[1]!), `${check}: ${m[1]}`)
+    assert.doesNotMatch(
+      fix,
+      /#[0-9a-f]{3,6}|\b(rect|ellipse|polygon|star|blob|path)\b|sys:/i,
+      check,
+    )
+  }
+})
+
+test('side-stripe fires on a card with borderLeft {width:3,color:"brand"} and not with borderLeft line-coloured', () => {
+  const n = (c: string) =>
+    kinds(
+      designOf(card({ radius: 8, borderLeft: { width: 3, color: c } })),
+    ).filter(k => k === 'side-stripe').length
+  assert.equal(n('brand'), 1)
+  assert.equal(n('line'), 0)
+})
+
+test('no-accent clears with borderBottom {width:2,color:"brand"} and with borderColor brand and borderWidth 2', () => {
+  const base = (b: Record<string, unknown>) =>
+    page(sect('s1'), sect('s2', b), sect('s3'))
+  assert.deepEqual(
+    kinds(designOf(base({ borderBottom: { width: 2, color: 'brand' } }))),
+    [],
+  )
+  assert.deepEqual(
+    kinds(designOf(base({ borderColor: 'brand', borderWidth: 2 }))),
+    [],
+  )
+  assert.deepEqual(kinds(designOf(base({ borderColor: 'brand' }))), [
+    'no-accent',
+  ])
 })

@@ -620,6 +620,7 @@ async function build(
     ...(isObj(site.styles)
       ? { styles: { ...defaultSiteStyles(look), ...site.styles } }
       : {}),
+    ...(site.centreMaxWidth === true ? { centreMaxWidth: true } : {}),
     ...(Array.isArray(site.languages)
       ? { languages: site.languages as SiteDocument['languages'] }
       : {}),

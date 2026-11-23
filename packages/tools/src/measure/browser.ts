@@ -23,6 +23,12 @@ export type Page = {
   blocked: string[]
   setViewport(width: number, height: number): Promise<void>
   setScheme(scheme: 'light' | 'dark'): Promise<void>
+  /** Every console error, uncaught exception and failed request the page logged, in order. */
+  errors: string[]
+  /** Scripts on or off for the next navigation and after (on by default). */
+  setScripts(on: boolean): Promise<void>
+  /** For a page that reaches a local server: the page keeps `EventSource`, `WebSocket` and `window.open` (the next navigation on). Call it instead of `answer`, which would intercept every request; a page with no `answer` reaches the network. */
+  unblock(): Promise<void>
   /** Every request goes to `fn`; `undefined` fails the request and records its address in `blocked`. Nothing reaches the network. */
   answer(fn: (url: string) => Promise<Answer | undefined>): Promise<void>
   goto(
@@ -508,15 +514,33 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
   const owner: Owner = { blocked: [], hooked: new Set(), adopted: new Set() }
   hub.owners.set(targetId, owner)
   hub.last = owner
+  const errors: string[] = []
+  let guard: { identifier: string }
+  const text = (a: Json) =>
+    a?.value !== undefined ? String(a.value) : String(a?.description ?? a?.type)
   try {
     await s('Page.enable')
+    await s('Log.enable')
+    cdp.on(sessionId, 'Runtime.consoleAPICalled', ({ type, args }: Json) => {
+      if (type === 'error') errors.push(args.map(text).join(' '))
+    })
+    cdp.on(
+      sessionId,
+      'Runtime.exceptionThrown',
+      ({ exceptionDetails: e }: Json) =>
+        void errors.push(String(e.exception?.description ?? e.text)),
+    )
+    cdp.on(sessionId, 'Log.entryAdded', ({ entry }: Json) => {
+      if (entry.level === 'error')
+        errors.push(`${entry.text}${entry.url ? ` ${entry.url}` : ''}`)
+    })
     // Sockets and WebRTC are not requests the interception sees: the page has none. A window the page opens is not made; the address is listed.
     await s('Runtime.enable')
     await s('Runtime.addBinding', { name: 'culmBlocked' })
     cdp.on(sessionId, 'Runtime.bindingCalled', ({ name, payload }: Json) => {
       if (name === 'culmBlocked') owner.blocked.push(String(payload))
     })
-    await s('Page.addScriptToEvaluateOnNewDocument', {
+    guard = await s('Page.addScriptToEvaluateOnNewDocument', {
       source:
         "for (const k of ['RTCPeerConnection','webkitRTCPeerConnection','WebSocket','WebSocketStream','EventSource']) delete window[k];" +
         'window.open = u => { window.culmBlocked(String(u)); return null }',
@@ -534,6 +558,13 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
   }
   return {
     blocked: owner.blocked,
+    errors,
+    setScripts: on =>
+      s('Emulation.setScriptExecutionDisabled', { value: !on }).then(() => {}),
+    unblock: () =>
+      s('Page.removeScriptToEvaluateOnNewDocument', {
+        identifier: guard.identifier,
+      }).then(() => {}),
     setViewport: (width, height) =>
       s('Emulation.setDeviceMetricsOverride', {
         width,

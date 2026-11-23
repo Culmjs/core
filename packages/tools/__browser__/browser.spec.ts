@@ -396,6 +396,83 @@ test('a service worker registration never connects, and what it would fetch is l
   }
 })
 
+test('errors lists a console error, an uncaught exception and a failed request, and nothing else', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.answer(async url =>
+      url.endsWith('/p')
+        ? HTML(
+            `<h1>ok</h1><script>console.log('fine');console.error('bad thing');setTimeout(() => { throw new Error('boom') }, 0)</script><script src="/missing.js"></script>`,
+          )
+        : { status: 404, type: 'text/plain', body: 'no' },
+    )
+    await page.goto('https://site.culm.invalid/p', 5000)
+    await page.evaluate('new Promise(r => setTimeout(r, 100))')
+    assert.equal(page.errors.length, 3, JSON.stringify(page.errors))
+    assert.ok(page.errors.some(e => e === 'bad thing'))
+    assert.ok(page.errors.some(e => e.includes('boom')))
+    assert.ok(page.errors.some(e => e.includes('missing.js')))
+  } finally {
+    await page.close()
+  }
+})
+
+test('setScripts(false) stops the page script and setScripts(true) runs it again', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.answer(async () =>
+      HTML("<h1>hi</h1><script>document.title='ran'</script>"),
+    )
+    await page.setScripts(false)
+    await page.goto('https://site.culm.invalid/p', 5000)
+    assert.equal(await page.evaluate('document.title'), '')
+    assert.equal(
+      await page.evaluate('document.querySelector("h1").textContent'),
+      'hi',
+    )
+    await page.setScripts(true)
+    await page.goto('https://site.culm.invalid/p', 5000)
+    assert.equal(await page.evaluate('document.title'), 'ran')
+  } finally {
+    await page.close()
+  }
+})
+
+test('unblock lets a page with no answer reach a local server and keep EventSource', async () => {
+  const sse = createServer((req, res) => {
+    if (req.url === '/events') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      res.write('data: hello\n\n')
+    } else {
+      res.writeHead(200, { 'Content-Type': 'text/html' })
+      res.end(
+        `<body><script>new EventSource('/events').onmessage = e => { document.body.dataset.got = e.data }</script>`,
+      )
+    }
+  })
+  await new Promise<void>(r => sse.listen(0, '127.0.0.1', r))
+  const url = `http://127.0.0.1:${(sse.address() as { port: number }).port}/`
+  const blocked = await browser.newPage()
+  const page = await browser.newPage()
+  try {
+    // without `unblock` the page has no EventSource
+    await blocked.goto(url, 5000)
+    assert.equal(await blocked.evaluate('typeof EventSource'), 'undefined')
+    await page.unblock()
+    assert.deepEqual(await page.goto(url, 5000), { ok: true })
+    assert.equal(await page.evaluate('typeof EventSource'), 'function')
+    await page.evaluate(
+      'new Promise(r => { const t = setInterval(() => document.body.dataset.got && (clearInterval(t), r()), 20) })',
+    )
+    assert.equal(await page.evaluate('document.body.dataset.got'), 'hello')
+  } finally {
+    await page.close()
+    await blocked.close()
+    sse.closeAllConnections()
+    sse.close()
+  }
+})
+
 test('a second answer replaces the first, and a call after Chrome has gone fails at once', async () => {
   const page = await browser.newPage()
   await page.answer(async () => HTML('first'))

@@ -823,6 +823,14 @@ test('a dropdown menu is a native disclosure', () => {
   )
 })
 
+test('a menu with foldOn phone renders details.s-dd with the menu glyph and "Menu" in its summary and every link in its panel', () => {
+  const out = menu({ which: 'menu', foldOn: 'phone' })
+  assert.match(
+    out,
+    /^<nav aria-label="Site menu"><details class="s-dd"><summary><svg[^>]*>.*<\/svg>Menu<\/summary><div><a href="\/talks">Talks<\/a><a href="\/cv">CV &lt;b&gt;<\/a><\/div><\/details><\/nav>$/,
+  )
+})
+
 // ---- form, field, details ----
 
 test('a form posts to the site, with a hidden form name and a trap field', () => {

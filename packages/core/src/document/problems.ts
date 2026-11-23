@@ -13,6 +13,7 @@ export const CODES = [
   'SOURCE_CONFLICT',
   'UNSUPPORTED_CAPABILITY',
   'MEASUREMENT_INCOMPLETE',
+  'FETCH_FAILED',
 ] as const
 
 export type Code = (typeof CODES)[number]

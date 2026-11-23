@@ -5,6 +5,7 @@ import { walk } from '../document/tree.ts'
 import type { Registry } from '../registry/index.ts'
 import { validateSite } from '../validate/index.ts'
 import { droppedRequired } from '../validate/required.ts'
+import { aliasStyles } from './aliases.ts'
 import * as blocks from './blocks.ts'
 import * as components from './components.ts'
 import { affected, diffAll } from './diff.ts'
@@ -258,6 +259,7 @@ export function plan(
     }
     i = undefined
 
+    work = aliasStyles(work)
     const problems = validateSite(work, registry)
     if (problems.length)
       return {

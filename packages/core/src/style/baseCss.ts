@@ -9,7 +9,7 @@ export const BASE_CSS = [
   '.s-site{--s-brand:var(--s-brand-l);--s-ink:var(--s-ink-l);--s-bg:var(--s-bg-l)}',
   `.s-site.s-scheme-dark{${SCHEME_D}}`,
   `@media (prefers-color-scheme: dark){.s-site.s-scheme-auto{${SCHEME_D}}}`,
-  '.s-site{--s-muted:color-mix(in srgb,var(--s-ink) 66%,var(--s-bg));--s-line:color-mix(in srgb,var(--s-ink) 14%,var(--s-bg));background:var(--s-bg);color:var(--s-ink);font:calc(15px*var(--s-scale,1))/1.6 var(--s-body);min-height:100vh;position:relative;overflow-x:clip;display:flex;flex-direction:column}',
+  '.s-site{--s-muted:color-mix(in srgb,var(--s-ink) var(--s-muted-ink,66%),var(--s-bg));--s-line:color-mix(in srgb,var(--s-ink) 14%,var(--s-bg));background:var(--s-bg);color:var(--s-ink);font:calc(15px*var(--s-scale,1))/1.6 var(--s-body);min-height:100vh;position:relative;overflow-x:clip;display:flex;flex-direction:column}',
   // The header stays at the top while the page scrolls (not on a short window, where it would eat the page) and the footer sits at the foot of the window when the page is short.
   ':where(.s-site)>:where(main){flex:1 0 auto}',
   '.s-site>.s-header{position:sticky;top:0;z-index:40;background:var(--s-bg)}',

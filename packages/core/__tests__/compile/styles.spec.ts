@@ -1327,7 +1327,7 @@ test('a card surface under a look with edge, hard shadow and pill buttons reads 
     /border-radius:var\(--s-btn-radius,var\(--s-radius\)\)/,
   )
   assert.match(rule('btn'), /font-family:var\(--s-label,inherit\)/)
-  const vars = lookCss(tokens)
+  const vars = lookCss(tokens, undefined, '', ctx().style.fontFamily)
   for (const v of [
     '--s-edge-w:2px',
     '--s-shadow:4px 4px 0 var(--s-ink)',
@@ -2157,4 +2157,119 @@ test('a phone italic false undoes a run-level italic', () => {
   // the text node's own rule and the run's rule both turn it off
   const phone = css.slice(css.indexOf('@media (max-width: 600px)'))
   assert.equal(phone.match(/font-style:normal/g)?.length, 2)
+})
+
+const borderCss = (style: Node['style'], dir?: 'rtl') => {
+  const box: Node = {
+    id: 'root',
+    kind: 'free',
+    name: 'P',
+    slot: {},
+    children: [{ ...row, id: 'b', style }],
+  }
+  return compileStyles(box, { ...ctx(), dir }).css
+}
+
+test('rtl: borderLeft is written as border-right, and borderWidth [1,2,3,4] as 1px 4px 3px 2px', () => {
+  const css = borderCss(
+    {
+      base: {
+        borderLeft: { width: 3, color: 'brand' },
+        borderWidth: [1, 2, 3, 4],
+      },
+    },
+    'rtl',
+  )
+  assert.match(css, /border-right:3px solid var\(--s-brand\)/)
+  assert.doesNotMatch(css, /border-left:/)
+  assert.match(css, /border-width:1px 4px 3px 2px/)
+})
+
+test('a dark borderColor goes in the dark rule only; a phone borderBottom in the phone rule only', () => {
+  const css = borderCss({
+    dark: { borderColor: '#445566' },
+    phone: { borderBottom: { width: 1, color: 'line' } },
+  })
+  const phone = css.indexOf('@media (max-width: 600px)')
+  assert.match(css, /scheme-dark\) \.[^{]+\{border-color:#445566/)
+  assert.doesNotMatch(css.slice(phone), /border-color:#445566/)
+  assert.ok(css.slice(phone).includes('border-bottom:1px solid var(--s-line)'))
+  assert.ok(!css.slice(0, phone).includes('border-bottom:1px'))
+})
+
+test('a button with shadow soft has box-shadow in its rule, and its dark shadow in the dark rule', () => {
+  const btn: Node = {
+    id: 'btn',
+    kind: 'button',
+    name: 'B',
+    slot: {},
+    props: { label: 'Go' },
+    style: { base: { shadow: 'soft' }, dark: { shadow: 'strong' } },
+  } as never
+  const css = compileStyles(
+    { id: 'root', kind: 'free', name: 'P', slot: {}, children: [btn] },
+    ctx(),
+  ).css
+  assert.match(css, /box-shadow:0 2px 8px rgb\(0 0 0 \/ 0\.12\)/)
+  assert.match(css, /scheme-dark\) \.[^{]+\{[^}]*box-shadow:/)
+})
+
+test('base hidden and tablet hidden false: the tablet rule writes the kind display; phone inherits it', () => {
+  const css = compileFor({
+    style: { base: { hidden: true }, tablet: { hidden: false } },
+  })
+  assert.match(css, /max-width: 1024px\)\{[^}]*display:block/)
+  assert.doesNotMatch(phoneOf(css), /display:none/)
+})
+
+test('base hidden and phone hidden false: unchanged from today', () => {
+  const css = compileFor({
+    style: { base: { hidden: true }, phone: { hidden: false } },
+  })
+  assert.doesNotMatch(css, /max-width: 1024px\)\{[^}]*display:/)
+  assert.match(phoneOf(css), /\{[^}]*display:block/)
+})
+
+const tabletOf = (css: string) => {
+  const i = css.indexOf('@media (max-width: 1024px)')
+  return css.slice(i, css.indexOf('@media (max-width: 600px)'))
+}
+const shown = { base: { hidden: true }, tablet: { hidden: false } }
+const lastDisplay = (css: string) =>
+  [...css.matchAll(/display:([a-z-]+)/g)].pop()![1]
+
+test('tablet show: a tablet-ordered box keeps flex', () => {
+  const css = compileFor({
+    kind: 'box',
+    style: shown,
+    children: [
+      {
+        ...txt('o', { x: 0, y: 0, w: 4, h: 2, z: 0 }),
+        style: { tablet: { order: 1 } },
+      },
+    ],
+  } as Partial<Node>)
+  assert.equal(lastDisplay(tabletOf(css)), 'flex')
+})
+
+test('tablet show: a centred list keeps grid', () => {
+  const css = compileFor({
+    kind: 'list',
+    style: { ...shown, base: { hidden: true, align: 'center' } },
+  } as Partial<Node>)
+  assert.equal(lastDisplay(tabletOf(css)), 'grid')
+})
+
+test('tablet show: a box with a wrapping child keeps flow-root', () => {
+  const css = compileFor({
+    kind: 'box',
+    style: shown,
+    children: [
+      {
+        ...txt('w', { x: 0, y: 0, w: 4, h: 2, z: 0 }),
+        placement: { mode: 'wrap-start' },
+      },
+    ],
+  } as Partial<Node>)
+  assert.equal(lastDisplay(tabletOf(css)), 'flow-root')
 })

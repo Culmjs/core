@@ -5,6 +5,7 @@ import {
   declCss,
   declsOf,
   escapeCss,
+  PROPS,
 } from '../../src/style/decl.ts'
 
 const ctx = {
@@ -923,4 +924,123 @@ test('false on a later layer undoes a flag; false on the base layer writes nothi
     declCss({ size: 28, nowrap: false }, ctx, true),
     'font-size:28px;white-space:normal',
   )
+})
+
+test('every PROPS entry has forms and an example that its own check accepts', () => {
+  for (const [k, p] of Object.entries(PROPS)) {
+    assert.ok(p.forms.length > 0, `${k} forms`)
+    assert.notEqual(
+      (p.check as (v: unknown) => unknown)(p.example),
+      undefined,
+      `${k} example ${JSON.stringify(p.example)}`,
+    )
+  }
+})
+
+test('a bad border names its forms and the example {"width":1,"color":"line"}', () => {
+  const r = checkStyle('box', { base: { border: 3 } })
+  assert.ok(
+    r.problems[0].includes(
+      'style.base.border has a value that is not allowed; it takes ',
+    ),
+    r.problems[0],
+  )
+  assert.ok(r.problems[0].endsWith('for example {"width":1,"color":"line"}'))
+})
+
+test('letterSpacing 2 is refused with forms "em from -0.1 to 0.5" and an example', () => {
+  assert.deepEqual(
+    checkStyle('text', { base: { letterSpacing: 2 } }).problems,
+    [
+      'style.base.letterSpacing has a value that is not allowed; it takes em from -0.1 to 0.5, for example 0.05',
+    ],
+  )
+})
+
+test('align on a text is refused with the textAlign hint', () => {
+  assert.deepEqual(
+    checkStyle('text', { base: { align: 'stretch' } }).problems,
+    [
+      'style.base.align does not apply to text; use textAlign, which takes one of start, center, end, justify, for example "start"',
+    ],
+  )
+})
+
+test('a refused colour names the colours it can take', () => {
+  const [p] = checkStyle('text', { base: { color: 'red' } }).problems
+  for (const n of ['brand', 'ink', 'bg']) assert.ok(p.includes(n), p)
+})
+
+test('border {width:2,color:"brand"} is accepted and writes border:2px solid var(--s-brand)', () => {
+  assert.equal(
+    good('box', { border: { width: 2, color: 'brand' } }),
+    'border:2px solid var(--s-brand)',
+  )
+})
+
+test('border width 64 is accepted, 65 is not', () => {
+  assert.equal(
+    good('box', { border: { width: 64, color: 'ink' } }),
+    'border:64px solid var(--s-ink)',
+  )
+  assert.notEqual(
+    checkStyle('box', { base: { border: { width: 65, color: 'ink' } } })
+      .problems.length,
+    0,
+  )
+})
+
+test('borderBottom {width:1,color:"line"} writes border-bottom only; borderTop with style dashed writes dashed', () => {
+  assert.equal(
+    good('box', { borderBottom: { width: 1, color: 'line' } }),
+    'border-bottom:1px solid var(--s-line)',
+  )
+  assert.equal(
+    good('box', { borderTop: { width: 2, color: 'ink', style: 'dashed' } }),
+    'border-top:2px dashed var(--s-ink)',
+  )
+})
+
+test('borderWidth 3 with borderColor "#e8e8e8" writes border-width:3px;border-style:solid;border-color:#e8e8e8', () => {
+  assert.equal(
+    good('box', { borderWidth: 3, borderColor: '#e8e8e8' }),
+    'border-width:3px;border-style:solid;border-color:#e8e8e8',
+  )
+})
+
+test('borderWidth [1,2,3,4] is accepted; [1,2,3] and 65 are not', () => {
+  assert.equal(
+    good('box', { borderWidth: [1, 2, 3, 4] }),
+    'border-width:1px 2px 3px 4px;border-style:solid',
+  )
+  for (const v of [[1, 2, 3], 65])
+    assert.notEqual(
+      checkStyle('box', { base: { borderWidth: v } }).problems.length,
+      0,
+    )
+})
+
+test('border then borderTop in one layer: border-top comes after border', () => {
+  const css = good('box', {
+    borderTop: { width: 4, color: 'brand' },
+    border: { width: 1, color: 'line' },
+  })
+  assert.ok(css.indexOf('border:1px') < css.indexOf('border-top:4px'), css)
+})
+
+test('a divider refuses borderTop', () => {
+  assert.notEqual(
+    checkStyle('divider', {
+      base: { borderTop: { width: 1, color: 'line' } },
+    }).problems.length,
+    0,
+  )
+})
+
+test('a dashed border with borderWidth stays dashed', () => {
+  const css = good('box', {
+    border: { width: 1, style: 'dashed', color: 'line' },
+    borderWidth: 3,
+  })
+  assert.equal(css, 'border:1px dashed var(--s-line);border-width:3px')
 })
