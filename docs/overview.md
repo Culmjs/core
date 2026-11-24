@@ -32,6 +32,7 @@ A page is a tree of nodes. A node has:
 - `style`: layers for base, tablet, phone, dark mode, interaction states (hover, pressed, focus and others) and declared states
 - `children`
 - optional `state` and `on`: declared states and the triggers that change them
+- optional `motion`: a trigger and either checked steps or a registered effect. An entrance can run once on entering view; a scroll track can seek in either direction. [Authoring, preview and fallback](motion/replay.md)
 - optional `repeat`, `bind`, `showIf`: data binding and conditional display
 - optional `slot` and `placement`: how it sits in its parent
 
@@ -257,6 +258,7 @@ Each of these validates first. If the document, the rows or an option has a prob
 | open snippet | 105 bytes   | a layer is marked open at load             |
 | mail snippet | 277 bytes   | a hidden mail address was written          |
 | states       | 1,963 bytes | a node on the page uses states or triggers |
+| timeline     | 8,185 bytes | the rendered page needs the motion host    |
 
 - In editing mode there is no script, and every node's element carries `data-id` so an editor can map the page back to the document.
 - A text node still marked as an untouched sample is left out of a live page and kept in editing mode.
@@ -268,11 +270,14 @@ Each of these validates first. If the document, the rows or an option has a prob
 | All shared scripts on a page | 20,000 bytes |
 | Base script                  | 10,000 bytes |
 | States script                | 6,193 bytes  |
+| Timeline script              | 8,192 bytes  |
 | CSS per page                 | 16,000 bytes |
 | Elements per page            | 2,000        |
 | Nesting depth                | 12           |
 
 Sizes are raw minified bytes. `compilePage` reports a page that passes a ceiling as a `RESOURCE_LIMIT_EXCEEDED` problem and returns its real figures in `stats`.
+
+CSS-only motion ships no timeline script. The shared 20,000-byte cap applies independently of the individual script ceilings. The [stage comparison](motion/exit.md) gives measured byte totals, desktop and phone frames, and the pending owner decision.
 
 ## Measure
 
