@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { type AddressInfo } from 'node:net'
+import { BUDGETS } from '@culmjs/core'
 import {
   openBrowser,
   type Page,
@@ -127,18 +128,49 @@ export async function observe(pages: Pages) {
         await p.close()
       }
     }
-    for (const route of ['/control', '/mixed'])
-      await visit(route, async p => {
-        if (route === '/mixed') await wait(p, live)
+    const structureRows: Record<string, string | number>[] = []
+    for (const [fixture, page] of Object.entries(pages)) {
+      await visit('/' + fixture, async p => {
+        const gpu = !!page.lazyJs
+        if (gpu) await wait(p, live)
+        // Uninstrumented page. The lazy <script> in <head> is not a body element.
+        const active = await p.evaluate<{
+          cssBytes: number
+          bodyElements: number
+          canvases: number
+          domDepth: number
+        }>(`(()=>{
+          const depth=e=>1+Math.max(0,...Array.from(e.children,depth));
+          const count=s=>document.body.querySelectorAll(s).length;
+          return {
+            cssBytes:Array.from(document.querySelectorAll('style')).reduce((n,e)=>n+new TextEncoder().encode(e.textContent).length,0),
+            bodyElements:count('*'),canvases:count('canvas'),
+            domDepth:depth(document.documentElement)
+          }
+        })()`)
+        assert.equal(active.cssBytes, page.structure.cssBytes)
+        assert.equal(active.canvases, Number(gpu))
         assert.equal(
-          await p.evaluate(`document.querySelectorAll('canvas').length`),
-          route === '/mixed' ? 1 : 0,
+          active.bodyElements,
+          page.structure.bodyElements + active.canvases,
         )
-        assert.equal(
-          requested.filter(u => u === hostPath).length,
-          route === '/mixed' ? 1 : 0,
+        assert.ok(
+          active.bodyElements <= BUDGETS.elements,
+          `${fixture}: ${active.bodyElements} active body elements`,
         )
+        assert.equal(requested.filter(u => u === hostPath).length, Number(gpu))
+        structureRows.push({
+          fixture,
+          cssBytes: active.cssBytes,
+          buildBodyElements: page.structure.bodyElements,
+          canvases: active.canvases,
+          activeBodyElements: active.bodyElements,
+          logicalDepth: page.structure.logicalDepth,
+          rawDomDepth: active.domDepth,
+        })
       })
+    }
+    console.table(structureRows)
     const points = [
       [202, 16],
       [202, 416],

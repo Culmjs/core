@@ -36,3 +36,20 @@ test('the mixed HTML delivers the priced executable and one inert recoverable mo
   assert.ok(!p.lazyJs.includes(p.encodedWasm))
   assert.equal(p.html.split(p.encodedWasm).length, 2)
 })
+
+test('the final fixture budgets include all style bodies and the inert body script', async () => {
+  const { makePage } = await import('../gpu-spike/pages.ts')
+  for (const [name, cssBytes, bodyElements] of [
+    ['control', 7517, 41],
+    ['shader', 7920, 42],
+    ['wasm', 7920, 42],
+    ['mixed', 8416, 58],
+  ] as const) {
+    const page = await makePage(name)
+    assert.deepEqual(
+      page.structure,
+      { cssBytes, bodyElements, logicalDepth: 6 },
+      name,
+    )
+  }
+})

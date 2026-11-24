@@ -41,6 +41,19 @@ The Stage 3 mixed scripts were recompiled, not estimated: 686 base (open + email
 
 Shade GLSL counts unique effect bodies; inert JSON is the actual HTML-writer-escaped body including the GLSL, keys and any base64. Added HTML is the difference from the same compiled fixture before GPU lowering and includes the loader/join, JSON tag and data, region attributes, plane CSS and static SVG poster. These overlapping columns must not be summed. For example, the extra mixed transfer is **1,872 + 4,806 = 6,678** raw bytes, not that amount plus the decoded module. CDP, synthetic clock, readbacks, screenshot decoding and tests run separately and are not delivered by the priced artifacts.
 
+### CSS, elements and depth after GPU attachment
+
+| Fixture | Final CSS bytes / 16,000 | Build body elements / 2,000 | Active body elements / 2,000 | Logical depth / 12 | Raw DOM depth (browser) |
+| ------- | -----------------------: | --------------------------: | ---------------------------: | -----------------: | ----------------------: |
+| Control |                    7,517 |                          41 |                           41 |                  6 |                      12 |
+| Shader  |                    7,920 |                          42 |                           43 |                  6 |                      12 |
+| WASM    |                    7,920 |                          42 |                           43 |                  6 |                      12 |
+| Mixed   |                    8,416 |                          58 |                           59 |                  6 |                      12 |
+
+The spike parses the **final emitted HTML**. Following `compile/page.ts`, CSS is the UTF-8 size of stylesheet text, excluding `<style>` tags and inline attributes. The GPU stylesheet adds **403 bytes** to the compiled 7,517 (shader/WASM) or 8,013 (mixed). Build elements count descendants of `<body>`, including SVG elements, the joined script and the added inert data script; the head stylesheet adds no body element.
+
+The CLI counts the uninstrumented live body in Chrome at the initial viewport, after GPU activation where applicable. Each active GPU page adds **one canvas**; the lazy script in `<head>` is outside the count. The **12-level hard limit** uses the compiler's maximum expanded page/header/footer content-tree depth, root = 1. The HTML additions do not change those trees. Chrome’s 12 raw DOM levels (`<html>` = 1) include wrappers and SVG descendants and are diagnostic only. The mixed fixture has **7,584 CSS bytes, 1,941 active body elements and 6 logical levels of headroom** at this observation.
+
 ## Shader cost inputs
 
 Propose the starting candidates **4,096 source bytes, 64 loop passes, 16 texture reads, 512 weighted operations per pixel**. These are source-work caps, not frame-time predictions. No production parser or validator exists in this spike.

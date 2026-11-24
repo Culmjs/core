@@ -3,8 +3,10 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { buildSync, transformSync } from 'esbuild'
+import { DomUtils, parseDocument } from 'htmlparser2'
 import {
   applySetting,
+  BUDGETS,
   compilePage,
   createRegistry,
   insertBlock,
@@ -103,8 +105,34 @@ export async function makePage(name: Variant) {
       )
     assert.equal(i, names.length)
   }
+  // Count the emitted fixture, including post-compile markup. As in compile/page.ts,
+  // style text is priced without its tags, and elements start below <body>.
+  const parsed = parseDocument(html)
+  const [body] = DomUtils.getElementsByTagName('body', parsed)
+  const structure = {
+    cssBytes: DomUtils.getElementsByTagName('style', parsed).reduce(
+      (sum, el) => sum + Buffer.byteLength(DomUtils.textContent(el)),
+      0,
+    ),
+    bodyElements: DomUtils.getElementsByTagName('*', body.children).length,
+    // Lowering only alters HTML, not the expanded document trees.
+    logicalDepth: c.stats.depth,
+  }
+  assert.ok(
+    structure.cssBytes <= BUDGETS.css,
+    `${name}: ${structure.cssBytes} CSS bytes`,
+  )
+  assert.ok(
+    structure.bodyElements <= BUDGETS.elements,
+    `${name}: ${structure.bodyElements} body elements`,
+  )
+  assert.ok(
+    structure.logicalDepth <= BUDGETS.depth,
+    `${name}: logical depth ${structure.logicalDepth}`,
+  )
   return {
     html,
+    structure,
     inline,
     lazyJs: names.length ? lazyJs : '',
     wasm: module,
