@@ -606,6 +606,30 @@ test('a pin on a use sees the visual child after a part override', () => {
   assert.deepEqual(validateSite(doc, reg), [])
 })
 
+test('hover clamping cannot reveal a pin child that has no box to hover', () => {
+  const extra = text('extra', 'Unreachable')
+  const panel = node('panel', 'column', [text('body', 'Visible'), extra])
+  panel.motion = { trigger: 'scroll', pinPx: 200, steps: [step()] }
+  panel.state = [{ name: 'mode', values: 'on-off', initial: 'off' }]
+  const doc = siteWith([panel])
+  extra.style = { base: { hidden: true }, hover: { clampLines: 1 } }
+  assert.deepEqual(validateSite(doc, reg), [])
+  assert.ok(compilePage(doc, 'home', { registry: reg }).ok)
+  extra.style.when = [{ state: 'mode', is: 'on', decl: { hidden: false } }]
+  refused(doc, 'motion.pinPx', 'panel')
+  extra.style.when.push({ state: 'mode', is: 'on', decl: { hidden: true } })
+  assert.deepEqual(validateSite(doc, reg), [])
+  extra.style.tablet = { hidden: false }
+  refused(doc, 'motion.pinPx', 'panel')
+  delete extra.style.tablet
+  extra.style.when = [
+    { state: 'mode', is: 'on', decl: { clampLines: 1, hidden: true } },
+  ]
+  assert.deepEqual(validateSite(doc, reg), [])
+  delete extra.style.when[0].decl.hidden
+  refused(doc, 'motion.pinPx', 'panel') // the declared state, not hover, supplies a box
+})
+
 test('a master pin keeps the sample text published by its default variant', () => {
   const title = text('title', 'Placeholder')
   title.props!.sample = true

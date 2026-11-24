@@ -67,6 +67,8 @@ export function childLayoutDisplay(
 export function layoutDisplays(
   w: Node,
   dark: boolean,
+  stateClamp = false,
+  hovered = false,
 ): Record<Layout, boolean> {
   const s = w.style,
     base = s?.base?.hidden,
@@ -74,11 +76,17 @@ export function layoutDisplays(
     phone = s?.phone?.hidden
   let visible = !base && !w.hide?.desktop
   // State layers precede dark and the breakpoint rules. Clamping supplies its own display.
-  if (s && interactiveLayers.some(k => s[k]?.clampLines)) visible = true
+  // :hover can change an existing box, but it can't supply the very first
+  // box to hit-test. Count independent layout/state reveals before allowing it.
+  if (
+    s &&
+    interactiveLayers.some(k => (k !== 'hover' || hovered) && s[k]?.clampLines)
+  )
+    visible = true
   if (dark && s?.dark?.hidden === true) visible = false
   if (dark && (s?.dark?.clampLines || (base && s?.dark?.hidden === false)))
     visible = true
-  if (s?.when?.some(x => x.decl.clampLines)) visible = true
+  if (stateClamp) visible = true
   const desktop = visible
   if (base && tablet === false) visible = true
   if (tablet) visible = false
@@ -109,6 +117,7 @@ export function layoutDisplays(
 export function stateDisplay(
   w: Node,
   values: (name: string) => readonly string[] | 'cut' | undefined,
+  clampCanShow: () => boolean,
 ): boolean | 'cut' | undefined {
   const whens = w.style?.when
   if (!whens?.length) return
@@ -125,5 +134,15 @@ export function stateDisplay(
     blocked.add(is)
     if (blocked.size === allowed.length) return false
     later.set(state, blocked)
+  }
+  // A when clamp writes display before the breakpoint layers. It can supply
+  // a box only if its value survives every later hide and some layout allows it.
+  if (whens.some(x => x.decl.clampLines) && clampCanShow()) {
+    for (const { decl, state, is } of whens) {
+      if (!decl.clampLines || later.get(state)?.has(is)) continue
+      const allowed = values(state)
+      if (allowed === 'cut') return 'cut'
+      if (allowed?.includes(is)) return true
+    }
   }
 }

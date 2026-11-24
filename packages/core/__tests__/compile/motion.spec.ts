@@ -260,6 +260,132 @@ test('scrollport and visibility must coincide in the same theme, including for t
   delete phone.hide
   assert.equal(compilePage(withHeader, 'home', { registry }).ok, false)
 })
+test('a scrollport and the complete target path need a common declared-state assignment', () => {
+  const target = text('title', 'Reed')
+  const wrap = node('wrap', 'column', [target])
+  const hero = node('hero', 'column', [wrap])
+  hero.motion = {
+    trigger: 'scroll',
+    steps: [{ ...rise(), target: { id: 'title' } }],
+  }
+  const box = node('scroller', 'column', [hero])
+  box.state = ['mode', 'panel'].map(name => ({
+    name,
+    values: 'on-off',
+    initial: 'off',
+  }))
+  box.style = {
+    when: [{ state: 'mode', is: 'on', decl: { overflow: 'scroll-x' } }],
+  }
+  const doc = siteWith([box])
+  target.style = { when: [{ state: 'mode', is: 'on', decl: { hidden: true } }] }
+  assert.match(page(doc).css, /animation-timeline:--cm-v/)
+  hero.motion.scrollFallback = 'timeline'
+  assert.match(page(doc).css, /animation-timeline:--cm-v/)
+  delete hero.motion.scrollFallback
+  // A later show makes on/on a witness.
+  target.style.when!.push({ state: 'panel', is: 'on', decl: { hidden: false } })
+  assert.equal(compilePage(doc, 'home', { registry }).ok, false)
+  // But not if a wrapper hides that same assignment.
+  wrap.style = { when: [{ state: 'panel', is: 'on', decl: { hidden: true } }] }
+  assert.match(page(doc).css, /animation-timeline:--cm-v/)
+  delete wrap.style
+  delete target.style
+  box.style.when!.push({
+    state: 'mode',
+    is: 'on',
+    decl: { overflow: 'visible' },
+  })
+  assert.match(page(doc).css, /animation-timeline:--cm-v/)
+})
+
+test('shadowed composed holders can supply different values to actual style selectors', () => {
+  const state = (initial: string) => [
+    { name: 'mode', values: 'on-off' as const, initial },
+  ]
+  const target = text('title', 'Reed', {
+    style: {
+      base: { hidden: true },
+      when: [{ state: 'mode', is: 'off', decl: { hidden: false } }],
+    },
+  })
+  const inner = node('inner', 'column', [target])
+  inner.motion = {
+    trigger: 'scroll',
+    steps: [{ ...rise(), target: { id: 'title' } }],
+  }
+  const scroller = node('scroller', 'column', [inner])
+  scroller.state = state('on')
+  scroller.style = {
+    when: [{ state: 'mode', is: 'on', decl: { overflow: 'scroll-x' } }],
+  }
+  const doc = siteWith([scroller], {
+    header: { ...node('header', 'instance'), component: 'banner' },
+    components: [
+      {
+        id: 'banner',
+        name: 'Banner',
+        props: [],
+        variants: [],
+        root: {
+          ...node('bar', 'column', [text('label', 'Header')]),
+          state: state('off'),
+        },
+      },
+    ],
+  })
+  // The local holder can scroll while the site wrapper shows the target.
+  const bad = compilePage(doc, 'home', { registry })
+  assert.ok(
+    !bad.ok &&
+      bad.problems.some(
+        p => p.nodeId === 'inner' && p.path === 'motion.trigger',
+      ),
+    JSON.stringify(bad.problems),
+  )
+  // The later matching on hide always wins while scrolling.
+  target.style!.when!.push({ state: 'mode', is: 'on', decl: { hidden: true } })
+  assert.match(page(doc).css, /animation-timeline:--cm-v/)
+})
+
+test('many declared values need only the matching branches, and a real overlap still selects fallback', () => {
+  const values = Array.from({ length: 16 }, (_, i) => `v${i}`)
+  const states = Array.from({ length: 8 }, (_, i) => ({
+    name: `mode${i}`,
+    values,
+    initial: 'v0',
+  }))
+  const target = text('title', 'Reed', {
+    style: {
+      when: states.map(s => ({
+        state: s.name,
+        is: 'v1',
+        decl: { hidden: true },
+      })),
+    },
+  })
+  target.motion = {
+    trigger: 'scroll',
+    effect: 'rise',
+    scrollFallback: 'timeline',
+  }
+  const outer = node('scroller', 'column', [target])
+  outer.state = states
+  outer.style = {
+    when: states.map(s => ({
+      state: s.name,
+      is: 'v1',
+      decl: { overflow: 'scroll-x' },
+    })),
+  }
+  const doc = siteWith([outer])
+  assert.match(page(doc).css, /@supports \(animation-timeline:view\(\)\)/)
+  target.style!.when!.pop() // the last holder value now exposes the bad scrollport
+  assert.doesNotMatch(
+    page(doc).css,
+    /@supports \(animation-timeline:view\(\)\)/,
+  )
+})
 test('built-in rise compiles identically to its explicit steps; edit/subtree stay static', () => {
   for (const distance of [undefined, 0, 42, 100]) {
     const doc = docFor({

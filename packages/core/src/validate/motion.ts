@@ -103,16 +103,20 @@ function visualChild(
   // An element omitted from live output cannot be revealed by a CSS rule.
   if (!(['desktop', 'tablet', 'phone'] as const).some(l => shownOn(w, l)))
     return false
-  const state = stateDisplay(w, name => {
-    const st = lookup(e, name)
-    return st === 'cut' ? st : st?.values
-  })
-  return (
-    state ??
+  const canShow = (clamp: boolean) =>
     (scheme === 'auto' ? [false, true] : [scheme === 'dark']).some(dark =>
-      Object.values(layoutDisplays(w, dark)).some(Boolean),
+      Object.values(layoutDisplays(w, dark, clamp)).some(Boolean),
     )
+  const ordinary = canShow(false)
+  const state = stateDisplay(
+    w,
+    name => {
+      const st = lookup(e, name)
+      return st === 'cut' ? st : st?.values
+    },
+    () => !ordinary && canShow(true),
   )
+  return state ?? ordinary
 }
 
 function canPin(

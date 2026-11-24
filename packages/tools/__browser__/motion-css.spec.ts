@@ -360,3 +360,98 @@ test('viewport motion seeks on desktop when its owner is hidden on the only scro
   assert.deepEqual(await read(doc, sample, 1280), ['visible', 0, 0.5, 1])
   assert.deepEqual(await read(doc, sample, 390), ['none', 0, 'auto'])
 })
+
+test('the state that creates a scrollport removes the animated target box', async () => {
+  const target = text('title', 'Reed', {
+    style: { when: [{ state: 'mode', is: 'on', decl: { hidden: true } }] },
+  })
+  const hero = node('hero', 'column', [target])
+  hero.motion = {
+    trigger: 'scroll',
+    steps: [{ ...fade, target: { id: 'title' } }],
+  }
+  const box = node('scroller', 'column', [hero])
+  box.state = [{ name: 'mode', values: 'on-off', initial: 'off' }]
+  box.style = {
+    when: [{ state: 'mode', is: 'on', decl: { overflow: 'scroll-x' } }],
+  }
+  const doc = siteWith([node('before', 'box'), box, node('after', 'box')])
+  const r = await read(
+    doc,
+    `
+    const box=get('scroller'),hero=get('hero'),target=get('title'),raf=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    get('before').style.height=get('after').style.height='1800px';hero.style.height='900px';
+    const sample=()=>[getComputedStyle(box).overflowX,target.getClientRects().length];
+    const out=[sample()],top=hero.getBoundingClientRect().top+scrollY;
+    for(const f of [0,.5,1]){scrollTo(0,top-innerHeight+f*(innerHeight+hero.offsetHeight));await raf();out.push(+getComputedStyle(target).opacity)}
+    box.dataset.sMode='on';await raf();out.push(sample());box.dataset.sMode='off';await raf();out.push(sample());return out`,
+  )
+  assert.deepEqual(r, [['visible', 1], 0, 0.5, 1, ['auto', 0], ['visible', 1]])
+})
+
+test('a hover clamp has no hidden box to hit-test; an actual state reveal restores one', async () => {
+  const extra = text('extra', 'Extra', {
+    style: { base: { hidden: true }, hover: { clampLines: 1 } },
+  })
+  const panel = node('panel', 'column', [text('body', 'Body'), extra])
+  panel.motion = { trigger: 'scroll', pinPx: 200, steps: [fade] }
+  panel.state = [{ name: 'mode', values: 'on-off', initial: 'off' }]
+  const doc = siteWith([panel])
+  const sample = `const el=get('extra'),r=el.getBoundingClientRect();return [getComputedStyle(el).display,el.getClientRects().length,document.elementFromPoint(r.x+1,r.y+1)===el]`
+  assert.deepEqual(await read(doc, sample), ['none', 0, false])
+  delete panel.motion
+  extra.style!.when = [{ state: 'mode', is: 'on', decl: { hidden: false } }]
+  assert.deepEqual(
+    await read(doc, `get('panel').dataset.sMode='on';${sample}`),
+    ['block', 1, true],
+  )
+})
+
+test('distinct site and local values can show a target inside an active scrollport', async () => {
+  const state = (initial: string) => [
+    { name: 'mode', values: 'on-off' as const, initial },
+  ]
+  const target = text('title', 'Reed', {
+    style: {
+      base: { hidden: true },
+      when: [{ state: 'mode', is: 'off', decl: { hidden: false } }],
+    },
+  })
+  target.motion = {
+    trigger: 'scroll',
+    scrollFallback: 'timeline',
+    steps: [fade],
+  }
+  const scroller = node('scroller', 'column', [target])
+  scroller.state = state('on')
+  scroller.style = {
+    when: [{ state: 'mode', is: 'on', decl: { overflow: 'scroll-x' } }],
+  }
+  const doc = siteWith([scroller], {
+    header: { ...node('head', 'instance'), component: 'banner' },
+    components: [
+      {
+        id: 'banner',
+        name: 'Banner',
+        props: [],
+        variants: [],
+        root: {
+          ...node('bar', 'column', [text('label', 'Header')]),
+          state: state('off'),
+        },
+      },
+    ],
+  })
+  const r = await read(
+    doc,
+    `
+    const wrap=document.querySelector('.s-site'),box=get('scroller'),target=get('title');
+    const sample=()=>[wrap.dataset.sMode,box.dataset.sMode,getComputedStyle(box).overflowX,target.getClientRects().length,target.getAnimations().some(a=>a.timeline instanceof ViewTimeline)];
+    const out=[sample()];wrap.dataset.sMode='on';out.push(sample());box.dataset.sMode='off';out.push(sample());return out`,
+  )
+  assert.deepEqual(r, [
+    ['off', 'on', 'auto', 1, false],
+    ['on', 'on', 'auto', 0, false],
+    ['on', 'off', 'auto', 1, false],
+  ])
+})

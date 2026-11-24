@@ -1,22 +1,16 @@
 import type {
-  Decl,
   Frame,
-  Layout,
   Look,
   Motion,
   Node,
   Problem,
   Step,
-  Style,
 } from '../document/index.ts'
 import { find, walk } from '../document/tree.ts'
 import { cssEase } from '../scripts/motionEase.ts'
 import { stepsTier } from '../document/motionSteps.ts'
-import {
-  layoutDisplays,
-  stateDisplay,
-  interactiveLayers,
-} from '../layout/display.ts'
+import { scrollScene } from './scrollScene.ts'
+import { StateConditions, StateAnalysisLimit } from './stateConditions.ts'
 import { resolveEffect } from '../registry/effect.ts'
 import type { Registry } from '../registry/index.ts'
 import type { HtmlNode } from './html.ts'
@@ -294,9 +288,10 @@ export function motionCss(
       }
   }
   const header = trees[1]
+  let conditions: StateConditions | undefined
   for (const root of trees) {
     const chain: Node[] = []
-    let views: ReturnType<typeof scrollViews> | undefined
+    let blocker: ReturnType<typeof scrollScene> | undefined
     walk(root, (w, _p, depth) => {
       chain[depth] = w
       const m = w.motion,
@@ -321,25 +316,31 @@ export function motionCss(
       const targets = nodes.flatMap(v => (v && rendered.get(v)) || [])
       if (!targets.length) return
       if (m.trigger === 'scroll') {
-        views ??= scrollViews(
+        blocker ??= scrollScene(
           root,
           header,
+          site,
           rendered,
           style.classOf,
           style.scheme,
+          side,
+          (conditions ??= new StateConditions()),
         )
-        // A path to any one of the targets is sufficient to observe the track.
-        const observable = views.filter(v =>
-          nodes.some(n => n && v.visible.has(n)),
-        )
-        const obstacle =
-          chain
-            .slice(0, depth)
-            .reverse()
-            .find(n => observable.some(v => v.scrollers.has(n)))?.id ??
-          (root === header && side && observable.some(v => v.layout !== 'phone')
-            ? 'site header'
-            : undefined)
+        let obstacle: string | undefined
+        try {
+          obstacle = blocker(w, nodes)
+        } catch (error) {
+          if (!(error instanceof StateAnalysisLimit)) throw error
+          if (!m.scrollFallback)
+            problems.push({
+              code: 'RESOURCE_LIMIT_EXCEEDED',
+              nodeId: w.id,
+              path: 'motion.trigger',
+              message:
+                'The declared-state conditions are too complex to establish a native viewport timeline. Use the timeline scroll fallback.',
+            })
+          return
+        }
         if (obstacle) {
           if (!m.scrollFallback)
             problems.push({
@@ -445,86 +446,4 @@ export function motionCss(
     nativeScroll,
     inlineClasses,
   }
-}
-
-/** Possible nearer scrollports, kept separate for each layout in this theme. */
-function scrollports(
-  s: Style | undefined,
-  native: boolean,
-  dark: boolean,
-): Record<Layout, boolean> {
-  if (!s) return { desktop: native, tablet: native, phone: native }
-  // clip:pill/arch and line clamping write overflow:hidden after overflow itself.
-  const overflow = (d?: Decl) =>
-    d?.clip === 'pill' || d?.clip === 'arch' || d?.clampLines
-      ? true
-      : d?.overflow === undefined
-        ? undefined
-        : d.overflow === 'scroll-x' || d.overflow === 'scroll-y'
-  const base = overflow(s.base) ?? native
-  const interactive = interactiveLayers.some(k => overflow(s[k]) === true)
-  const desktop =
-    ((dark ? overflow(s.dark) : undefined) ?? (base || interactive)) ||
-    !!s.when?.some(v => overflow(v.decl) === true)
-  const tablet = overflow(s.tablet) ?? desktop
-  return { desktop, tablet, phone: overflow(s.phone) ?? tablet }
-}
-
-/** Intersect the rendered display chain in each concrete layout/theme. In
- * particular, a visible target under display:none still has no observable box. */
-function scrollViews(
-  root: Node,
-  header: Node,
-  rendered: ReadonlyMap<Node, HtmlNode>,
-  classOf: ReadonlyMap<string, string>,
-  scheme: Look['dark'],
-) {
-  return (scheme === 'auto' ? [false, true] : [scheme === 'dark']).flatMap(
-    dark => {
-      const views = (['desktop', 'tablet', 'phone'] as const).map(layout => ({
-        layout,
-        visible: new Set<Node>(),
-        scrollers: new Set<Node>(),
-      }))
-      const chain: Node[] = []
-      walk(root, (w, parent, depth) => {
-        chain[depth] = w
-        const el = rendered.get(w)
-        if (!el) return
-        // Grouped SVG parts do not receive their ordinary authored style classes.
-        const cls = classOf.get(w.id),
-          styled =
-            cls !== undefined &&
-            String(el.attrs?.class).split(' ').includes(cls)
-        const displays = styled ? layoutDisplays(w, dark) : undefined
-        const forced = styled
-          ? stateDisplay(w, name => {
-              // The emitted style selectors can match any ancestor holder or the site wrapper.
-              const values = new Set<string>()
-              for (const n of [header, ...chain.slice(0, depth + 1)]) {
-                const d = n.state?.find(d => d.name === name)
-                if (d)
-                  for (const value of d.values === 'on-off'
-                    ? ['on', 'off']
-                    : d.values)
-                    values.add(value)
-              }
-              return [...values]
-            })
-          : undefined
-        const scroll = scrollports(
-          styled ? w.style : undefined,
-          el.tag === 'dialog' || el.attrs?.popover !== undefined,
-          dark,
-        )
-        for (const view of views) {
-          if (parent && !view.visible.has(parent)) continue
-          if (!(forced ?? displays?.[view.layout] ?? true)) continue
-          view.visible.add(w)
-          if (scroll[view.layout]) view.scrollers.add(w)
-        }
-      })
-      return views
-    },
-  )
 }
