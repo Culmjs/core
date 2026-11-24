@@ -1,6 +1,6 @@
-# Motion reference and byte-budget proposal
+# Stage 3 motion references and byte budget
 
-**Owner decision requested:** the three excerpts and tolerances below, a **3,800-byte timeline ceiling**, and whether motion work may start given the outstanding Stage 3c decision. None is signed off. Record the owner's accepted values or replacements before Task 2 or any tuning.
+**Owner decision (2026-11-23):** approved the GSAP entrance, the GSAP pinned scroll panel and the Codrops masked-letter reveal, the tolerances below, and a **3,800-byte timeline ceiling**. Implementation may proceed while the Stage 3c benchmark decision remains open. The checkpoints were independently reviewed at commit `79f2ee4` before tuning.
 
 ## How to read the checkpoints
 
@@ -8,13 +8,13 @@ Measured 2026-11-23 (Eastern time), **before** implementing Culm motion. Fresh h
 
 For timed samples, cross the trigger by scrolling down, leave scroll still, and sample at a known local animation time. Reference time was set on the upstream tween (`animation.pause().time(seconds)`); use a controlled clock in Culm. Frame `n` means `n / 60` seconds from onset. For scroll samples, jump without smooth scrolling, update the trigger, then wait two animation frames for layout. Use fresh pages for each scene and viewport.
 
-**Proposed tolerances:** ±2 CSS px for positions and lengths, ±0.05 for normalized progress, ±1 captured frame (16.67 ms at 60 Hz) for onset. Compare the eased position at the specified time, not a frame taken at an unknown time near it. Re-entry behavior, release direction, masking, reading order and completed text must agree. **Accepted tolerances: pending.**
+**Accepted tolerances:** ±2 CSS px for positions and lengths, ±0.05 for normalized progress, ±1 captured frame (16.67 ms at 60 Hz) for onset. Compare the eased position at the specified time, not a frame taken at an unknown time near it. Re-entry behavior, release direction, masking, reading order and completed text must agree.
 
 ### 1. Box: enter once, travel 500 px
 
 [GSAP ScrollTrigger, Simple example](https://gsap.com/docs/v3/Plugins/ScrollTrigger/#simple-example), v3.15 docs: `.box` is its own trigger, `x: 500`, no explicit duration or ease. The source is a snippet, not a recorded page; the docs expose no immutable page revision. Ran that snippet against [GSAP and ScrollTrigger 3.15.0, revision `13e2b79`](https://github.com/greensock/GSAP/tree/13e2b790546426a1a2e0e9b409f3f8dc6d6611f2/dist). The [defaults](https://github.com/greensock/GSAP/blob/13e2b790546426a1a2e0e9b409f3f8dc6d6611f2/src/gsap-core.js#L1092) matter: half **time** is 75% of the trip, not 250 px.
 
-Capture layout, also proposed for Culm: a `360 × 48` block at document `y = 2H` (`H` = viewport height), no body margins, more than one viewport of content after it, horizontal overflow clipped. Draw original reed notches on the block. Start its left edge at `24px` on desktop and `−240px` on phone so part of the long marker remains visible throughout the 500 px trip. Trigger = block top crossing viewport bottom; from above, jump to `scrollY = H + 300`. Read the x translation and `getBoundingClientRect().left`.
+Capture layout for both the reference and Culm: a `360 × 48` block at document `y = 2H` (`H` = viewport height), no body margins, more than one viewport of content after it, horizontal overflow clipped. Draw original reed notches on the block. Start its left edge at `24px` on desktop and `−240px` on phone so part of the long marker remains visible throughout the 500 px trip. Trigger = block top crossing viewport bottom; from above, jump to `scrollY = H + 300`. Read the x translation and `getBoundingClientRect().left`.
 
 | Reference reading (CSS px)                     | 1280 × 900: Δx / left | 390 × 900: Δx / left |
 | ---------------------------------------------- | --------------------- | -------------------- |
@@ -97,7 +97,7 @@ These are **measured raw UTF-8 bytes** of script text, including the host invoca
 
 The throwaway host is minified by esbuild 0.28.2 with the generator's TS loader, `minify: true`, `target: 'es2017'`, and the same `(function…)(document,window)` invocation. It splits a plain-text heading into masked glyphs, builds delayed tracks for them and two marks, maps the document's scroll range onto their timeline, seeks backward and forward, reseeks on resize, removes its listeners and restores the fixture on `pagehide`. This is a byte sample, not an implementation of the reference scenes.
 
-**Propose 3,800 bytes for the full timeline script alone.** This allows **2,743 bytes above the measured slice**. Allocation below is an engineering estimate in minified bytes, not four measurements:
+**Approved ceiling: 3,800 bytes for the full timeline script alone.** This allows **2,743 bytes above the measured slice**. Allocation below is an engineering estimate in minified bytes, not four measurements:
 
 | Production work absent from the slice                                                                                                                 | Allowance |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------: |
@@ -106,4 +106,4 @@ The throwaway host is minified by esbuild 0.28.2 with the generator's TS loader,
 | General text splitting, accessibility, bounded growth, reflow and restoring original DOM                                                              |       750 |
 | Integration margin across those pieces                                                                                                                |       243 |
 
-At the proposed cap and today's generated base/states, the worst mixed page is **6,451 bytes** (`686 + 2 + 1963 + 3800`), leaving **13,549**. The [compiler charges separators to base](../../packages/core/src/compile/page.ts#L378-L385): the unjoined 686 needs both joins added, but the 10,000-byte base ceiling already includes them. At all three accounted maxima the total is **19,993** (`10,000 + 6,193 + 3,800`), leaving **7**. The largest compatible timeline ceiling is **3,807** (`20,000 − 10,000 − 6,193`). Keep the 20,000 shared limit and remeasure the real host as each feature lands; if it cannot fit the proposed 3,800 bytes, return the numbers and feature tradeoff to the owner.
+At the approved cap and today's generated base/states, the worst mixed page is **6,451 bytes** (`686 + 2 + 1963 + 3800`), leaving **13,549**. The [compiler charges separators to base](../../packages/core/src/compile/page.ts#L378-L385): the unjoined 686 needs both joins added, but the 10,000-byte base ceiling already includes them. At all three accounted maxima the total is **19,993** (`10,000 + 6,193 + 3,800`), leaving **7**. The largest compatible timeline ceiling is **3,807** (`20,000 − 10,000 − 6,193`). Keep the 20,000 shared limit and remeasure the real host as each feature lands; if it cannot fit 3,800 bytes, return the numbers and feature tradeoff to the owner.
