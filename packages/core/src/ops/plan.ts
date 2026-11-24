@@ -75,6 +75,7 @@ const TABLE: { [K in Op['op']]: OpFn<K> } = {
   setRequired: nodes.setRequired,
   bindData: nodes.bindData,
   setStates: nodes.setStates,
+  setMotion: nodes.setMotion,
   insertBlock: blocks.insertBlock,
   setBlockSetting: blocks.setBlockSetting,
   updateBlock: blocks.updateBlock,
@@ -94,7 +95,7 @@ const TABLE: { [K in Op['op']]: OpFn<K> } = {
 /** The operation names in the order of the spec's table. */
 export const OP_NAMES: readonly Op['op'][] = [
   'add', 'remove', 'move', 'setProps', 'setText', 'setStyle', 'setHidden', 'setSlot', 'setRequired',
-  'bindData', 'setStates',
+  'bindData', 'setStates', 'setMotion',
   'insertBlock', 'setBlockSetting', 'updateBlock',
   'makeComponent', 'setInstance', 'detach', 'removeComponent',
   'addPage', 'removePage', 'setPage', 'movePage', 'setSite', 'setLook', 'setSiteStyles', 'setFonts',

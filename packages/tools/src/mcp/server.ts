@@ -212,7 +212,7 @@ const TOOLS = [
   ],
   [
     'catalogue',
-    "What can be built. what: guide | kinds | operations | recipes | blocks | sources; id for one entry (an operation's example, a block's settings and insert, a recipe's batch); cursor.",
+    "What can be built. what: guide | kinds | operations | recipes | blocks | sources | effects; id for one entry (an operation's example, a block's settings and insert, a recipe's batch, or an effect's tier, numeric settings and example); cursor.",
     schema(
       {
         what: {
@@ -223,6 +223,7 @@ const TOOLS = [
             'recipes',
             'blocks',
             'sources',
+            'effects',
           ],
         },
         id: str,
@@ -445,7 +446,7 @@ export function createMcpServer(o: McpOptions): Server {
           ? {
               ...t,
               description:
-                'Commit 1–32 ordered insert/update/move/remove/theme operations atomically. Each insert.node is one JSON section; update merges fields on an id; move defaults to the page root. Returns revision and section ids.',
+                'Commit 1–32 ordered insert/update/move/remove/theme operations atomically. Each insert.node is one JSON section; update merges fields on an id. Give motion as {trigger,effect,settings?} or {trigger,steps}; update.motion:null clears it. Move defaults to the page root. Returns revision and section ids.',
               inputSchema: schema(
                 { baseRevision: num, page: str, key: str, ops: jsonEditSchema },
                 ['baseRevision', 'ops'],

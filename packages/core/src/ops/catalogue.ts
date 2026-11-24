@@ -2,7 +2,12 @@ import { KINDS } from '../document/index.ts'
 import { STATES } from '../document/layers.ts'
 import { ID_RE, STYLE_GROUPS } from '../document/kinds.ts'
 import type { KindSpec, PropField, Problem } from '../document/index.ts'
-import type { BlockDef, DataSource, Registry } from '../registry/index.ts'
+import type {
+  BlockDef,
+  DataSource,
+  EffectDef,
+  Registry,
+} from '../registry/index.ts'
 import { paged, tagOf } from './cap.ts'
 import { GUIDE as GUIDE_ROWS } from './guide.ts'
 import { RECIPES } from './recipes.ts'
@@ -13,7 +18,14 @@ import type { Head, Op } from './types.ts'
 
 type Refusal = { ok: false; problems: Problem[] }
 type Row = Record<string, unknown>
-type What = 'guide' | 'kinds' | 'operations' | 'recipes' | 'blocks' | 'sources'
+type What =
+  | 'guide'
+  | 'kinds'
+  | 'operations'
+  | 'recipes'
+  | 'blocks'
+  | 'sources'
+  | 'effects'
 /** Composition first: the guide, then what to compose with, then finished examples. */
 const WHATS: readonly What[] = [
   'guide',
@@ -22,6 +34,7 @@ const WHATS: readonly What[] = [
   'recipes',
   'blocks',
   'sources',
+  'effects',
 ]
 
 // ---- limits. Every bound is a serialised length (`JSON.stringify(v).length`), never a count of characters.
@@ -430,6 +443,48 @@ function sourceView(s: DataSource): Entryview {
   }
 }
 
+// ---- effects
+
+function effectView(e: EffectDef, site: Head | undefined): Entryview {
+  const head = () => ({ name: str(e.name), tier: e.tier })
+  return {
+    name: e.name,
+    list: head,
+    detail: () => {
+      const page = site?.doc.pages?.[0]
+      const header = site?.doc.header?.id
+      // Page ids are text (up to 100 characters); only node ids follow ID_RE.
+      const at =
+        typeof page?.id === 'string' &&
+        page.id.length > 0 &&
+        page.id.length <= 100 &&
+        typeof page.root?.id === 'string' &&
+        ID_RE.test(page.root.id)
+          ? { tree: { page: page.id }, id: page.root.id }
+          : typeof header === 'string' && ID_RE.test(header)
+            ? { tree: 'header' as const, id: header }
+            : { tree: T, id: ROOT }
+      return {
+        header: {
+          ...head(),
+          example: {
+            op: 'setMotion',
+            ...at,
+            motion: { trigger: 'load', effect: str(e.name) },
+          } satisfies Op,
+        },
+        rows: Object.entries(e.settings).map(([key, s]) => ({
+          key: cut(key, TEXT),
+          type: 'number',
+          min: num(s.min),
+          max: num(s.max),
+          default: num(s.default),
+        })),
+      }
+    },
+  }
+}
+
 // ---- operations
 
 /** Whether the key `P` of `E` may be left out. */
@@ -478,7 +533,7 @@ const tree: [string, false] = [TREE, false]
 const id: [string, false] = ['string', false]
 
 /**
- * The 26 operations in the order of the spec's table. Each example is accepted by `plan` after the ones before it, applied in
+ * The operations in the order of the spec's table. Each example is accepted by `plan` after the ones before it, applied in
  * order as one growing batch sequence, starting from a site whose home page holds one text, `t`, with the kit registry.
  */
 export const OPERATIONS: readonly Entry[] = [
@@ -616,6 +671,16 @@ export const OPERATIONS: readonly Entry[] = [
       tree: T,
       id: 'box',
       state: [{ name: 'tab', values: ['one', 'two'], initial: 'one' }],
+    },
+  ),
+  entry(
+    'setMotion',
+    { tree, id, motion: ['Motion|null', false] },
+    {
+      op: 'setMotion',
+      tree: T,
+      id: 't',
+      motion: { trigger: 'load', effect: 'rise' },
     },
   ),
   entry(
@@ -827,6 +892,8 @@ export function catalogue(
     } else if (query.what === 'sources') {
       unknown = 'UNKNOWN_SOURCE'
       views = registry.sources().map(sourceView)
+    } else if (query.what === 'effects') {
+      views = registry.effects().map(e => effectView(e, site))
     } else if (query.what === 'guide') {
       if (query.id !== undefined)
         return bad('The guide has no entries by id.', { path: 'id' })
@@ -878,6 +945,11 @@ export function catalogue(
       const hit = views.find(v => v.name === query.id)
       if (!hit) {
         const allowed = views.slice(0, ALLOWED).map(v => cut(v.name, TEXT))
+        if (query.what === 'effects')
+          return bad(`No effect "${cut(query.id, TEXT)}".`, {
+            path: 'id',
+            allowed,
+          })
         if (query.what === 'recipes')
           return bad(`No recipe "${cut(query.id, TEXT)}".`, {
             path: 'id',

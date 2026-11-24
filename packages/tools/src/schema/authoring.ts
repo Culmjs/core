@@ -29,6 +29,21 @@ const NODE_KEYS: Record<string, Schema> = {
   overrides: { type: 'object' },
   state: { type: 'array' },
   on: { type: 'array' },
+  motion: {
+    type: 'object',
+    description:
+      'A trigger with either steps or a registered effect and optional numeric settings.',
+    properties: {
+      trigger: { anyOf: [str, { type: 'object' }] },
+      steps: { type: 'array', items: { type: 'object' } },
+      effect: str,
+      settings: { type: 'object', additionalProperties: { type: 'number' } },
+      pinPx: { type: 'number' },
+      scrollFallback: { const: 'timeline' },
+    },
+    required: ['trigger'],
+    oneOf: [{ required: ['steps'] }, { required: ['effect'] }],
+  },
   required: { type: 'boolean' },
 }
 

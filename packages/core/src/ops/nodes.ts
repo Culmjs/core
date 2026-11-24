@@ -507,3 +507,6 @@ export const bindData: OpFn<'bindData'> = (doc, _registry, op) =>
 
 export const setStates: OpFn<'setStates'> = (doc, _registry, op) =>
   edit(doc, op, setFields({ state: list, on: list }))
+
+export const setMotion: OpFn<'setMotion'> = (doc, _registry, op) =>
+  edit(doc, op, setFields({ motion: isObj }))

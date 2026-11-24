@@ -147,14 +147,14 @@ A change is a request: a list of operations, applied to a known revision of a si
 
 ### Operations
 
-There are 26 operations. Each has typed arguments, and `catalogue` lists them with an example of each.
+There are 27 operations. Each has typed arguments, and `catalogue` lists them with an example of each.
 
-| Group      | Operations                                                                                                                 |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Nodes (11) | `add`, `remove`, `move`, `setProps`, `setText`, `setStyle`, `setHidden`, `setSlot`, `setRequired`, `bindData`, `setStates` |
-| Blocks (3) | `insertBlock`, `setBlockSetting`, `updateBlock`                                                                            |
-| Pieces (4) | `makeComponent`, `setInstance`, `detach`, `removeComponent`                                                                |
-| Site (8)   | `addPage`, `removePage`, `setPage`, `movePage`, `setSite`, `setLook`, `setSiteStyles`, `setFonts`                          |
+| Group      | Operations                                                                                                                              |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Nodes (12) | `add`, `remove`, `move`, `setProps`, `setText`, `setStyle`, `setHidden`, `setSlot`, `setRequired`, `bindData`, `setStates`, `setMotion` |
+| Blocks (3) | `insertBlock`, `setBlockSetting`, `updateBlock`                                                                                         |
+| Pieces (4) | `makeComponent`, `setInstance`, `detach`, `removeComponent`                                                                             |
+| Site (8)   | `addPage`, `removePage`, `setPage`, `movePage`, `setSite`, `setLook`, `setSiteStyles`, `setFonts`                                       |
 
 A node is addressed by a tree and an id: `{ tree: 'header' | 'footer' | { page: id } | { component: id }, id }`. A component's tree has its own ids, apart from the pages. `add` fills in an id (the lowest unused `n` id), a slot and a name when the node leaves them out. `detach` turns an instance back into its own nodes: the component's own parts get new ids, while the root and the content a person placed in the instance's slots keep theirs. It is refused with `RESOURCE_LIMIT_EXCEEDED` when the instance, filled in, holds more than 2,000 elements, because the copy would be cut. `updateBlock` brings an inserted block to the registered version of its block and lists, as a note, the parts a person had changed. The block's root keeps its slot, placement, hiding, show conditions, lock and name.
 
@@ -211,9 +211,9 @@ catalogue(registry, { what: 'kinds' }) // compact rows, paged
 catalogue(registry, { what: 'kinds', id: 'text' }) // one entry in full
 ```
 
-`what` is `guide`, `kinds`, `operations`, `recipes`, `blocks` or `sources`, in the order an agent should read them. It is generated from the registry, so a plug-in's kinds, blocks and sources appear with the core ones. The list views are terse: `guide` is rows of plain sentences on composing a section; `kinds` is one string per kind (`kind(role): setting, setting`); `operations` is one string per operation with a `legend` for the long types; `recipes` is rows `{ recipe, name, guide, ops }`; a block is `{ block, name, category, looks, guide }`; a source has its fields. A view with an `id` returns the one entry in full: a kind's settings with their `hint` (the grammar of a shape's `geometry`, `fill` and `stroke`), an operation's fields and example, a recipe's batch (its first operation aimed at the first page of the site, which `plan` accepts as it stands), a block's settings with a ready insert (pass `site` to name the first page of the site) and a source's first sample row. An unknown `id` is refused with the code of its kind and the allowed names; an unknown recipe is `INVALID_OPERATION` at `id`.
+`what` is `guide`, `kinds`, `operations`, `recipes`, `blocks`, `sources` or `effects`. It is generated from the registry, so a plug-in's kinds, blocks, sources and effects appear with the core ones. The list views are terse: `guide` is rows of plain sentences on composing a section; `kinds` is one string per kind (`kind(role): setting, setting`); `operations` is one string per operation with a `legend` for the long types; `recipes` is rows `{ recipe, name, guide, ops }`; a block is `{ block, name, category, looks, guide }`; a source has its fields; an effect has its name and tier. A view with an `id` returns the one entry in full: a kind's settings with their `hint` (the grammar of a shape's `geometry`, `fill` and `stroke`), an operation's fields and example, a recipe's batch (its first operation aimed at the first page of the site, which `plan` accepts as it stands), a block's settings with a ready insert (pass `site` to name the first page of the site), a source's first sample row or an effect's numeric settings and `setMotion` example. An unknown `id` is refused with the code of its kind and the allowed names; an unknown recipe or effect is `INVALID_OPERATION` at `id`.
 
-`GUIDE` and `RECIPES` are core data, like `OPERATIONS`: six recipes (`hero`, `split`, `cta-band`, `buttons`, `divider`, `card`) that use only site colours and leave node ids out so one can be applied twice. The five list replies `guide`, `kinds`, `operations`, `recipes` and `blocks` stay within 9,165 characters on the starter registry.
+`GUIDE` and `RECIPES` are core data, like `OPERATIONS`: six recipes (`hero`, `split`, `cta-band`, `buttons`, `divider`, `card`) that use only site colours and leave node ids out so one can be applied twice. The five list replies `guide`, `kinds`, `operations`, `recipes` and `blocks` stay within 10,500 characters on the starter registry.
 
 ### Diff and restore
 

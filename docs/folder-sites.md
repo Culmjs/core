@@ -105,6 +105,23 @@ A page's `root`, and every child, is one of three things.
 
 `culm expand <file> <id>` rewrites one short form in a file as its nodes, so you can then edit the parts inside it.
 
+### Motion in a page file
+
+Place this plain node in the `children` of a page column, then run `culm build`. The built-in `rise` effect fades the heading in while moving it up 16 pixels over 400 ms:
+
+```json
+{
+  "id": "title",
+  "kind": "text",
+  "props": { "level": "h1", "runs": [{ "text": "Open studio" }] },
+  "motion": { "trigger": "load", "effect": "rise" }
+}
+```
+
+`motion` is a node field, alongside `props` and `style`. Its value contains a trigger and either a registered `effect` (with optional numeric `settings`) or a sequence of `steps`. Delete the field to clear it in a file; `null` is the edit operation's instruction to delete. See [Motion on a heading](mcp.md#motion-on-a-heading) for a checked sequence and the equivalent `write` calls. `culm schema` includes the field for editors; `culm build` checks the program against the actual registry and tree and reports malformed motion at its source.
+
+Setting motion on a `block` shorthand or one of its children via MCP expands that block in the page file. A `use` shorthand can store only piece settings and its name and id: a motion edit there is refused. To animate every use, explicitly edit the node in the piece file; for just one use, `detach` it first and edit the resulting nodes.
+
 ### `pieces/**/*.json`
 
 ```jsonc

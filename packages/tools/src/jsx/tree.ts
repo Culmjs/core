@@ -35,6 +35,7 @@ const EXTRAS = [
   'showIfAny',
   'state',
   'on',
+  'motion',
 ]
 const RESERVED = new Set([
   'id',
@@ -520,6 +521,7 @@ function update(tree: unknown, o: Node, w: Want, out: Entry[]) {
   for (const [opName, keys] of [
     ['bindData', ['repeat', 'bind', 'showIf', 'showIfAny']],
     ['setStates', ['state', 'on']],
+    ['setMotion', ['motion']],
   ] as const) {
     const d: Obj = {}
     for (const k of keys)

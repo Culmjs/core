@@ -5,6 +5,7 @@ import type {
   Language,
   Layout,
   Look,
+  Motion,
   Node,
   Override,
   Placement,
@@ -71,6 +72,7 @@ export type Op =
       state?: StateDecl[] | null
       on?: Trigger[] | null
     } & At)
+  | ({ op: 'setMotion'; motion: Motion | null } & At)
   | {
       op: 'insertBlock'
       tree: TreeRef

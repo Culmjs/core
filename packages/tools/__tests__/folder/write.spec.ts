@@ -154,6 +154,17 @@ const CASES: [name: string, ops: Op[]][] = [
     ],
   ],
   [
+    'setMotion',
+    [
+      {
+        op: 'setMotion',
+        tree: about,
+        id: 'abouttitle',
+        motion: { trigger: 'load', effect: 'rise' },
+      },
+    ],
+  ],
+  [
     'insertBlock',
     [
       {
@@ -235,9 +246,9 @@ const CASES: [name: string, ops: Op[]][] = [
   ['setFonts', [{ op: 'setFonts', fonts: ['sys:sans'] }]],
 ]
 
-test('the table has one case for each of the 26 operations', () => {
-  assert.equal(CASES.length, 26)
-  assert.equal(new Set(CASES.map(c => c[0])).size, 26)
+test('the table has one case for each of the 27 operations', () => {
+  assert.equal(CASES.length, 27)
+  assert.equal(new Set(CASES.map(c => c[0])).size, 27)
 })
 
 // The order of `components` is not meaningful (the loader lists pieces by path order of first use), so both sides are sorted by id.

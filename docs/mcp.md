@@ -132,6 +132,63 @@ New starters opt in to a display ceiling: `styles.textRange: {"min":11,"max":96,
 
 Use `describe {"example":"display"}`, `"phone-row"`, `"figure"` or `"group"` for a small, editable node. The figure pairs an original path, gradient and stroke with a mixed-run caption; group parts have their own geometry, paint and slots. Replace or omit anything. There is no block registration or separate planning step.
 
+### Motion on a heading
+
+On a home page with no `title` node, send these arguments to `write`, substituting the revision from `describe`. The heading rises 24 pixels into place the first time it enters view:
+
+```json
+{
+  "baseRevision": 0,
+  "page": "home",
+  "ops": [
+    {
+      "op": "insert",
+      "node": {
+        "kind": "text",
+        "id": "title",
+        "level": "h1",
+        "text": "Open studio",
+        "motion": {
+          "trigger": "enter-view",
+          "effect": "rise",
+          "settings": { "distance": 24 }
+        }
+      }
+    }
+  ]
+}
+```
+
+`find {"tree":"home","id":"title","full":true}` returns the stored program. To replace it, send another `write` using the revision just returned:
+
+```json
+{
+  "baseRevision": 1,
+  "page": "home",
+  "ops": [
+    {
+      "op": "update",
+      "id": "title",
+      "motion": {
+        "trigger": "load",
+        "steps": [
+          {
+            "target": "self",
+            "from": { "opacity": 0 },
+            "to": { "opacity": 1 },
+            "durationMs": 300
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+Omitting `motion` from an `update` keeps it. Sending `"motion": null` removes it. A full subtree replacement describes the whole node, so leaving `motion` out there removes it too. Invalid motion refuses the batch, including any earlier edits.
+
+In `--full` mode, send `{"op":"setMotion","tree":{"page":"home"},"id":"title","motion":null}` in `plan` or `apply` to clear this heading. Supply either program above instead of `null` to set it. A tree can also be `"header"`, `"footer"` or `{"component":"<piece id>"}`. Use `diff` between revisions to see the motion field that changed, and `restore` to bring an earlier program back.
+
 ### Common result format
 
 - A reply is one text item of JSON, at most 16,000 characters (`READ_CAP`), with `cut: true` when something was left out and, for a list, a `cursor` for the rest.
@@ -142,17 +199,17 @@ Use `describe {"example":"display"}`, `"phone-row"`, `"figure"` or `"group"` for
 
 ## Full editing API (`--full`)
 
-| Tool        | Input                                                                                   | Output                                                                                                                                              |
-| ----------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `describe`  | none                                                                                    | versions, site name and revision, ceilings, the read cap, required node count, text range, folder or host-supplied                                  |
-| `read`      | `what` (`site`, `page`, `node`, `search`) with its arguments, `cursor`                  | rows, revision, `cut`, `cursor`                                                                                                                     |
-| `catalogue` | `what` (`guide`, `kinds`, `operations`, `recipes`, `blocks`, `sources`), `id`, `cursor` | rows, `cut`, `cursor`                                                                                                                               |
-| `plan`      | `baseRevision`, `ops`, `key`?                                                           | `revision`, `counts`, `roots`, `changed`, `pages`, `notes`; or the refusal. Saves nothing                                                           |
-| `apply`     | `baseRevision`, `key`, `ops`                                                            | the new `revision` and `from`, with the same fields as `plan` and a `hint`; or the refusal                                                          |
-| `measure`   | `pages`, `widths`, `classes`, `since`, `cursor`                                         | `revision`, `measured`, `findings` (merged rows), `incomplete`, `blocked`, `skipped`, and `fixed` and `unchecked` when `since` is given             |
-| `diff`      | `from`, `to` (default: the head), `cursor`                                              | the added, removed, moved and changed nodes and the affected pages, `cut`, `cursor`                                                                 |
-| `restore`   | `to`, `baseRevision`, `key`                                                             | the new revision, with the same fields as `plan`; or the refusal                                                                                    |
-| `build`     | none                                                                                    | counts and lists of the manifest's pages, scripts and styles, and its build hash; `UNSUPPORTED_CAPABILITY` when the host passes no `build` function |
+| Tool        | Input                                                                                              | Output                                                                                                                                              |
+| ----------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `describe`  | none                                                                                               | versions, site name and revision, ceilings, the read cap, required node count, text range, folder or host-supplied                                  |
+| `read`      | `what` (`site`, `page`, `node`, `search`) with its arguments, `cursor`                             | rows, revision, `cut`, `cursor`                                                                                                                     |
+| `catalogue` | `what` (`guide`, `kinds`, `operations`, `recipes`, `blocks`, `sources`, `effects`), `id`, `cursor` | rows, `cut`, `cursor`                                                                                                                               |
+| `plan`      | `baseRevision`, `ops`, `key`?                                                                      | `revision`, `counts`, `roots`, `changed`, `pages`, `notes`; or the refusal. Saves nothing                                                           |
+| `apply`     | `baseRevision`, `key`, `ops`                                                                       | the new `revision` and `from`, with the same fields as `plan` and a `hint`; or the refusal                                                          |
+| `measure`   | `pages`, `widths`, `classes`, `since`, `cursor`                                                    | `revision`, `measured`, `findings` (merged rows), `incomplete`, `blocked`, `skipped`, and `fixed` and `unchecked` when `since` is given             |
+| `diff`      | `from`, `to` (default: the head), `cursor`                                                         | the added, removed, moved and changed nodes and the affected pages, `cut`, `cursor`                                                                 |
+| `restore`   | `to`, `baseRevision`, `key`                                                                        | the new revision, with the same fields as `plan`; or the refusal                                                                                    |
+| `build`     | none                                                                                               | counts and lists of the manifest's pages, scripts and styles, and its build hash; `UNSUPPORTED_CAPABILITY` when the host passes no `build` function |
 
 ### `describe`
 
@@ -177,8 +234,9 @@ What can be built, composition first. `what` is read in this order:
 - `recipes`: ready batches, rows `{ recipe, name, guide, ops }` where `ops` is a count. `id=<recipe>` gives the batch itself, with its first operation aimed at the first page of the site. Recipes are `hero`, `split`, `cta-band`, `buttons`, `divider` and `card` (which ends with `makeComponent`). `hero` sets its text beside a drawing, `split` is a two-column section, and `hero`, `split` and `cta-band` hold their content in an inner column of max width 1120 with 80 px of side padding, so none trips the design findings. They use only site colours, add nodes without fixed ids (except `card`'s) and are accepted by `plan` as they stand.
 - `blocks`: rows `{ block, name, category, looks, guide }`, finished examples to insert, restyle or copy. `id=<block>` gives the settings and a ready insert.
 - `sources`: each source with its fields. `id` adds a first sample row.
+- `effects`: `{name,tier}` for each registered motion preset. `{"what":"effects","id":"rise"}` returns a `setMotion` example and a row per numeric setting with its `min`, `max` and `default`. `rise` accepts `distance` from 0 to 100 pixels (default 16). The tier is the effect's minimum: a `load` rise uses CSS (tier 1); an `enter-view` trigger needs the timeline (tier 2).
 
-`id` returns one entry; the `guide` has none. Every registered block, look, source and kind appears, and a batch built only from what the catalogue states is accepted. The five lists `guide`, `kinds`, `operations`, `recipes` and `blocks` together are the first read, at most 9,165 characters on the starter registry. An unknown recipe id is `INVALID_OPERATION` at `id`, with the recipe ids.
+`id` returns one entry; the `guide` has none. Every registered block, look, source, effect and kind appears. The five lists `guide`, `kinds`, `operations`, `recipes` and `blocks` together are the first read, capped at 10,500 characters on the starter registry. An unknown recipe or effect id is `INVALID_OPERATION` at `id`, with the available ids.
 
 ### `plan` and `apply`
 

@@ -384,7 +384,7 @@ for (const bad of [
     assert.ok(!/\n\s+at /.test(ps[0].message), 'no stack trace')
   })
 
-test('OP_NAMES is the 26 operations of the spec, in the order of its table, each once', () => {
+test('OP_NAMES lists the operations in table order, each once', () => {
   assert.deepEqual(
     [...OP_NAMES],
     [
@@ -399,6 +399,7 @@ test('OP_NAMES is the 26 operations of the spec, in the order of its table, each
       'setRequired',
       'bindData',
       'setStates',
+      'setMotion',
       'insertBlock',
       'setBlockSetting',
       'updateBlock',
@@ -435,7 +436,7 @@ test('a refusal carries problems and no document, whichever step refused', () =>
 })
 
 test('an unknown operation name lists the allowed names', () => {
-  assert.equal(OP_NAMES.length, 26)
+  assert.equal(OP_NAMES.length, 27)
   const ps = refused(run([{ op: 'paint' }]))
   assert.deepEqual(ps[0].allowed, OP_NAMES)
 })
@@ -598,7 +599,7 @@ test('the note lists every new dead link, not one that was dead before', () => {
   assert.deepEqual(dead(run([setText('t1', 'x')], before)), [])
 })
 
-test('after plan, created and changed are the ids of the diff, for each of the 26 operations', () => {
+test('after plan, created and changed are the ids of the diff, for every operation', () => {
   const registry = kitRegistry()
   const pair = (t: unknown, id: string) => `${JSON.stringify(t)}|${id}`
   let doc = siteWith([text('t', 'Hello')])
@@ -636,6 +637,89 @@ test('after plan, created and changed are the ids of the diff, for each of the 2
   assert.ok(
     seen > 20,
     'the chain must change nodes for the test to mean something',
+  )
+})
+
+test('setMotion replaces the whole value, validates the final batch, and null unsets', () => {
+  const doc = deepFreeze(base())
+  const at = { op: 'setMotion', tree: T, id: 't1' }
+  const motion = { trigger: 'hover', effect: 'rise', settings: { distance: 8 } }
+  const r = ok(
+    run(
+      [
+        { ...at, motion: {} },
+        { ...at, motion },
+      ],
+      doc,
+    ),
+  )
+  assert.deepEqual(r.changed, [{ tree: T, id: at.id }])
+  const stored = r.doc.pages[0].root.children![0].motion
+  assert.deepEqual(stored, motion)
+  motion.settings.distance = 200
+  assert.equal(
+    stored.settings.distance,
+    8,
+    'the request no longer owns the value',
+  )
+  assert.equal(Object.hasOwn(doc.pages[0].root.children![0], 'motion'), false)
+  assert.equal(
+    Object.hasOwn(
+      ok(run([{ ...at, motion: null }], r.doc)).doc.pages[0].root.children![0],
+      'motion',
+    ),
+    false,
+  )
+  for (const bad of [at, { ...at, motion: [] }])
+    assert.equal(refused(run([bad], r.doc))[0].code, 'INVALID_OPERATION')
+})
+
+test('a bad setMotion on a 41-character block descendant identifies its exact node, field and operation', () => {
+  const rootId = 'a'.repeat(20)
+  const id = `${rootId}.${'b'.repeat(20)}`
+  const doc = siteWith([
+    {
+      ...node(rootId, 'column', [text(id, 'Title')]),
+      origin: { block: 'demo', version: 1, look: 'default' },
+    },
+    text('other', 'Other'),
+  ])
+  assert.deepEqual(validateSite(doc, reg), [])
+  const ps = refused(
+    run(
+      [
+        setText('other', 'New'),
+        {
+          op: 'setMotion',
+          tree: T,
+          id,
+          motion: {
+            trigger: 'load',
+            steps: [
+              {
+                target: 'self',
+                from: { opacity: 0 },
+                to: { opacity: 1 },
+                durationMs: -1,
+              },
+            ],
+          },
+        },
+        setText('other', 'Last'),
+      ],
+      doc,
+    ),
+  )
+  assert.deepEqual(
+    ps.map(p => [p.nodeId, p.path, p.op]),
+    [[id, 'motion.steps.0.durationMs', 1]],
+  )
+  const malformed = 'X'.repeat(41)
+  assert.equal(
+    validateSite(siteWith([text(malformed, 'Bad')]), reg).find(
+      p => p.path === 'id',
+    )?.nodeId,
+    malformed.slice(0, 40),
   )
 })
 

@@ -85,13 +85,16 @@ export const jsonEditSchema = {
   maxItems: 32,
   items: {
     oneOf: [
-      operation('insert', { node: obj }, ['node']),
+      operation('insert', { node: { ...obj, properties: { motion: obj } } }, [
+        'node',
+      ]),
       operation(
         'update',
         {
           id: str,
           text: str,
           props: obj,
+          motion: { anyOf: [obj, { type: 'null' }] },
           style: obj,
           phone: obj,
           tablet: obj,

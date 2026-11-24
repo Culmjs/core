@@ -244,6 +244,7 @@ export function buildRequest(
       [
         'id',
         'props',
+        'motion',
         'text',
         'set',
         'style',
@@ -315,6 +316,8 @@ export function buildRequest(
       )
     if (Object.keys(w.props).length)
       ops.push({ op: 'setProps', ...scope, props: w.props })
+    if (p.motion !== undefined)
+      ops.push({ op: 'setMotion', ...scope, motion: p.motion })
     for (const [layer, decl] of Object.entries(w.layers))
       if (isObj(decl) && Object.keys(decl).length)
         ops.push({ op: 'setStyle', ...scope, layer, decl })
@@ -327,8 +330,7 @@ export function buildRequest(
     project(ops, path)
   }
   patches.forEach((p, i) => patchItem(p, `patch[${i}]`))
-  edits.forEach((edit, i) => {
-    const path = `ops[${i}]`
+  const orderedItem = (edit: unknown, path: string) => {
     if (!isObj(edit))
       return void error(path, 'Expected a JSON operation object.')
     switch (edit.op) {
@@ -385,6 +387,12 @@ export function buildRequest(
       default:
         error(`${path}.op`, 'Use insert, update, move, remove or theme.')
     }
+  }
+  edits.forEach((edit, i) => {
+    const start = out.errors.length
+    orderedItem(edit, `ops[${i}]`)
+    // A compact edit may project several core operations; report the caller's index.
+    for (const p of out.errors.slice(start)) p.op = i
   })
   out.trees.push(tree)
   return out.errors.length ? { ok: false, problems: out.errors } : out

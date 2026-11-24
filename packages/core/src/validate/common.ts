@@ -10,6 +10,7 @@ import {
   type StateDecl,
 } from '../document/index.ts'
 import { isObj } from '../document/rules.ts'
+import { ID_RE } from '../document/kinds.ts'
 import { type FieldType, type Registry } from '../registry/index.ts'
 
 export type Obj = Record<string, unknown>
@@ -69,8 +70,19 @@ export type Checks = Pick<Ctx, 'kinds' | 'styles' | 'fonts'>
 
 export const only = (o: Obj, keys: readonly string[]) =>
   Object.keys(o).every(k => keys.includes(k))
-export const idOf = (w: unknown) =>
-  isObj(w) && typeof w.id === 'string' ? w.id.slice(0, 40) : undefined
+export const idOf = (w: unknown) => {
+  if (!isObj(w) || typeof w.id !== 'string') return undefined
+  const id = w.id
+  // A full block id plus a full local id is 41 characters including the dot.
+  if (
+    id.length === 41 &&
+    id[20] === '.' &&
+    ID_RE.test(id.slice(0, 20)) &&
+    ID_RE.test(id.slice(21))
+  )
+    return id
+  return id.slice(0, 40)
+}
 
 export const specOf = (c: Checks, kind: unknown): KindSpec | undefined =>
   typeof kind === 'string' ? kindSpec(kind, c.kinds) : undefined

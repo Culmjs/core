@@ -737,7 +737,7 @@ test('the catalogue description lists guide first', async () => {
   const t = (await client.listTools()).tools.find(x => x.name === 'catalogue')!
   assert.match(
     t.description!,
-    /what: guide \| kinds \| operations \| recipes \| blocks \| sources/,
+    /what: guide \| kinds \| operations \| recipes \| blocks \| sources \| effects/,
   )
   const what = (t.inputSchema.properties as { what: { enum: string[] } }).what
   assert.deepEqual(what.enum, [
@@ -747,5 +747,6 @@ test('the catalogue description lists guide first', async () => {
     'recipes',
     'blocks',
     'sources',
+    'effects',
   ])
 })

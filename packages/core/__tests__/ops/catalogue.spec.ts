@@ -377,6 +377,7 @@ test('an unknown what and an unknown id are refused with allowed', () => {
     'recipes',
     'blocks',
     'sources',
+    'effects',
   ])
   const k = refused(catalogue(r, { what: 'kinds', id: 'zzz' }))
   assert.equal(k.code, 'UNKNOWN_KIND')
@@ -721,9 +722,9 @@ test('catalogue never throws, whatever it is given', () => {
 const whole = (what: 'operations' | 'blocks', registry = kitRegistry()) =>
   ok(catalogue(registry, { what }))
 
-test('operations list: 26 strings and a legend, at most 2,500 characters; rows[0] is "add(tree:T, parent:string, index:number, node:N)"; no row has an example', () => {
+test('operations list: 27 strings and a legend, at most 2,500 characters; rows[0] is "add(tree:T, parent:string, index:number, node:N)"; no row has an example', () => {
   const r = whole('operations')
-  assert.equal(r.rows.length, 26)
+  assert.equal(r.rows.length, 27)
   for (const row of r.rows) assert.equal(typeof row, 'string')
   assert.equal(r.rows[0], 'add(tree:T, parent:string, index:number, node:N)')
   assert.deepEqual(Object.keys(r.legend), ['T', 'N', 'L', 'U', 'V'])
