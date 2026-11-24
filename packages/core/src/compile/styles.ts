@@ -23,6 +23,11 @@ import {
   type LayoutFlag,
 } from '../layout/placement.ts'
 import { effectiveFreeBoxes, phoneBoxes } from '../layout/phone.ts'
+import {
+  childLayoutDisplay,
+  listDisplay,
+  orderedBox,
+} from '../layout/display.ts'
 import { checkSiteStyles } from '../style/index.ts'
 import {
   checkStyle,
@@ -413,34 +418,15 @@ export function compileStyles(
     // A list (or a repeating column) laid out as a column and aligned centre or end moves its rows as one block: they share the widest row's width and
     // left edge, instead of each row shrinking to its own text and sitting at its own place (a ragged left edge). One grid column sized to the widest
     // row, never wider than the list, does that; a layout that drops the alignment goes back to the flex column.
-    if (w.kind === 'list' || (w.kind === 'column' && w.repeat)) {
-      let was = false
-      for (const v of ['base', 'tablet', 'phone'] as const) {
-        const at = (k: 'align' | 'direction') =>
-          (v === 'phone'
-            ? (st.phone?.[k] ?? st.tablet?.[k])
-            : v === 'tablet'
-              ? st.tablet?.[k]
-              : undefined) ?? st.base?.[k]
-        // `wrap` is no matter in a column (a wrapped row list that folds to a column on a phone is one)
-        const align = at('align'),
-          block =
-            (align === 'center' || align === 'end') && at('direction') !== 'row'
-        if (block)
-          r[v].push(
-            `display:grid;grid-template-columns:minmax(0,max-content);justify-content:${align};align-items:start`,
-          )
-        else if (was)
-          r[v].push('display:flex;align-items:' + (align ?? 'stretch'))
-        was = block
-      }
+    for (const v of ['base', 'tablet', 'phone'] as const) {
+      const list = listDisplay(w, v, st)
+      if (list)
+        r[v].push(
+          list.display === 'grid'
+            ? `display:grid;grid-template-columns:minmax(0,max-content);justify-content:${list.align};align-items:start`
+            : 'display:flex;align-items:' + list.align,
+        )
     }
-    const phoneOrderedBox =
-      w.kind === 'box' &&
-      w.children?.some(c => c.style?.phone?.order !== undefined)
-    const tabletOrderedBox =
-      w.kind === 'box' &&
-      w.children?.some(c => c.style?.tablet?.order !== undefined)
     // Explicit wrapping establishes a block formatting context, even inside an authored flex/grid group.
     for (const layout of [false, 'tablet', true] as const) {
       const phone = layout === true,
@@ -459,23 +445,11 @@ export function compileStyles(
         w.children?.some(c => floating(c, layout) && (!tablet || !floating(c)))
       )
         target.push('position:relative;isolation:isolate')
-      const wraps = w.children?.some(
-        c => wrapping(c, layout) && (!tablet || !wrapping(c)),
-      )
-      if (
-        ((phone && (phoneOrderedBox || tabletOrderedBox)) ||
-          (tablet && tabletOrderedBox)) &&
-        !wraps
-      )
+      const display = childLayoutDisplay(w, layout)
+      if (display === 'ordered')
         target.push('display:flex;flex-direction:column')
-      if (wraps) target.push('display:flow-root')
-      else if (
-        layout &&
-        !(phone && (phoneOrderedBox || tabletOrderedBox)) &&
-        !(tablet && tabletOrderedBox) &&
-        w.children?.some(c => wrapping(c, prev) && !wrapping(c, layout))
-      )
-        target.push(`display:${displayOf(spec, w)}`)
+      if (display === 'wrap') target.push('display:flow-root')
+      if (display === 'restore') target.push(`display:${displayOf(spec, w)}`)
       if (!p || (tablet && !w.placement?.tablet)) continue
       const placement = effectivePlacement(w, layout),
         mode = placement.mode
@@ -595,7 +569,7 @@ export function compileStyles(
       (st.tablet?.hidden ?? st.base?.hidden)
     )
       r.phone.push(
-        `display:${w.children?.some(c => wrapping(c, true)) ? 'flow-root' : phoneOrderedBox || tabletOrderedBox ? 'flex' : displayOf(spec, w)}`,
+        `display:${w.children?.some(c => wrapping(c, true)) ? 'flow-root' : orderedBox(w, true) ? 'flex' : displayOf(spec, w)}`,
       )
     // The editor shows a layer in place, but a pinned one that a click opens (the phone menu's sheet, the full-screen menu) would sit open over the
     // canvas in every view; it stays out of the canvas until a visitor opens it. Its contents are still in the Layers tree.

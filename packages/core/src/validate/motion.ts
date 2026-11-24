@@ -1,4 +1,5 @@
 import type {
+  Code,
   FontRef,
   Frame,
   Look,
@@ -6,13 +7,13 @@ import type {
   MotionTarget,
   MotionTrigger,
   Node,
-  StateDecl,
   Step,
 } from '../document/index.ts'
 import { ID_RE } from '../document/kinds.ts'
 import { isObj } from '../document/rules.ts'
 import { templateIndex, walk } from '../document/tree.ts'
 import { shownOn } from '../layout/placement.ts'
+import { childLayoutDisplay, listDisplay } from '../layout/display.ts'
 import {
   add,
   fieldsOf,
@@ -30,6 +31,10 @@ import { stateIn, type StateScope } from './states.ts'
 import { unrollInstances } from './unroll.ts'
 
 type Say = (message: string, path: string) => void
+type Lookup = (
+  scope: StateScope,
+  name: string,
+) => ReturnType<typeof stateIn> | 'cut'
 const common = { trigger: true, pinPx: true, scrollFallback: true } as const
 const sequenceKeys = fieldsOf<Extract<Motion, { steps: Step[] }>>({
   ...common,
@@ -160,9 +165,24 @@ function layoutCanShow(w: Node, scheme: Look['dark']): boolean {
     if (dark && base && s?.dark?.hidden === false) visible = true
     if (visible) return true
     if (base && tablet === false) visible = true
-    if (tablet || w.hide?.tablet) visible = false
+    if (tablet) visible = false
+    // The layout's own display follows its declarations; per-layout hide flags are last.
+    if (
+      s?.tablet?.clampLines ||
+      listDisplay(w, 'tablet') ||
+      childLayoutDisplay(w, 'tablet')
+    )
+      visible = true
+    if (w.hide?.tablet) visible = false
     if (visible) return true
-    if (w.hide?.desktop || w.hide?.tablet) visible = true
+    if (
+      w.hide?.desktop ||
+      w.hide?.tablet ||
+      s?.phone?.clampLines ||
+      listDisplay(w, 'phone') ||
+      childLayoutDisplay(w, true)
+    )
+      visible = true
     if (phone ?? (s?.dark?.hidden !== false && tablet !== false && base))
       visible = false
     else if (phone === false && (tablet ?? base)) visible = true
@@ -172,12 +192,10 @@ function layoutCanShow(w: Node, scheme: Look['dark']): boolean {
 }
 
 function visualChild(
-  c: Ctx,
-  t: Tree,
   e: StateScope,
-  siteStates: StateDecl[],
+  lookup: Lookup,
   scheme: Look['dark'],
-): boolean {
+): boolean | 'cut' {
   const w = e.w
   // An element omitted from live output cannot be revealed by a CSS rule.
   if (!(['desktop', 'tablet', 'phone'] as const).some(l => shownOn(w, l)))
@@ -189,7 +207,8 @@ function visualChild(
   for (let i = whens.length - 1; i >= 0; i--) {
     const { state, is, decl } = whens[i]
     if (decl.hidden === undefined) continue
-    const st = stateIn(c, t, e, state, siteStates)
+    const st = lookup(e, state)
+    if (st === 'cut') return 'cut'
     if (!st?.values.includes(is)) continue
     const blocked = later.get(state) ?? new Set<string>()
     if (blocked.has(is)) continue
@@ -203,17 +222,17 @@ function visualChild(
 
 function canPin(
   c: Ctx,
-  t: Tree,
   owner: StateScope,
-  siteStates: StateDecl[],
+  lookup: Lookup,
   scheme: Look['dark'],
-): boolean {
+): boolean | 'cut' {
   const w = owner.w
   if (specOf(c, w.kind)?.role !== 'container') return false
   let found = false
   for (const [i, child] of (w.children ?? []).entries()) {
-    if (!visualChild(c, t, { w: child, parent: owner }, siteStates, scheme))
-      continue
+    const visual = visualChild({ w: child, parent: owner }, lookup, scheme)
+    if (visual === 'cut') return 'cut'
+    if (!visual) continue
     if (found || (w.repeat && i === templateIndex(w) && w.repeat.max !== 1))
       return false
     found = true
@@ -320,16 +339,6 @@ export function checkMotion(c: Ctx, _t: TCtx, e: Entry): void {
   checkSteps(e.w, m.steps, say)
 }
 
-/** Only the header's effective root declarations are site-wide. Follow root uses, never their other parts. */
-function headerRootStates(c: Ctx): StateDecl[] {
-  const states: StateDecl[] = []
-  for (let w = c.header?.root; w; w = c.comps.get(w.component!)?.root) {
-    if (w.state) states.unshift(...w.state)
-    if (w.kind !== 'instance') break
-  }
-  return states
-}
-
 /** Recheck slot ancestry, visual children and effective path geometry on the bounded composition
  * after the authored trees (including component cycles) have passed. */
 export function checkComposedMotions(
@@ -341,7 +350,16 @@ export function checkComposedMotions(
   if (!trees.some(t => t.entries.some(e => e.w.motion))) return
   const components = [...c.comps.values()]
   const env = { fonts, styles: c.styles, kinds: c.kinds }
-  const siteStates = headerRootStates(c)
+  const compose = (t: Tree) => {
+    const budget = { n: 0, over: false }
+    const tree = unrollInstances(t.root, components, env, budget)
+    return { tree, over: budget.over }
+  }
+  // A local declaration never needs the header. If one does, use the very same bounded
+  // composition as render; a declaration beyond a cut is not evidence of a site-wide state.
+  let header: ReturnType<typeof compose> | undefined
+  const composed = (t: Tree) =>
+    t === c.header ? (header ??= compose(t)) : compose(t)
   const memo = new Map<Tree, boolean>()
   const hasMotion = (t: Tree): boolean => {
     if (!memo.has(t))
@@ -358,9 +376,8 @@ export function checkComposedMotions(
   }
   for (const t of trees) {
     if (!hasMotion(t)) continue
-    const budget = { n: 0, over: false }
-    const tree = unrollInstances(t.root, components, env, budget)
-    if (budget.over) {
+    const { tree, over } = composed(t)
+    if (over) {
       add(
         c,
         t.root,
@@ -371,12 +388,21 @@ export function checkComposedMotions(
       continue
     }
     const authored = new Map(t.entries.map(e => [e.w.id, e.w]))
+    const lookup: Lookup = (scope, name) => {
+      const local = stateIn(c, t, scope, name, [])
+      if (local || (t.which !== 'page' && t.which !== 'footer') || !c.header)
+        return local
+      const h = composed(c.header)
+      // The site wrapper reads only the returned root, including any declarations which survived a cut.
+      const site = stateIn(c, t, null, name, h.tree.state ?? [])
+      return site ?? (h.over ? 'cut' : undefined)
+    }
     const scopes: StateScope[] = []
     walk(tree, (w, _parent, depth) => {
       const scope = (scopes[depth] = { w, parent: scopes[depth - 1] ?? null })
       const m = w.motion
       if (!m) return
-      const say: Say = (message, path) => {
+      const say = (message: string, path: string, code?: Code) => {
         // A part of a master is reported on the use that contributed it.
         let id = w.id
         while (!authored.has(id) && id.includes('.'))
@@ -386,11 +412,19 @@ export function checkComposedMotions(
           authored.get(id) ?? w,
           message,
           id === w.id ? path : `parts.${w.id.slice(id.length + 1)}.${path}`,
+          code,
         )
       }
+      const cutHeader = (path: string) =>
+        say(
+          'The header is too large or deep to establish this motion state.',
+          path,
+          'RESOURCE_LIMIT_EXCEEDED',
+        )
       if (typeof m.trigger === 'object') {
-        const st = stateIn(c, t, scope, m.trigger.state, siteStates)
-        if (!st)
+        const st = lookup(scope, m.trigger.state)
+        if (st === 'cut') cutHeader('motion.trigger.state')
+        else if (!st)
           say(
             'This node does not have a state with that name in scope.',
             'motion.trigger.state',
@@ -398,8 +432,15 @@ export function checkComposedMotions(
         else if (!st.values.includes(m.trigger.is))
           say('This is not a value of the declared state.', 'motion.trigger.is')
       }
-      if (m.pinPx !== undefined && !canPin(c, t, scope, siteStates, scheme))
-        say('Pinning needs a container with one visual child.', 'motion.pinPx')
+      if (m.pinPx !== undefined) {
+        const pin = canPin(c, scope, lookup, scheme)
+        if (pin === 'cut') cutHeader('motion.pinPx')
+        else if (!pin)
+          say(
+            'Pinning needs a container with one visual child.',
+            'motion.pinPx',
+          )
+      }
       if (tree !== t.root && 'steps' in m)
         m.steps.forEach((s, i) => {
           const bad = targetProblem(w, s.target, 'draw' in s.from)

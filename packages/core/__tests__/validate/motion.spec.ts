@@ -605,3 +605,98 @@ test('a pin on a use sees the visual child after a part override', () => {
   inst.overrides.title.style!.phone = { hidden: false }
   assert.deepEqual(validateSite(doc, reg), [])
 })
+
+for (const sibling of [false, true]) {
+  test(`a tablet-grid list counts as a pin child ${sibling ? 'beside another child' : 'on its own'}`, () => {
+    const list = node('items', 'list', [
+      node('item', 'box', [text('label', 'One')]),
+    ])
+    list.style = { base: { hidden: true }, tablet: { align: 'center' } }
+    const owner = node('hero', 'column', [
+      list,
+      ...(sibling ? [text('aside', 'Two')] : []),
+    ])
+    const doc = siteWith([owner])
+    const plain = compilePage(doc, 'home', { registry: reg })
+    assert.ok(plain.ok)
+    assert.match(
+      plain.css,
+      /@media \(max-width: 1024px\)\{[^@]*display:grid;grid-template-columns:minmax\(0,max-content\);justify-content:center/,
+    )
+    owner.motion = { trigger: 'scroll', pinPx: 400, steps: [step()] }
+    if (sibling) {
+      refused(doc, 'motion.pinPx')
+      assert.equal(compilePage(doc, 'home', { registry: reg }).ok, false)
+    } else {
+      assert.deepEqual(validateSite(doc, reg), [])
+      assert.equal(compilePage(doc, 'home', { registry: reg }).ok, true)
+    }
+  })
+}
+
+test('tablet layout can restore the display of an ordered box or a wrapping container', () => {
+  const ordered = node('ordered', 'box', [
+    text('copy', 'First', { style: { tablet: { order: 1 } } }),
+  ])
+  const wrapped = node('wrapped', 'column', [
+    {
+      ...node('photo', 'image'),
+      props: { alt: 'Portrait', fallback: 'Portrait' },
+      placement: { mode: 'normal', tablet: { mode: 'wrap-start' } },
+    },
+  ])
+  for (const child of [ordered, wrapped]) {
+    child.style = { base: { hidden: true } }
+    const owner = node('hero', 'column', [child])
+    const doc = siteWith([owner])
+    owner.motion = { trigger: 'scroll', pinPx: 400, steps: [step()] }
+    assert.deepEqual(validateSite(doc, reg), [])
+    child.hide = { tablet: true, phone: true }
+    refused(doc, 'motion.pinPx')
+  }
+})
+
+test('a page cannot depend on a header root declaration past the composition budget', () => {
+  const chain = Array.from({ length: 66 }, (_, i) => ({
+    ...master(i === 65 ? node('bar', 'column') : use('link', `c${i + 1}`)),
+    id: `c${i}`,
+  }))
+  chain[65].root.state = [
+    { name: 'contrast', values: 'on-off', initial: 'off' },
+  ]
+  const owner = hero()
+  owner.motion = { trigger: { state: 'contrast', is: 'on' }, steps: [step()] }
+  const doc = siteWith([owner], {
+    header: use('header', 'c0'),
+    components: chain,
+  })
+  const problems = validateSite(doc, reg)
+  assert.ok(
+    problems.some(
+      p =>
+        p.code === 'RESOURCE_LIMIT_EXCEEDED' &&
+        p.nodeId === 'hero' &&
+        p.path === 'motion.trigger.state',
+    ),
+    JSON.stringify(problems),
+  )
+  const compiled = compilePage(doc, 'home', { registry: reg })
+  assert.equal(compiled.ok, false)
+  assert.deepEqual(compiled.problems, problems)
+  owner.state = [{ name: 'local', values: 'on-off', initial: 'off' }]
+  owner.motion.trigger = { state: 'local', is: 'on' }
+  assert.deepEqual(validateSite(doc, reg), []) // the local declaration does not depend on the cut header
+  delete owner.state
+  doc.header.state = [{ name: 'banner', values: 'on-off', initial: 'off' }]
+  owner.motion.trigger = { state: 'banner', is: 'on' }
+  assert.deepEqual(validateSite(doc, reg), []) // the returned header still holds its own declaration
+  const surviving = compilePage(doc, 'home', { registry: reg })
+  assert.ok(surviving.ok)
+  assert.match(surviving.html, /data-s-banner="off"/)
+  owner.motion.trigger = { state: 'contrast', is: 'on' }
+  doc.header.component = 'c5' // the same declaration is reachable in a shorter chain
+  assert.deepEqual(validateSite(doc, reg), [])
+  const reachable = compilePage(doc, 'home', { registry: reg })
+  assert.ok(reachable.ok)
+  assert.match(reachable.html, /data-s-contrast="off"/)
+})
