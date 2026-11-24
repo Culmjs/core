@@ -86,6 +86,49 @@ test('block look presets address exactly the same inserted parts as handwritten 
     JSON.stringify(bad),
   )
 })
+test('a block-qualified candidate outside the owner or across a repeat cannot shadow its local target', () => {
+  const reg = sampleRegistry()
+  reg.use({
+    ...plugin(def({ steps: () => [step({ id: 'title' })] })),
+    blocks: [],
+    sources: [],
+    settingFns: {},
+  })
+  for (const acrossRepeat of [false, true]) {
+    const inner = node('inner', 'box', [text('title', 'Mine')])
+    const unrelated = text('card.title', 'Not mine')
+    if (acrossRepeat)
+      inner.children!.push({
+        ...node('list', 'list', [node('item', 'column', [unrelated])]),
+        repeat: { source: 'projects' },
+      })
+    const card = {
+      ...node('card', 'box', acrossRepeat ? [inner] : [inner, unrelated]),
+      origin: { block: 'demo', look: 'default', version: 1 },
+    }
+    const doc = siteWith([card])
+    const compile = () => {
+      const p = core.compilePage(doc, 'home', {
+        registry: reg,
+        mode: 'measure',
+        data: { rows: { projects: [{ title: 'Row' }] } },
+      })
+      assert.ok(p.ok, JSON.stringify(p.problems))
+      return p.html
+    }
+    inner.motion = { trigger: 'load', steps: [step({ id: 'title' })] }
+    const expected = compile()
+    assert.match(expected, /<p[^>]*cm-t\d+[^>]*data-id="title"/)
+    inner.motion = { trigger: 'load', effect: 'lift' }
+    assert.equal(compile(), expected)
+    inner.children!.shift()
+    assert.ok(
+      core
+        .validateSite(doc, reg)
+        .some(p => p.nodeId === 'inner' && p.path === 'motion.steps.0.target'),
+    )
+  }
+})
 test('registry exposes rise and plug-in definitions; capability is distinct from the invocation', () => {
   const reg = core.createRegistry()
   reg.use(plugin(def()))

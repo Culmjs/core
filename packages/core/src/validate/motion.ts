@@ -19,7 +19,7 @@ import { isObj } from '../document/rules.ts'
 import { dropSamples } from '../document/samples.ts'
 import { templateIndex, walk } from '../document/tree.ts'
 import { shownOn } from '../layout/placement.ts'
-import { childLayoutDisplay, listDisplay } from '../layout/display.ts'
+import { layoutDisplays, stateDisplay } from '../layout/display.ts'
 import {
   add,
   fieldsOf,
@@ -94,45 +94,6 @@ function targetProblem(
   }
 }
 
-/** Is there any layout/theme in which the child's own display can be visible?
- * Base, dark, tablet and phone rules cascade in that order. A hide on desktop or tablet resets on phone. */
-function layoutCanShow(w: Node, scheme: Look['dark']): boolean {
-  const s = w.style
-  const base = s?.base?.hidden,
-    tablet = s?.tablet?.hidden,
-    phone = s?.phone?.hidden
-  for (const dark of scheme === 'auto' ? [false, true] : [scheme === 'dark']) {
-    let visible = !base && !w.hide?.desktop
-    if (dark && s?.dark?.hidden === true) visible = false
-    if (dark && base && s?.dark?.hidden === false) visible = true
-    if (visible) return true
-    if (base && tablet === false) visible = true
-    if (tablet) visible = false
-    // The layout's own display follows its declarations; per-layout hide flags are last.
-    if (
-      s?.tablet?.clampLines ||
-      listDisplay(w, 'tablet') ||
-      childLayoutDisplay(w, 'tablet')
-    )
-      visible = true
-    if (w.hide?.tablet) visible = false
-    if (visible) return true
-    if (
-      w.hide?.desktop ||
-      w.hide?.tablet ||
-      s?.phone?.clampLines ||
-      listDisplay(w, 'phone') ||
-      childLayoutDisplay(w, true)
-    )
-      visible = true
-    if (phone ?? (s?.dark?.hidden !== false && tablet !== false && base))
-      visible = false
-    else if (phone === false && (tablet ?? base)) visible = true
-    if (visible && !w.hide?.phone) return true
-  }
-  return false
-}
-
 function visualChild(
   e: StateScope,
   lookup: Lookup,
@@ -142,24 +103,16 @@ function visualChild(
   // An element omitted from live output cannot be revealed by a CSS rule.
   if (!(['desktop', 'tablet', 'phone'] as const).some(l => shownOn(w, l)))
     return false
-  // Declared-state visibility comes last. Look back for a possible reveal without
-  // a later rule winning; if every value of a state is covered there is no fallback.
-  const whens = w.style?.when ?? []
-  const later = new Map<string, Set<string>>()
-  for (let i = whens.length - 1; i >= 0; i--) {
-    const { state, is, decl } = whens[i]
-    if (decl.hidden === undefined) continue
-    const st = lookup(e, state)
-    if (st === 'cut') return 'cut'
-    if (!st?.values.includes(is)) continue
-    const blocked = later.get(state) ?? new Set<string>()
-    if (blocked.has(is)) continue
-    if (!decl.hidden) return true
-    blocked.add(is)
-    if (blocked.size === st.values.length) return false
-    later.set(state, blocked)
-  }
-  return layoutCanShow(w, scheme)
+  const state = stateDisplay(w, name => {
+    const st = lookup(e, name)
+    return st === 'cut' ? st : st?.values
+  })
+  return (
+    state ??
+    (scheme === 'auto' ? [false, true] : [scheme === 'dark']).some(dark =>
+      Object.values(layoutDisplays(w, dark)).some(Boolean),
+    )
+  )
 }
 
 function canPin(
@@ -194,7 +147,7 @@ function checkTargets(owner: Node, steps: Step[], say: Say) {
 }
 
 /** Check the stored program and its authored IDs. State scope and visual children require the composed tree. */
-export function checkMotion(c: Ctx, t: TCtx, e: Entry): void {
+export function checkMotion(c: Ctx, _t: TCtx, e: Entry): void {
   const m: unknown = e.w.motion
   if (m === undefined) return
   const say: Say = (message, path) => add(c, e.w, message, path)
@@ -239,7 +192,7 @@ export function checkMotion(c: Ctx, t: TCtx, e: Entry): void {
           !target.id.includes('.')
         ) {
           const qualified = `${e.ns}.${target.id}`
-          if (t.here.has(qualified)) target.id = qualified
+          if (descendant(e.w, qualified)) target.id = qualified
         }
       checkTargets(e.w, steps, say)
       // Internal composition copy: retain the preset name (its declared tier is a floor)

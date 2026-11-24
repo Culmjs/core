@@ -339,3 +339,24 @@ test('native support alone never attaches a nested fallback scene to the wrong s
       [true, true, false],
     )
 })
+
+test('viewport motion seeks on desktop when its owner is hidden on the only scrolling layout', async () => {
+  const hero = {
+    ...node('hero', 'column', [text('title', 'Reed')]),
+    hide: { phone: true as const },
+    motion: { trigger: 'scroll', steps: [fade] } satisfies Motion,
+  }
+  const scroller = {
+    ...node('scroller', 'column', [hero]),
+    style: { phone: { overflow: 'scroll-x' as const } },
+  }
+  const doc = siteWith([node('before', 'box'), scroller, node('after', 'box')])
+  const sample = `const hero=get('hero');get('before').style.height=get('after').style.height='1800px';hero.style.height='900px';
+    const css=getComputedStyle(hero), overflow=getComputedStyle(get('scroller')).overflowX;
+    if(!hero.getClientRects().length) return [css.display,hero.getClientRects().length,overflow];
+    const top=hero.getBoundingClientRect().top+scrollY,out=[];
+    for(const f of [0,.5,1]){scrollTo(0,top-innerHeight+f*(innerHeight+hero.offsetHeight));await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));out.push(+css.opacity)}
+    return [overflow,...out]`
+  assert.deepEqual(await read(doc, sample, 1280), ['visible', 0, 0.5, 1])
+  assert.deepEqual(await read(doc, sample, 390), ['none', 0, 'auto'])
+})

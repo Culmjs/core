@@ -148,6 +148,66 @@ test('a native viewport track refuses an intervening scrollport; explicit fallba
   }
 })
 
+test('a nested scrollport only blocks views in which a complete owner-to-target path is visible', () => {
+  for (const hidden of [
+    'owner',
+    'scroller',
+    'target',
+    'wrapper',
+    'ancestor',
+  ] as const) {
+    const target = text('title', 'Reed')
+    const wrapper = node('wrapper', 'box', [target])
+    const owner = node('hero', 'box', [wrapper])
+    owner.motion = {
+      trigger: 'scroll',
+      steps: [{ ...rise(), target: { id: 'title' } }],
+    }
+    const scroller = node('scroller', 'column', [owner])
+    scroller.style = {
+      tablet: { overflow: 'scroll-x' },
+      phone: { overflow: 'visible' },
+    }
+    const ancestor = node('ancestor', 'column', [scroller])
+    const obscured = { owner, scroller, target, wrapper, ancestor }[hidden]
+    obscured.style = {
+      ...obscured.style,
+      tablet: { ...obscured.style?.tablet, hidden: true },
+      phone: { ...obscured.style?.phone, hidden: false },
+    }
+    const doc = siteWith([ancestor])
+    assert.match(page(doc).css, /animation-timeline:--cm-v/)
+    delete obscured.style.tablet!.hidden
+    const bad = compilePage(doc, 'home', { registry })
+    assert.ok(
+      !bad.ok &&
+        bad.problems.some(
+          p => p.nodeId === 'hero' && p.path === 'motion.trigger',
+        ),
+    )
+  }
+})
+test('a phone-hidden child cannot exempt its visible sibling from the scrollport refusal', () => {
+  const first = text('first', 'Hidden', { hide: { phone: true } })
+  const second = text('second', 'Visible')
+  const owner = node('hero', 'box', [first, second])
+  owner.motion = {
+    trigger: 'scroll',
+    steps: [{ ...rise(), target: 'children' }],
+  }
+  const scroller = node('scroller', 'column', [owner])
+  scroller.style = { phone: { overflow: 'scroll-y' } }
+  const doc = siteWith([scroller])
+  assert.equal(compilePage(doc, 'home', { registry }).ok, false)
+  second.hide = { phone: true }
+  assert.match(page(doc).css, /animation-timeline:--cm-v/)
+  // A later state can show this child again on phone.
+  owner.state = [{ name: 'mode', values: 'on-off', initial: 'off' }]
+  second.style = {
+    when: [{ state: 'mode', is: 'on', decl: { hidden: false } }],
+  }
+  assert.equal(compilePage(doc, 'home', { registry }).ok, false)
+})
 test('native fallback membership is per rendered owner, including when a scrollport is layout-dependent', () => {
   const m: Motion = {
     trigger: 'scroll',
@@ -155,7 +215,9 @@ test('native fallback membership is per rendered owner, including when a scrollp
     steps: [rise()],
   }
   const track = (id: string) => text(id, 'Reed', { motion: m })
-  const inside = node('scroller', 'column', [track('inside')])
+  const hidden = track('onlydesktop')
+  hidden.hide = { tablet: true, phone: true }
+  const inside = node('scroller', 'column', [track('inside'), hidden])
   inside.style = { tablet: { overflow: 'scroll-y' } }
   const dark = node('dark', 'box', [track('light')])
   dark.style = { dark: { overflow: 'scroll-x' } }
@@ -171,8 +233,32 @@ test('native fallback membership is per rendered owner, including when a scrollp
   assert.deepEqual(result.problems, [])
   assert.deepEqual(
     [...result.nativeScroll].map(n => n.id),
-    ['outside', 'light'],
+    ['outside', 'onlydesktop', 'light'],
   )
+})
+
+test('scrollport and visibility must coincide in the same theme, including for the wide side-header wrapper', () => {
+  const m: Motion = { trigger: 'scroll', steps: [rise()] }
+  const hero = text('hero', 'Reed', {
+    motion: m,
+    style: { dark: { hidden: true } },
+  })
+  const wrap = node('wrap', 'column', [hero])
+  wrap.style = { dark: { overflow: 'scroll-y' } }
+  const doc = siteWith([wrap])
+  doc.look.dark = 'auto'
+  assert.match(page(doc).css, /animation-timeline:view\(\)/)
+  delete hero.style
+  assert.equal(compilePage(doc, 'home', { registry }).ok, false)
+  // A desktop hide inherits onto tablet; its phone reset reveals the target only
+  // below the side-header rule's min-width:901px.
+  const phone = text('phone', 'Mobile', { hide: { desktop: true }, motion: m })
+  const header = node('head', 'column', [phone])
+  header.style = { base: { side: 240 } }
+  const withHeader = siteWith([], { header })
+  assert.match(page(withHeader).css, /animation-timeline:view\(\)/)
+  delete phone.hide
+  assert.equal(compilePage(withHeader, 'home', { registry }).ok, false)
 })
 test('built-in rise compiles identically to its explicit steps; edit/subtree stay static', () => {
   for (const distance of [undefined, 0, 42, 100]) {
