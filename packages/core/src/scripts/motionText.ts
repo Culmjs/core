@@ -57,14 +57,14 @@ export function measureText(
   let bottom = -Infinity,
     top = Infinity,
     row = -1
-  const line = (r: DOMRect) => {
-    if (r.top >= bottom || r.bottom <= top) {
+  const line = ({ top: t, bottom: b }: DOMRect) => {
+    if (t >= bottom || b <= top) {
       row++
-      top = r.top
-      bottom = r.bottom
+      top = t
+      bottom = b
     } else {
-      top = Math.max(top, r.top)
-      bottom = Math.min(bottom, r.bottom)
+      top = Math.max(top, t)
+      bottom = Math.min(bottom, b)
     }
     return row
   }
@@ -132,9 +132,9 @@ export function measureText(
         const bounds = (i: number, s: string) => {
           range.setStart(n, i)
           range.setEnd(n, i + s.length)
-          const rects = range.getClientRects()
-          if (rects.length !== 1 || !rects[0].height) throw 0
-          return rects[0]
+          const { 0: box, 1: next } = range.getClientRects()
+          if (next || !box || !box.height) throw 0
+          return box
         }
         const original = bounds(index, segment)
         const at = line(original)

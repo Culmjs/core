@@ -69,7 +69,7 @@ export function hostMotion(
         el.addEventListener(name, f, { signal: scope, capture })
     }
   const on = listen(signal)
-  const disconnect = (o?: { disconnect(): void }) => {
+  const disconnect = (o?: { disconnect(): void }): undefined => {
     if (o) o.disconnect()
   }
   const clock = (name: string) => w.CSS.supports(`animation-timeline:${name}()`)
@@ -127,10 +127,12 @@ export function hostMotion(
     const s: Scene = JSON.parse(owner.getAttribute(attr)!)
     if (s.native && clock('view')) return
     const { trigger: tr, pin, layout, parts } = s
+    const state = Array.isArray(tr)
     const pointer = tr === 'pointer-x',
       scrub = pointer || tr === 'scroll'
-    const target = (id: number) => (id ? owner.querySelector(token(id)) : owner)
-    const child = target(s.child || 0)
+    const target = (id?: number) =>
+      id ? owner.querySelector(token(id)) : owner
+    const child = target(s.child)
     if (!owner.animate || !owner.getBoundingClientRect || !child) return
     managed = true
     const readInput = scrub || layout
@@ -167,10 +169,8 @@ export function hostMotion(
       const reset = () => {
         for (const a of animations)
           if (!fixed.size || (a.effect as KeyframeEffect).target) a.cancel()
-        animations.length = 0
-        shifts.length = 0
-        disconnect(sizes)
-        sizes = undefined
+        shifts.length = animations.length = 0
+        sizes = disconnect(sizes)
         if (text) text.restore()
         text = undefined
         dirty = false
@@ -229,11 +229,10 @@ export function hostMotion(
           // A refused split still watches the unmodified box. Register the
           // batch together and ignore its initial delivery unless width moved
           // since the read; later genuine metric changes share the frame queue.
-          let initial = true
-          const width = owner.clientWidth
+          let initialWidth: number | undefined = owner.clientWidth
           sizes = new ResizeObserver(() => {
-            if (!initial || width !== owner.clientWidth) invalidate()
-            initial = false
+            if (initialWidth !== owner.clientWidth) invalidate()
+            initialWidth = undefined
           })
           for (const el of [owner, owner.parentElement!, ...words.flat()])
             sizes.observe(el)
@@ -265,7 +264,19 @@ export function hostMotion(
       }
       const play = () => {
         if (animations.length || text) return
-        if (!area(rect(child))) return
+        if (!area(rect(child))) {
+          // IO need not cross a threshold when an in-view zero-sized box
+          // grows. Borrow the metric watch only until this activation acquires
+          // its tracks; stop() also releases it if the predicate turns false.
+          if (state && ResizeObserver && !sizes) {
+            sizes = new ResizeObserver(() => {
+              if (active) play()
+            })
+            sizes.observe(owner)
+          }
+          return
+        }
+        sizes = disconnect(sizes)
         if (!pin) return start()
         // Capture every applicable extent before installing the padding.
         const pinBox = owner as HTMLElement,
@@ -333,13 +344,14 @@ export function hostMotion(
           if (dirty) schedule(rebuild)
         })
       }
-      const entrance = tr === 'enter-view'
+      const entrance = tr === 'enter-view',
+        load = tr === 'load'
       if (entered) {
         play()
         return
       }
       let intersecting = false,
-        active = entrance || tr === 'load'
+        active = entrance || load
       let wake: (e: Event) => boolean = () => false
       const syncView = () => {
         visible = intersecting && !doc.hidden
@@ -418,7 +430,7 @@ export function hostMotion(
       }
       const observer = new IntersectionObserver(entries => {
         if (scope.aborted) return
-        intersecting = entries[entries.length - 1].isIntersecting
+        intersecting = entries.pop()!.isIntersecting
         syncView()
       })
       observer.observe(owner)
@@ -457,7 +469,7 @@ export function hostMotion(
             if (visible) schedule(syncView)
           })
         syncView()
-      } else if (tr === 'load') play()
+      } else if (load) play()
       else if (tr === 'hover') {
         const sync = () =>
           owner.matches(':hover,:focus-visible') ? play() : stop()
@@ -494,7 +506,7 @@ export function hostMotion(
         on(w, 'pointerup pointercancel', up)
         on(owner, 'blur', blur, true)
         on(w, 'blur', blur)
-      } else if (Array.isArray(tr) && MutationObserver) {
+      } else if (state && MutationObserver) {
         const [id, attr, value] = tr
         const holder = owner.closest(token(id))
         if (!holder) return
@@ -505,13 +517,7 @@ export function hostMotion(
         }
         const observer = new MutationObserver(sync)
         observer.observe(holder, { attributeFilter: [attr] })
-        // IO need not cross a threshold when an in-view zero-sized box grows.
-        const size = ResizeObserver && new ResizeObserver(sync)
-        if (size) size.observe(owner)
-        abort(scope, () => {
-          disconnect(observer)
-          disconnect(size)
-        })
+        abort(scope, () => disconnect(observer))
         sync()
       }
     }
