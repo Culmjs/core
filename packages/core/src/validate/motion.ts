@@ -357,7 +357,17 @@ export function checkComposedMotions(
   const env = { fonts, styles: c.styles, kinds: c.kinds }
   const compose = (t: Tree) => {
     const budget = { n: 0, over: false }
-    const tree = unrollInstances(t.root, components, env, budget)
+    // A standalone master has the layout of a use with no settings, overrides or slot content.
+    const root: Node = t.comp
+      ? {
+          kind: 'instance',
+          component: t.comp.id,
+          id: t.root.id,
+          name: t.root.name,
+          slot: {},
+        }
+      : t.root
+    const tree = unrollInstances(root, components, env, budget)
     return { tree, over: budget.over }
   }
   // A local declaration never needs the header. If one does, use the very same bounded
@@ -409,15 +419,20 @@ export function checkComposedMotions(
       const m = w.motion
       if (!m) return
       const say = (message: string, path: string, code?: Code) => {
+        // The default use added one namespace to every descendant of the master.
+        const localId =
+          t.comp && w !== tree ? w.id.slice(tree.id.length + 1) : w.id
         // A part of a master is reported on the use that contributed it.
-        let id = w.id
+        let id = localId
         while (!authored.has(id) && id.includes('.'))
           id = id.slice(0, id.lastIndexOf('.'))
         add(
           c,
           authored.get(id) ?? w,
           message,
-          id === w.id ? path : `parts.${w.id.slice(id.length + 1)}.${path}`,
+          id === localId
+            ? path
+            : `parts.${localId.slice(id.length + 1)}.${path}`,
           code,
         )
       }

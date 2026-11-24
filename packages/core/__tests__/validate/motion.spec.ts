@@ -606,6 +606,51 @@ test('a pin on a use sees the visual child after a part override', () => {
   assert.deepEqual(validateSite(doc, reg), [])
 })
 
+test('a master pin keeps the sample text published by its default variant', () => {
+  const title = text('title', 'Placeholder')
+  title.props!.sample = true
+  const card = master(node('panel', 'column', [title]))
+  card.root.motion = { trigger: 'scroll', pinPx: 200, steps: [step()] }
+  card.variants = [
+    {
+      when: {},
+      patch: { title: { props: { runs: [{ text: 'Published' }] } } },
+    },
+  ]
+  const doc = siteWith([use('carduse', 'card')], { components: [card] })
+  const before = structuredClone(doc)
+  const compiled = compilePage(doc, 'home', { registry: reg })
+  assert.ok(compiled.ok, JSON.stringify(compiled.problems))
+  assert.match(compiled.html, />Published</)
+  assert.doesNotMatch(compiled.html, /Placeholder/)
+  assert.deepEqual(doc, before)
+})
+
+test('a pin on a part reports the default master and a configured use at their own locations', () => {
+  const panel = hero()
+  panel.motion = { trigger: 'scroll', pinPx: 200, steps: [step()] }
+  const card = master(node('shell', 'column', [panel]))
+  card.props = [
+    {
+      key: 'shown',
+      label: 'Shown',
+      type: 'toggle',
+      part: 'title',
+      field: 'hidden',
+      default: false,
+    },
+  ]
+  const inst = use('carduse', 'card')
+  inst.set = { shown: true }
+  const doc = siteWith([inst], { components: [card] })
+  const problems = () => validateSite(doc, reg).map(p => [p.nodeId, p.path])
+  assert.deepEqual(problems(), [['hero', 'motion.pinPx']])
+
+  card.props[0].default = true
+  inst.overrides = { title: { style: { base: { hidden: true } } } }
+  assert.deepEqual(problems(), [['carduse', 'parts.hero.motion.pinPx']])
+})
+
 for (const sibling of [false, true]) {
   test(`a tablet-grid list counts as a pin child ${sibling ? 'beside another child' : 'on its own'}`, () => {
     const list = node('items', 'list', [
