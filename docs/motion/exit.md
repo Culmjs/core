@@ -1,6 +1,6 @@
 # Stage 3 motion: owner comparison
 
-**Technical evidence ready / owner comparison pending.** All frozen trajectory samples passed at both widths. The owner approved the references and revised byte cap, **not** the final visual reproduction. Stage 3c's blind comparison is separately open; neither milestone is marked complete.
+**Owner accepted the Stage 3 motion comparison on 2026-11-24.** After receiving the desktop and phone file paths, the owner approved all three reproductions: the 500 px entrance, the pinned scroll panel, and the masked-letter entry. All frozen trajectory samples passed at both widths. This closes the motion comparison; Stage 3c’s separate blind benchmark remains open.
 
 | Field plate        | 1280 × 900                                                 | 390 × 900                                                 |
 | ------------------ | ---------------------------------------------------------- | --------------------------------------------------------- |
@@ -71,4 +71,4 @@ Raw UTF-8. Base includes the joins; the test also counts the complete inline scr
 
 Release run (2026-11-24): **1,966 unit tests passed**, three optional/environment skips; **171 browser tests passed**, zero skipped, including the genuine 114 fallback lane. Clean install, generator drift check, types, lint, format, layers, terminology and all three package tarballs passed.
 
-Stage base: `a1ca779`. Verified implementation: `5d82e04`. Resolve the evidence/fixtures commit with `git log -1 --format=%H --diff-filter=A -- docs/motion/exit.md`. Owner disposition of this comparison and the separate 3c gate remains outstanding.
+Stage base: `a1ca779`. Verified implementation: `5d82e04`. Comparison sheets and evidence accepted: `14e745b`. The owner’s decision on these sheets was “yes approved move forward.” The independent 3c benchmark and branch integration are separate from that visual decision.
