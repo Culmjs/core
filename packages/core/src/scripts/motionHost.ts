@@ -155,7 +155,9 @@ export function hostMotion(
       // Parsed instance tuples have stable identities. A reflow may retime a
       // real target, but must not reorder its effect above another owner's.
       const fixed = new Map<number[], Animation>()
-      let resume = 0,
+      // An already-entered owner must settle even if its first split is
+      // refused and the first usable tracks are acquired on a later resize.
+      let resume = entered ? Infinity : null,
         dirty = false
       const reset = () => {
         for (const a of animations)
@@ -173,7 +175,7 @@ export function hostMotion(
       const stop = () => {
         fixed.forEach(a => a.cancel())
         fixed.clear()
-        resume = 0
+        resume = null
         reset()
       }
       const start = () => {
@@ -218,6 +220,7 @@ export function hostMotion(
         if (parts) {
           text = measureText(owner as HTMLElement, s.text!)
           const words = text.groups.words
+          const ready = marked(!!words.length)
           // A refused split still watches the unmodified box. Register the
           // batch together and ignore its initial delivery unless width moved
           // since the read; later genuine metric changes share the frame queue.
@@ -229,10 +232,7 @@ export function hostMotion(
           })
           for (const el of [owner, owner.parentElement!, ...words.flat()])
             sizes.observe(el)
-          if (!words.length) {
-            marked(false)
-            return false
-          }
+          if (!ready) return false
           duration = 0
           for (const p of parts) {
             duration += p.delay
@@ -251,6 +251,11 @@ export function hostMotion(
           for (const track of s.tracks) track[2].duration = duration
         }
         apply(s.tracks, 0)
+        if (resume !== null)
+          for (const a of animations) {
+            if (resume === Infinity) a.finish()
+            else a.currentTime = resume
+          }
         return true
       }
       const play = () => {
@@ -309,10 +314,6 @@ export function hostMotion(
         })
         reset()
         start()
-        for (const a of animations) {
-          if (resume === Infinity) a.finish()
-          else a.currentTime = resume
-        }
         if (scrub) syncView()
       }
       const invalidate = () => {
@@ -331,7 +332,6 @@ export function hostMotion(
       const entrance = tr === 'enter-view'
       if (entered) {
         play()
-        animations.forEach(a => a.finish())
         return
       }
       let intersecting = false

@@ -270,6 +270,10 @@ test('reflow retains fixed effect order and retimes its onset after changing lin
   }
 })
 
+const retryAudit = `window.watches=new Set;window.attempts=0;
+    const walk=document.createTreeWalker.bind(document);document.createTreeWalker=(...args)=>{attempts++;return walk(...args)};
+    window.ResizeObserver=class extends ResizeObserver{observe(e){watches.add(this);super.observe(e)}disconnect(){watches.delete(this);super.disconnect()}}`
+
 test('wrap fallback retries on metric changes only and releases watches on reduce and abort', async t => {
   const h = byState('waterlogged reeds', [fade])
   await fixture(
@@ -314,11 +318,115 @@ test('wrap fallback retries on metric changes only and releases watches on reduc
     {
       preview: true,
       css: 'h2{overflow-wrap:anywhere}',
-      setup: `window.watches=new Set;window.attempts=0;
-    const walk=document.createTreeWalker.bind(document);document.createTreeWalker=(...args)=>{attempts++;return walk(...args)};
-    window.ResizeObserver=class extends ResizeObserver{observe(e){watches.add(this);super.observe(e)}disconnect(){watches.delete(this);super.disconnect()}}`,
+      setup: retryAudit,
     },
   )
+})
+
+test('settled entrance survives a reduced-motion remount that initially refuses the split', async t => {
+  await fixture(
+    [
+      node('space', 'box'),
+      heading('waterlogged reeds', [fade]),
+      node('end', 'box'),
+    ],
+    async p => {
+      await p.evaluate(`window.original=h().firstChild;
+        window.sample=()=>{const a=tracks()[0];return a?[a.playState,a.currentTime,+getComputedStyle(a.effect.target).opacity]:null};
+        scrollTo(0,1200);tick()`)
+      await p.evaluate(`tracks()[0].finished.then(()=>true)`)
+      const settled = ['finished', 100, 1]
+      assert.deepEqual(await p.evaluate('sample()'), settled)
+      const staticDom = () =>
+        p.evaluate(
+          `[tracks().length,h().childElementCount,h().firstChild===original,h().textContent,getComputedStyle(h()).opacity]`,
+        )
+      const originalDom = [0, 0, true, 'waterlogged reeds', '1']
+      await p.setReducedMotion(true)
+      await p.evaluate('tick()')
+      assert.deepEqual(await staticDom(), originalDom)
+      await p.setViewport(68, 900)
+      await p.setReducedMotion(false)
+      await p.evaluate('tick()')
+      assert.deepEqual(await staticDom(), originalDom)
+      // Sample in the mutation microtask of the first successful acquisition,
+      // before a fresh entrance could play through to a misleading final frame.
+      await p.evaluate(`window.first=null;const observer=new MutationObserver(()=>{
+        if(tracks().length){window.recovered=tracks()[0];window.first=sample();observer.disconnect()}
+      });observer.observe(h(),{childList:true,subtree:true})`)
+      await p.setViewport(390, 900)
+      await p.evaluate('tick()')
+      const first = await p.evaluate('first')
+      t.diagnostic(JSON.stringify({ first }))
+      assert.deepEqual(first, settled)
+      await p.evaluate(
+        `(async()=>{scrollTo(0,0);await tick();scrollTo(0,1200);await tick()})()`,
+      )
+      assert.deepEqual(
+        await p.evaluate(`[tracks()[0]===recovered,sample(),h().textContent]`),
+        [true, settled, 'waterlogged reeds'],
+      )
+      await p.setReducedMotion(true)
+      await p.evaluate('tick()')
+      assert.deepEqual(await staticDom(), originalDom)
+    },
+    { css: 'h2{overflow-wrap:anywhere}' },
+  )
+})
+
+test('a refused inline split sleeps at native width and retries once per real resize', async t => {
+  const reed = byState('שלום עולם', [
+    neutral,
+    { ...fade, target: 'self', from: { xPx: 0 }, to: { xPx: 40 } },
+  ])
+  reed.props!.level = 'span'
+  for (const preview of [false, true])
+    await fixture(
+      [node('shell', 'box', [reed])],
+      async p => {
+        await p.evaluate(
+          `window.original=h().firstChild;h().dataset.sMode='on'`,
+        )
+        const idle = () =>
+          p.evaluate<
+            number[]
+          >(`(async()=>{const samples=[];for(let i=1;i<=34;i++){
+      await new Promise(requestAnimationFrame);if([4,19,34].includes(i))samples.push(attempts)
+    }return samples})()`)
+        const counts = await idle()
+        t.diagnostic(JSON.stringify({ preview, counts }))
+        assert.deepEqual(counts, [1, 1, 1])
+        const state = () =>
+          p.evaluate(`[getComputedStyle(h()).display,h().clientWidth,h().firstChild===original,
+      h().childElementCount,h().hasAttribute('data-cm-on'),tracks().length,watches.size,attempts]`)
+        const expected = ['inline', 0, true, 0, false, 0]
+        // Text metrics and the self-x scene's neutral layout each have a watch.
+        assert.deepEqual(await state(), [...expected, 2, 1])
+        await p.setViewport(300, 900)
+        assert.deepEqual(await idle(), [2, 2, 2])
+        await p.setReducedMotion(true)
+        await p.evaluate('tick()')
+        await p.setViewport(390, 900)
+        await p.evaluate('tick()')
+        assert.deepEqual(await state(), [...expected, 0, 2])
+        if (preview) {
+          await p.setReducedMotion(false)
+          await p.evaluate('tick()')
+          assert.deepEqual(await state(), [...expected, 2, 3])
+          await p.evaluate('controller.abort()')
+          await p.setViewport(300, 900)
+          await p.evaluate(
+            `document.fonts.dispatchEvent(new Event('loadingdone'));tick()`,
+          )
+          assert.deepEqual(await state(), [...expected, 0, 3])
+        }
+      },
+      {
+        preview,
+        css: '[data-id=shell]{display:block;direction:ltr}',
+        setup: `${retryAudit};window.h=()=>document.querySelector('[data-id=reed]')`,
+      },
+    )
 })
 
 for (const width of [1280, 390])
