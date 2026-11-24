@@ -99,3 +99,48 @@ test('preference changes and abort restore the document; an entered owner never 
   hostMotion(doc, win)
   assert.equal(enter.size, 1)
 })
+
+test('aborting an active press preview cancels its tracks and detaches both input sources', () => {
+  let plays = 0,
+    stops = 0
+  const owner = Object.assign(new EventTarget(), {
+    getAttribute: () =>
+      JSON.stringify({
+        trigger: 'press',
+        tracks: [
+          [[[0, 0]], [{ opacity: 0 }, { opacity: 1 }], { duration: 100 }],
+        ],
+      }),
+    setAttribute() {},
+    removeAttribute() {},
+    animate() {
+      plays++
+      return {
+        cancel() {
+          stops++
+        },
+      }
+    },
+  })
+  const realm = Object.assign(new EventTarget(), {
+    AbortController,
+    matchMedia: () => Object.assign(new EventTarget(), { matches: false }),
+  })
+  const doc = {
+    querySelectorAll: () => [owner],
+    timeline: { currentTime: 0 },
+  } as unknown as Document
+  const controller = new AbortController()
+  hostMotion(doc, realm as unknown as Window, controller.signal)
+  const hold = () => {
+    owner.dispatchEvent(
+      Object.assign(new Event('pointerdown'), { button: 0, pointerId: 8 }),
+    )
+    owner.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Enter' }))
+  }
+  hold()
+  assert.deepEqual([plays, stops], [1, 0])
+  controller.abort()
+  hold()
+  assert.deepEqual([plays, stops], [1, 1])
+})

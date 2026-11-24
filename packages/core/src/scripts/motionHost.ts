@@ -121,15 +121,43 @@ export function hostMotion(
           on(owner, ev, sync)
         sync()
       } else if (tr === 'press') {
-        on(owner, 'pointerdown', e => {
-          if ((e as PointerEvent).button === 0) play()
-        })
-        for (const ev of ['pointerup', 'pointercancel', 'blur']) on(w, ev, stop)
-        on(owner, 'keydown', e => {
-          if (['Enter', ' '].includes((e as KeyboardEvent).key)) play()
-        })
-        on(owner, 'keyup', stop)
-        on(owner, 'blur', stop)
+        // A key and several contacts can hold the same owner. Pointer releases
+        // arrive on window, so match the actual contact before stopping it.
+        const held = new Set<string | number>()
+        type Input = KeyboardEvent | PointerEvent
+        const id = (e: Input) => ('key' in e ? e.code || e.key : e.pointerId)
+        const down = (event: Event) => {
+          const e = event as Input
+          if (
+            'key' in e
+              ? !e.repeat && ['Enter', ' '].includes(e.key)
+              : e.button === 0
+          ) {
+            held.add(id(e))
+            play()
+          }
+        }
+        const up = (event: Event) => {
+          if (held.delete(id(event as Input)) && !held.size) stop()
+        }
+        const reset = () => {
+          held.clear()
+          stop()
+        }
+        on(owner, 'pointerdown', down)
+        on(owner, 'keydown', down)
+        on(owner, 'keyup', up)
+        on(w, 'pointerup', up)
+        on(w, 'pointercancel', up)
+        owner.addEventListener(
+          'blur',
+          e => {
+            if (!owner.contains((e as FocusEvent).relatedTarget as Node | null))
+              reset()
+          },
+          { signal: options.signal, capture: true },
+        )
+        on(w, 'blur', reset)
       } else if (Array.isArray(tr)) {
         const [id, attr, value] = tr
         const holder = owner.closest(token(id))

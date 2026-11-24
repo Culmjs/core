@@ -29,7 +29,10 @@ export function prepareTracks(
   bound: BoundStep[],
   reveals: ReadonlySet<number>,
 ): Pick<Scene, 'tracks' | 'parts' | 'duration'> {
-  if (bound.some(b => b.part && b.part !== 'path'))
+  if (bound.some(b => b.part && b.part !== 'path')) {
+    // Fixed elements and each kind of split member have distinct scale
+    // histories, even when the packed target token is 0 for all of them.
+    const histories = new Map<Part | undefined, Map<number, number>>()
     return {
       duration: 0,
       tracks: [],
@@ -38,24 +41,32 @@ export function prepareTracks(
         // A fixed block already includes all of its child offsets. For text,
         // stamp the prepared local track once per measured group at i * stagger.
         const step = { ...s, delayMs: 0, staggerMs: unit ? 0 : s.staggerMs }
+        const scales = histories.get(unit) ?? new Map<number, number>()
+        histories.set(unit, scales)
         return {
-          ...fixedTracks([{ step, targets }], reveals, i === 0),
+          ...fixedTracks(
+            [{ step, targets }],
+            unit ? undefined : reveals,
+            i === 0,
+            scales,
+          ),
           delay: s.delayMs ?? 0,
           ...(unit && { unit, stagger: s.staggerMs ?? 0 }),
           ...(s.mask && { mask: true }),
         }
       }),
     }
+  }
   return fixedTracks(bound, reveals, true)
 }
 
 function fixedTracks(
   bound: BoundStep[],
-  reveals: ReadonlySet<number>,
+  reveals: ReadonlySet<number> | undefined,
   first: boolean,
+  scales = new Map<number, number>(),
 ) {
   const targets = new Map<number, Map<string, Channel>>()
-  const scales = new Map<number, number>()
   let duration = 0
   for (const [index, { step: s, targets: ids }] of bound.entries()) {
     const start = duration + (s.delayMs ?? 0),
@@ -109,7 +120,7 @@ function fixedTracks(
         fill: c.both ? 'both' : 'forwards',
         ...(c.add && { composite: 'add' }),
       }
-      const reveal = channel === 'opacity' && reveals.has(id)
+      const reveal = channel === 'opacity' && reveals?.has(id)
       const key = JSON.stringify([frames, options, reveal])
       const track: PackedTrack = unique.get(key) ?? [[], frames, options]
       if (reveal && !track[3])

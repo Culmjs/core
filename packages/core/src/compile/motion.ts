@@ -195,7 +195,9 @@ function timelines(
         const id = owner === el ? 0 : token(el)
         targets.push(id)
         if (step.from.draw !== undefined) draw.add(id)
-        if (step.from.opacity !== undefined && appear.has(el)) reveals.add(id)
+        // This token describes the rendered element. Split members produced
+        // from it are different targets and do not carry its root-scroll reveal.
+        if (appear.has(el)) reveals.add(id)
         if (part || !Object.keys(step.from).some(k => k !== 'opacity')) continue
         const inl = inlineTarget(n, el, style)
         if (!inl.natural && !inl.restore) continue

@@ -268,3 +268,80 @@ test('the delivered fallback never suppresses an unrelated keyboard or pointer a
   )
   assert.deepEqual(got, [true, true, true, 0, 1, 1, 0])
 })
+
+const pressPair = () =>
+  siteWith(
+    ['a', 'b'].map(id =>
+      text(id, id, {
+        motion: { trigger: 'press', steps: [{ ...x, staggerMs: 10 }] },
+      }),
+    ),
+  )
+
+test('an unrelated keyup or a repeated keydown cannot release or restart the held press', async () => {
+  const got = await read(
+    pressPair(),
+    `
+    const a=get('a'),b=get('b'),key=(el,type,key,repeat=false)=>el.dispatchEvent(new KeyboardEvent(type,{key,repeat,bubbles:true}));
+    key(a,'keydown',' ');const first=a.getAnimations()[0],same=()=>!!first && a.getAnimations()[0]===first;
+    key(a,'keydown',' ',true);const repeated=same();
+    key(a,'keydown','Shift');key(a,'keyup','Shift');const unrelated=same();
+    key(a,'keydown','Enter');key(a,'keyup',' ');const secondKey=same();
+    key(a,'keyup','Enter');const released=a.getAnimations().length;
+    key(b,'keydown','Enter',true);const strayRepeat=b.getAnimations().length;
+    key(b,'keydown','Enter');b.dispatchEvent(new FocusEvent('blur'));
+    return [repeated,unrelated,secondKey,released,strayRepeat,b.getAnimations().length]`,
+  )
+  assert.deepEqual(got, [true, true, true, 0, 0, 0])
+})
+
+test('distinct pointer contacts and a simultaneous key hold only the owners they pressed', async () => {
+  const got = await read(
+    pressPair(),
+    `
+    const a=get('a'),b=get('b'),touch=(el,type,pointerId)=>el.dispatchEvent(new PointerEvent(type,{pointerType:'touch',pointerId,button:0,bubbles:true}));
+    const key=(type)=>b.dispatchEvent(new KeyboardEvent(type,{key:'Enter',bubbles:true}));
+    const count=()=>[a,b].map(el=>el.getAnimations().length);
+    touch(a,'pointerdown',11);touch(b,'pointerdown',22);const both=count();
+    touch(window,'pointerup',11);const lifted=count();
+    touch(b,'pointerdown',33);touch(window,'pointercancel',22);const remaining=count();
+    key('keydown');touch(window,'pointerup',33);const keyed=count();
+    key('keyup');const released=count();
+    touch(a,'pointerdown',44);key('keydown');window.dispatchEvent(new Event('blur'));
+    const blurred=count();touch(b,'pointerdown',55);touch(window,'pointerup',55);
+    return [both,lifted,remaining,keyed,released,blurred,count()]`,
+  )
+  assert.deepEqual(got, [
+    [1, 1],
+    [0, 1],
+    [0, 1],
+    [0, 1],
+    [0, 0],
+    [0, 0],
+    [0, 0],
+  ])
+})
+
+test('a press on a focusable child survives a focus move within the same owner', async () => {
+  const owner = node(
+    'owner',
+    'box',
+    ['first', 'second'].map(id => ({
+      ...node(id, 'button'),
+      props: { label: id, link: { url: '#' } },
+    })),
+  )
+  owner.motion = { trigger: 'press', steps: [{ ...x, staggerMs: 1 }] }
+  const got = await read(
+    siteWith([owner]),
+    `
+    const owner=get('owner'),one=get('first'),two=get('second');
+    two.dispatchEvent(new PointerEvent('pointerdown',{pointerId:5,button:0,bubbles:true}));
+    const a=owner.getAnimations()[0];
+    one.dispatchEvent(new FocusEvent('blur',{relatedTarget:two}));
+    const kept=!!a && owner.getAnimations()[0]===a;
+    window.dispatchEvent(new PointerEvent('pointerup',{pointerId:5}));
+    return [kept,owner.getAnimations().length]`,
+  )
+  assert.deepEqual(got, [true, 0])
+})

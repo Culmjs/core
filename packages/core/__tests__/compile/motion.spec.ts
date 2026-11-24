@@ -12,6 +12,7 @@ import {
 } from '../../src/index.ts'
 import { prepare, siteElement } from '../../src/compile/page.ts'
 import { motionCss } from '../../src/compile/motion.ts'
+import type { Scene } from '../../src/scripts/motionHost.ts'
 import { node, sampleRegistry, siteWith, text } from '../kit.ts'
 
 test('both a grouped SVG owner and its nested target receive the scoped classes', () => {
@@ -622,4 +623,68 @@ test('dynamic text keeps prepared fixed blocks and leaves only measured group ti
   )
   assert.match(letters.tracks[0][1][0].easing, /^linear\(/)
   assert.equal(letters.tracks[0][1][0].translate, '105%')
+})
+
+function headingParts(steps: Step[], appear = false) {
+  const hero = text('hero', 'Reed Ledger', {
+    props: { level: 'h2', runs: [{ text: 'Reed Ledger' }] },
+    ...(appear && { style: { base: { appearAfter: 100 } } }),
+    motion: { trigger: 'enter-view', steps },
+  })
+  const p = page(siteWith([hero]))
+  const scene: Scene = JSON.parse(
+    p.html.match(/ data-culm-motion="([^"]*)"/)![1].replaceAll('&quot;', '"'),
+  )
+  assert.ok(scene.parts)
+  return { parts: scene.parts, css: p.css }
+}
+
+test('dynamic blocks carry the vertical scale of the same owner or split unit only', () => {
+  const step = (
+    target: Step['target'],
+    from: Step['from'],
+    to: Step['to'],
+  ): Step => ({ target, from, to, durationMs: 100 })
+  const horizontal = (target: Step['target']) =>
+    step(target, { scaleX: 2 }, { scaleX: 3 })
+  const { parts } = headingParts([
+    step('self', { scale: 1 }, { scale: 2 }),
+    step('letters', { opacity: 0 }, { opacity: 1 }),
+    horizontal('self'),
+    horizontal('letters'),
+    step('letters', { scale: 1 }, { scale: 4 }),
+    horizontal('self'),
+    horizontal('letters'),
+    horizontal('words'),
+  ])
+  const curve = (i: number) => parts[i].tracks[0][1].map(f => f.scale)
+  assert.deepEqual([2, 3, 5, 6, 7].map(curve), [
+    ['2 2', '3 2'],
+    ['2 1', '3 1'],
+    ['2 2', '3 2'],
+    ['2 4', '3 4'],
+    ['2 1', '3 1'],
+  ])
+})
+
+test('split opacity fades members while only the reveal-bearing heading uses the alpha channel', () => {
+  const fade = (target: Step['target']): Step => ({
+    target,
+    from: { opacity: 0.2 },
+    to: { opacity: 0.8 },
+    durationMs: 100,
+  })
+  const { parts } = headingParts(
+    (['letters', 'self', 'words', 'lines'] as const).map(fade),
+    true,
+  )
+  for (const p of parts) {
+    const [, frames, , reveal] = p.tracks[0]
+    assert.deepEqual(frames, [{ opacity: 0.2 }, { opacity: 0.8 }])
+    assert.deepEqual(
+      reveal,
+      p.unit ? undefined : [{ '--cm-alpha': 0.2 }, { '--cm-alpha': 0.8 }],
+    )
+  }
+  assert.doesNotMatch(headingParts([fade('letters')], true).css, /--cm-alpha/)
 })
