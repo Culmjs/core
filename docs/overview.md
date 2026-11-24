@@ -212,7 +212,7 @@ catalogue(registry, { what: 'kinds' }) // compact rows, paged
 catalogue(registry, { what: 'kinds', id: 'text' }) // one entry in full
 ```
 
-`what` is `guide`, `kinds`, `operations`, `recipes`, `blocks`, `sources` or `effects`. It is generated from the registry, so a plug-in's kinds, blocks, sources and effects appear with the core ones. The list views are terse: `guide` is rows of plain sentences on composing a section; `kinds` is one string per kind (`kind(role): setting, setting`); `operations` is one string per operation with a `legend` for the long types; `recipes` is rows `{ recipe, name, guide, ops }`; a block is `{ block, name, category, looks, guide }`; a source has its fields; an effect has its name and tier. A view with an `id` returns the one entry in full: a kind's settings with their `hint` (the grammar of a shape's `geometry`, `fill` and `stroke`), an operation's fields and example, a recipe's batch (its first operation aimed at the first page of the site, which `plan` accepts as it stands), a block's settings with a ready insert (pass `site` to name the first page of the site), a source's first sample row or an effect's numeric settings and `setMotion` example. An unknown `id` is refused with the code of its kind and the allowed names; an unknown recipe or effect is `INVALID_OPERATION` at `id`.
+`what` is `guide`, `kinds`, `operations`, `recipes`, `blocks`, `sources` or `effects`. It is generated from the registry, so a plug-in's kinds, blocks, sources and effects appear with the core ones. The list views are terse: `guide` is rows of plain sentences on composing a section; `kinds` is one string per kind (`kind(role): setting, setting`); `operations` is one string per operation with a `legend` for the long types; `recipes` is rows `{ recipe, name, guide, ops }`; a block is `{ block, name, category, looks, guide }`; a source has its fields; an effect has its name and minimum tier. A view with an `id` returns the one entry in full: a kind's settings with their `hint` (the grammar of a shape's `geometry`, `fill` and `stroke`), an operation's fields and example, a recipe's batch (its first operation aimed at the first page of the site, which `plan` accepts as it stands), a block's settings with a ready insert (pass `site` to name the first page of the site), a source's first sample row or an effect's numeric settings. Effect detail includes a `setMotion` example for a compatible site node, or describes the required target. An unknown `id` is refused with the code of its kind and the allowed names; an unknown recipe or effect is `INVALID_OPERATION` at `id`.
 
 `GUIDE` and `RECIPES` are core data, like `OPERATIONS`: six recipes (`hero`, `split`, `cta-band`, `buttons`, `divider`, `card`) that use only site colours and leave node ids out so one can be applied twice. The five list replies `guide`, `kinds`, `operations`, `recipes` and `blocks` stay within 10,500 characters on the starter registry.
 
@@ -258,7 +258,7 @@ Each of these validates first. If the document, the rows or an option has a prob
 | open snippet | 105 bytes   | a layer is marked open at load             |
 | mail snippet | 277 bytes   | a hidden mail address was written          |
 | states       | 1,963 bytes | a node on the page uses states or triggers |
-| timeline     | 8,185 bytes | the rendered page needs the motion host    |
+| timeline     | 8,177 bytes | the rendered page needs the motion host    |
 
 - In editing mode there is no script, and every node's element carries `data-id` so an editor can map the page back to the document.
 - A text node still marked as an untouched sample is left out of a live page and kept in editing mode.
@@ -277,7 +277,7 @@ Each of these validates first. If the document, the rows or an option has a prob
 
 Sizes are raw minified bytes. `compilePage` reports a page that passes a ceiling as a `RESOURCE_LIMIT_EXCEEDED` problem and returns its real figures in `stats`.
 
-CSS-only motion ships no timeline script. The shared 20,000-byte cap applies independently of the individual script ceilings. The [stage comparison](motion/exit.md) gives measured byte totals, desktop and phone frames, and the pending owner decision.
+CSS-only motion ships no timeline script. The shared 20,000-byte cap applies independently of the individual script ceilings. The [stage comparison](motion/exit.md) gives measured byte totals and the desktop and phone frames the owner accepted. The separate Stage 3c benchmark remains open.
 
 ## Measure
 

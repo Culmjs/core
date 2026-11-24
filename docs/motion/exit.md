@@ -55,20 +55,20 @@ Raw UTF-8. Base includes the joins; the test also counts the complete inline scr
 
 | Live page                                     |  Base | States | Timeline |  Total JS |   CSS | Elements / depth |
 | --------------------------------------------- | ----: | -----: | -------: | --------: | ----: | ---------------: |
-| Traverse                                      |   305 |      0 |     8185 |      8490 |  5826 |           17 / 4 |
-| Waterline                                     |   305 |      0 |     8185 |      8490 |  5961 |           22 / 5 |
-| Reed Ledger                                   |   305 |      0 |     8185 |      8490 |  5946 |           15 / 4 |
+| Traverse                                      |   305 |      0 |     8177 |      8482 |  5826 |           17 / 4 |
+| Waterline                                     |   305 |      0 |     8177 |      8482 |  5961 |           22 / 5 |
+| Reed Ledger                                   |   305 |      0 |     8177 |      8482 |  5946 |           15 / 4 |
 | Plain control                                 |   304 |      0 |        0 |       304 |  5656 |           15 / 4 |
 | CSS-only scroll                               |   304 |      0 |        0 |       304 |  5888 |           15 / 4 |
-| Mixed (open + mail + states + CSS + timeline) |   688 |   1963 |     8185 |     10836 |  6152 |           18 / 4 |
+| Mixed (open + mail + states + CSS + timeline) |   688 |   1963 |     8177 |     10828 |  6152 |           18 / 4 |
 | Independent ceilings                          | 10000 |   6193 | **8192** | **20000** | 16000 |        2000 / 12 |
 
-**7 bytes remain on the timeline; 9,164 on the mixed-page aggregate.** The original 3,800 timeline proposal was superseded; the aggregate was not. Exact limits and one-byte overages are exercised by [the budget tests](../../packages/core/__tests__/compile/budgets.spec.ts). The full MCP `describe` reports the approved limits. On a valid timeline document with 350 distinct swatch styles, compilation reported `RESOURCE_LIMIT_EXCEEDED` at `css`; the actual `measure` tool returned the class 1 `invalid` finding **“css is 29851, the ceiling is 16000”**.
+**15 bytes remain on the timeline; 9,172 on the mixed-page aggregate.** The reviewed host and mixed page are each 8 bytes smaller than the accepted comparison build (8,185 / 10,836). All six live fixtures match that build byte for byte outside the host. The original 3,800 timeline proposal was superseded; the aggregate was not. Exact limits and one-byte overages are exercised by [the budget tests](../../packages/core/__tests__/compile/budgets.spec.ts). The full MCP `describe` reports the approved limits. On a valid timeline document with 350 distinct swatch styles, compilation reported `RESOURCE_LIMIT_EXCEEDED` at `css`; the actual `measure` tool returned the class 1 `invalid` finding **“css is 29851, the ceiling is 16000”**.
 
 - Control live HTML (6,645 bytes) and whole site result matched SHA-256 baselines from the pre-motion compiler `a1ca779`. Separately, **48/48** earlier live/edit/measure/site outputs matched that revision.
 - At both widths, with scripts disabled and separately with reduced motion enabled, all plates kept their headings, jump link and native disclosure in keyboard order. The link navigated and the note opened. No timeline ran, the gauge stayed full and the heading remained unsplit.
 - On the CSS-only plate at half passage, native `view()` gave opacity **0.700127**. Chrome **114.0.5735.90** lacks `view()` and left the text static at **1**. For eligible unpinned scroll, opt into `scrollFallback:'timeline'` only when older engines need the scrub too; this ships the host even where native wins. The [genuine two-engine lane](../../packages/tools/__browser__/motion-inputs.spec.ts) exercises that option forward and backward.
 
-Release run (2026-11-24): **1,966 unit tests passed**, three optional/environment skips; **171 browser tests passed**, zero skipped, including the genuine 114 fallback lane. Clean install, generator drift check, types, lint, format, layers, terminology and all three package tarballs passed.
+Final review run (2026-11-24, `4195730`): **1,972 unit tests passed**, three optional/environment skips; **174 browser tests passed**, zero skipped, including the genuine 114 fallback lane. Clean install, generator drift check, types, lint, format, layers, terminology and all three package tarballs passed. All 30 trajectory diagnostic lines at the two widths matched the comparison run exactly.
 
-Stage base: `a1ca779`. Verified implementation: `5d82e04`. Comparison sheets and evidence accepted: `14e745b`. The owner’s decision on these sheets was “yes approved move forward.” The independent 3c benchmark and branch integration are separate from that visual decision.
+Stage base: `a1ca779`. The original comparison used implementation `5d82e04` (1,966 unit and 171 browser tests passed). Comparison sheets and evidence accepted: `14e745b`; decision recorded at `1743b34`. The owner’s decision on these sheets was “yes approved move forward.” The independent 3c benchmark and branch integration are separate from that visual decision.
