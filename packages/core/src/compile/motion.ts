@@ -18,6 +18,7 @@ import type { Scene } from '../scripts/motionHost.ts'
 import { prepareTracks, type BoundStep } from './motionTracks.ts'
 import { directPath } from './elementsShape.ts'
 import { prepareCompound, drawTracks } from './pathStrokes.ts'
+import { pinGeometry } from './pinGeometry.ts'
 import { visualChild } from '../layout/display.ts'
 import {
   APPEAR_SUPPORT,
@@ -151,6 +152,7 @@ type Pending = {
 }
 function timelines(
   programs: Pending[],
+  site: HtmlNode,
   rendered: ReadonlyMap<Node, HtmlNode>,
   native: ReadonlySet<Node>,
   style: InlineStyles,
@@ -167,6 +169,9 @@ function timelines(
     }
     return id
   }
+  const pin = programs.some(p => p.pinChild)
+    ? pinGeometry(site, token)
+    : undefined
   const natural = new Set<string>(),
     restores = new Set<string>()
   const compound = new Set<number>()
@@ -261,58 +266,9 @@ function timelines(
     for (const part of scene.parts ?? [])
       part.tracks = drawTracks(part.tracks, compound)
     if (pinChild && m.pinPx) {
-      scene.pin = m.pinPx
       const visual = rendered.get(pinChild)!
-      scene.child = token(visual)
-      transformBox(pinChild, visual, scene.child)
-      // Geometry is also a track on this clock. Add to existing translation
-      // and flow spacing; cancel restores both without inline style mutations.
-      const options = {
-        duration: scene.duration,
-        fill: 'both',
-        composite: 'add',
-      } as const
-      scene.tracks.push(
-        [
-          [[scene.child, 0]],
-          [{ translate: '0px 0px' }, { translate: `var(--p${scene.child})` }],
-          options,
-        ],
-        [
-          [[0, 0]],
-          Array(2).fill({ paddingBottom: `var(--p${scene.child}y)` }),
-          options,
-        ],
-      )
-      // SVG supplies the browser's actual local→viewport matrix, including
-      // CSS rotate, skew, zoom and nonuniform scale on arbitrary ancestors.
-      const meter: HtmlNode = {
-        tag: 'svg',
-        attrs: {
-          width: 0,
-          height: 0,
-          'aria-hidden': 'true',
-          style: 'position:absolute;pointer-events:none;visibility:hidden',
-        },
-      }
-      scene.basis = token(meter)
-      // Keep table/list content models intact; a naked SVG under <table>
-      // would be foster-parented *outside* the motion owner's local scope.
-      const wrapper = (
-        { table: 'caption', tr: 'td', ul: 'li', ol: 'li' } as Record<
-          string,
-          string
-        >
-      )[owner.tag]
-      ;(owner.children ??= []).push(
-        wrapper
-          ? {
-              tag: wrapper,
-              attrs: { 'aria-hidden': 'true', style: 'display:contents' },
-              children: [meter],
-            }
-          : meter,
-      )
+      pin!(scene, owner, visual, m.pinPx)
+      transformBox(pinChild, visual, scene.child!)
     }
     ;(owner.attrs ??= {})['data-culm-motion'] = JSON.stringify(scene)
     timeline = true
@@ -698,6 +654,7 @@ export function motionCss(
   }
   const host = timelines(
     pending,
+    site,
     rendered,
     nativeScroll,
     style,

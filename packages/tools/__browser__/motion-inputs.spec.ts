@@ -548,6 +548,21 @@ test('self-transform scrub measures the same layout crossing on the way down and
           rows.forEach((v, i) =>
             near(v, [0, 0.25, 0.5, 0.75, 0.5, 0.25][i], 0.015),
           )
+          const paint = await p.evaluate<
+            [number, boolean, number][]
+          >(`(async()=>{
+            const el=get('owner'),rows=[];for(const y of [1800,2250,3000,2250,1500]){
+              await at(y);await tick();const r=el.getBoundingClientRect();
+              rows.push([r.top,el.contains(document.elementFromPoint(10,r.top+10)),+getComputedStyle(el).opacity])
+            }return rows})()`)
+          t.diagnostic(`exit/reverse: ${JSON.stringify(paint)}`)
+          for (const i of [1, 3]) {
+            near(paint[i][0], 150, 2)
+            assert.ok(paint[i][1])
+            near(paint[i][2], 1)
+          }
+          near(paint[2][0], -600, 2)
+          near(paint[4][2], 0.5)
         },
         { engine },
       )
@@ -590,6 +605,43 @@ test('self-moving entrance finishes against its layout box and leaves the real l
       t.diagnostic(JSON.stringify(values))
       assert.deepEqual(values, ['finished', 0, true, '#reed'])
     },
+  )
+})
+
+test('an unpainted canonical crossing wakes scrub before the translated box enters', async () => {
+  const owner = node('owner', 'box')
+  owner.motion = {
+    trigger: 'scroll',
+    steps: [
+      {
+        ...fade,
+        target: 'self',
+        staggerMs: 1,
+        from: { yPx: 600, opacity: 0 },
+        to: { yPx: 0, opacity: 1 },
+      },
+    ],
+  }
+  const run = async (p: Page, scroll: string, root = false) => {
+    const [rows, distantFrames] = await p.evaluate<
+      [number[], number]
+    >(`(async()=>{const out=[];await tick();let distantFrames;
+      for(const y of [0,300,1200,1500]){const n=calls;
+      ${scroll};await tick();out.push(+getComputedStyle(get('owner')).opacity);if(y===300)distantFrames=calls-n
+    }return [out,distantFrames]})()`)
+    rows.forEach((v, i) => near(v, [0, 0, 0.25, 0.5][i], 0.015))
+    if (root) assert.equal(distantFrames, 0)
+  }
+  await fixture(html(scrollScene(owner), '[data-id=owner]{height:300px}'), p =>
+    run(p, 'scrollTo(0,y)', true),
+  )
+  const clip = node('clip', 'box', scrollScene(owner))
+  await fixture(
+    html(
+      [clip],
+      '[data-id=clip]{height:900px;overflow:auto}[data-id=owner]{height:300px}',
+    ),
+    p => run(p, "get('clip').scrollTop=y"),
   )
 })
 
@@ -668,6 +720,125 @@ test('pin converts viewport travel through scaled and rotated ancestors into loc
       },
     )
   }
+})
+
+test('scaled pin occupies exactly its viewport travel in document flow while its child remains painted', async t => {
+  const panel = node('panel', 'box'),
+    owner = node('owner', 'box', [panel])
+  owner.motion = {
+    trigger: 'scroll',
+    pinPx: 500,
+    steps: [
+      {
+        ...fade,
+        target: 'children',
+        from: { opacity: 1 },
+        to: { opacity: 0.5 },
+      },
+    ],
+  }
+  const source = html(
+    [node('outer', 'box', scrollScene(node('wrap', 'box', [owner])))],
+    `[data-id=outer]{transform:translateZ(0)}[data-id=wrap]{transform:scale(.5);transform-origin:0 0;overflow:hidden}
+    [data-id=owner]{overflow:hidden}[data-id=panel]{height:120px;width:100px;background:blue}`,
+  )
+  const position = `document.querySelector('[data-id=after]').getBoundingClientRect().top+scrollY`
+  let normal = 0
+  await fixture(
+    source,
+    async p => {
+      normal = await p.evaluate<number>(position)
+      assert.equal(normal, 1920)
+    },
+    { scripts: false },
+  )
+  await fixture(
+    source.replace(TIMELINE_SCRIPT, () => preview),
+    async p => {
+      const rows = await p.evaluate<
+        [number, number, boolean][]
+      >(`(async()=>{const panel=get('panel'),rows=[];
+      for(const y of [1800,2050,2300,2332,1925]){
+        await at(y);const r=panel.getBoundingClientRect();rows.push([r.top,${position},panel.contains(document.elementFromPoint(20,Math.max(5,r.top+10)))])
+      }return rows})()`)
+      t.diagnostic(`scaled flow: ${JSON.stringify(rows)}`)
+      rows.forEach(([top, after, hit], i) => {
+        near(top, i === 3 ? -32 : 0, 2)
+        assert.ok(hit)
+        near(after - normal, 500, 2)
+      })
+      await p.setReducedMotion(true)
+      await p.evaluate('tick()')
+      assert.equal(await p.evaluate(position), normal)
+      await p.setReducedMotion(false)
+      await p.evaluate('tick()')
+      near((await p.evaluate<number>(position)) - normal, 500, 2)
+      await p.evaluate('controller.abort();tick()')
+      assert.equal(await p.evaluate(position), normal)
+    },
+  )
+})
+
+test('successive scaled flow exits balance inner and outer siblings independently', async () => {
+  const owner = node('owner', 'box', [node('panel', 'box')])
+  owner.motion = {
+    trigger: 'scroll',
+    pinPx: 500,
+    steps: [{ ...fade, target: 'children' }],
+  }
+  const outer = node('outer', 'box', [
+    node('inner', 'box', [owner]),
+    node('sibling', 'box'),
+  ])
+  const src = html(
+    scrollScene(outer),
+    `[data-id=inner],[data-id=outer]{transform:scale(.5);transform-origin:0 0;overflow:hidden}
+    [data-id=panel],[data-id=sibling]{height:120px}`,
+  )
+  const positions = `['sibling','after'].map(id=>document.querySelector('[data-id='+id+']').getBoundingClientRect().top+scrollY)`
+  let normal: number[] = []
+  await fixture(
+    src,
+    async p => {
+      normal = await p.evaluate(positions)
+    },
+    { scripts: false },
+  )
+  await fixture(src, async p => {
+    await p.evaluate('at(2300)')
+    const active = await p.evaluate<number[]>(positions)
+    active.forEach((v, i) => near(v - normal[i], 500, 2))
+    assert.ok(
+      await p.evaluate(`get('panel').contains(document.elementFromPoint(5,5))`),
+    )
+  })
+})
+
+test('two pins keep both additive reservations at a shared flow exit', async () => {
+  const items = ['one', 'two'].map(id => {
+    const n = node(id, 'box', [node(id + 'panel', 'box')])
+    n.motion = {
+      trigger: 'scroll',
+      pinPx: 500,
+      steps: [{ ...fade, target: 'children' }],
+    }
+    return n
+  })
+  const source = html(
+    scrollScene(node('scaled', 'box', items)),
+    `[data-id=scaled]{transform:scale(.5);transform-origin:0 0}
+    [data-id=onepanel],[data-id=twopanel]{height:120px}`,
+  )
+  await fixture(source, async p => {
+    await p.evaluate('tick()')
+    near(
+      await p.evaluate<number>(
+        `get('after').getBoundingClientRect().top+scrollY`,
+      ),
+      3040,
+      2,
+    )
+  })
 })
 
 test('compound draw paints the requested total fraction, reverses, restores compound fill and stroke', async t => {
