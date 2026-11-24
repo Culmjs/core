@@ -338,7 +338,7 @@ test('path drawing respects a pre-calibrated SVG length and restores exact inlin
 })
 
 for (const width of [1280, 390])
-  test(`frozen one-shot marker at ${width}×900`, async () => {
+  test(`frozen one-shot marker at ${width}×900`, async t => {
     const owner = text('marker', 'Reed notches', {
       motion: {
         trigger: 'enter-view',
@@ -369,6 +369,7 @@ for (const width of [1280, 390])
       a.finish();await at(0);await at(1200);return [before,readings,el.getBoundingClientRect().left,el.getAnimations()[0]===a]
     })()`)
         const start = width === 390 ? -240 : 24
+        t.diagnostic(JSON.stringify({ before, readings, settled, same }))
         near(before, start, 2)
         readings.forEach((x, i) => near(x, start + [0, 375, 500][i], 2))
         near(settled, start + 500, 2)

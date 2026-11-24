@@ -1,6 +1,7 @@
 import type { Frame, Step } from '../document/index.ts'
 import { cssEase } from '../scripts/motionEase.ts'
 import type { PackedTrack, Scene } from '../scripts/motionHost.ts'
+import type { TextPlan } from '../scripts/motionText.ts'
 
 type Part = 'path' | NonNullable<Scene['parts']>[number]['unit']
 export type BoundStep = { step: Step; targets: number[]; part?: Part }
@@ -28,14 +29,23 @@ function channels(f: Frame, lastScale: number) {
 export function prepareTracks(
   bound: BoundStep[],
   reveals: ReadonlySet<number>,
-): Pick<Scene, 'tracks' | 'parts' | 'duration'> {
+): Pick<Scene, 'tracks' | 'parts' | 'duration' | 'text'> {
   if (bound.some(b => b.part && b.part !== 'path')) {
     // Fixed elements and each kind of split member have distinct scale
     // histories, even when the packed target token is 0 for all of them.
     const histories = new Map<Part | undefined, Map<number, number>>()
+    const text: TextPlan = {}
+    for (const { part, step } of bound)
+      if (part && part !== 'path')
+        text[part] ||=
+          !!step.mask &&
+          (bound.every(b => b.part === part && b.step.mask) || 'switch')
+    const endpoints = new Map<string, string>()
+    let clipped: Part | undefined
     return {
       duration: 0,
       tracks: [],
+      text,
       parts: bound.map(({ step: s, targets, part }, i) => {
         const unit = part === 'path' ? undefined : part
         // A fixed block already includes all of its child offsets. For text,
@@ -43,16 +53,31 @@ export function prepareTracks(
         const step = { ...s, delayMs: 0, staggerMs: unit ? 0 : s.staggerMs }
         const scales = histories.get(unit) ?? new Map<number, number>()
         histories.set(unit, scales)
+        const next =
+          unit && text[unit] === 'switch' && s.mask ? unit : undefined
+        let clip: PackedTrack[] | undefined
+        if (clipped !== next) {
+          const f: Keyframe = {}
+          if (clipped) f['--cm-' + clipped] = 'visible'
+          if (next) f['--cm-' + next] = 'hidden'
+          clip = [
+            [[[0, 0]], [f, f], { duration: 0, fill: i ? 'forwards' : 'both' }],
+          ]
+          clipped = next
+        }
         return {
           ...fixedTracks(
             [{ step, targets }],
             unit ? undefined : reveals,
             i === 0,
             scales,
+            endpoints,
+            unit,
           ),
           delay: s.delayMs ?? 0,
           ...(unit && { unit, stagger: s.staggerMs ?? 0 }),
           ...(s.mask && { mask: true }),
+          ...(clip && { clip }),
         }
       }),
     }
@@ -65,6 +90,8 @@ function fixedTracks(
   reveals: ReadonlySet<number> | undefined,
   first: boolean,
   scales = new Map<number, number>(),
+  endpoints?: Map<string, string>,
+  unit?: Part,
 ) {
   const targets = new Map<number, Map<string, Channel>>()
   let duration = 0
@@ -80,6 +107,18 @@ function fixedTracks(
         to = channels(s.to, last)
       if (s.to.scale !== undefined) scales.set(id, s.to.scale)
       for (const k of Object.keys(from)) {
+        // Each dynamically placed block persists. Encode its additive delta
+        // against the preceding endpoint of this logical member and axis.
+        if (endpoints && (k === 'x' || k === 'y')) {
+          const key = `${unit}:${id}:${k}`,
+            before = endpoints.get(key)
+          const value = (f: Keyframe) => String(f.translate).split(' ').at(-1)!
+          endpoints.set(key, value(to[k]))
+          if (before)
+            for (const f of [from[k], to[k]])
+              f.translate =
+                (k === 'y' ? '0px ' : '') + `calc(${value(f)} - ${before})`
+        }
         const c = by.get(k) ?? {
           segments: [],
           add: k === 'x' || k === 'y',

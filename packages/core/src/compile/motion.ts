@@ -15,6 +15,7 @@ import { resolveEffect } from '../registry/effect.ts'
 import type { Registry } from '../registry/index.ts'
 import type { HtmlNode } from './html.ts'
 import type { Scene } from '../scripts/motionHost.ts'
+import { textRules } from '../scripts/motionText.ts'
 import { prepareTracks, type BoundStep } from './motionTracks.ts'
 import { directPath } from './elementsShape.ts'
 import { prepareCompound, drawTracks } from './pathStrokes.ts'
@@ -192,6 +193,7 @@ function timelines(
   const compound = new Set<number>()
   const geometry = new Map<HtmlNode, HtmlNode>()
   const layoutOwners = new Set<HtmlNode>()
+  const splitRules = new Set<string>()
   let timeline = false
   let alpha = false
   for (const { w, owner, steps, state, pinChild } of programs) {
@@ -267,9 +269,14 @@ function timelines(
       ...(draw.size && { draw: [...draw] }),
     }
     scene.tracks = drawTracks(scene.tracks, compound)
+    if (scene.text)
+      for (const rule of textRules(scene.text)) splitRules.add(rule)
     // These owners need a layout-space clock even when their visual box
     // moves entirely out of view. Ordinary stationary owners still use IO.
-    for (const [refs, frames, timing] of scene.tracks)
+    for (const [refs, frames, timing] of [
+      ...scene.tracks,
+      ...(scene.parts ?? []).flatMap(p => (p.unit ? [] : p.tracks)),
+    ])
       if (
         refs.some(([id]) => !id) &&
         ('translate' in frames[0] ||
@@ -295,6 +302,7 @@ function timelines(
   }
   if (layoutOwners.size) markFlowInputs(site, layoutOwners)
   const css =
+    [...splitRules].join('') +
     (natural.size ? `:where(${[...natural]}){display:inline-block}` : '') +
     (restores.size
       ? '@property --cm-inline{syntax:"*";inherits:false;initial-value:inline}' +

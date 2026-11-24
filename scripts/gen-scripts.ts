@@ -35,24 +35,29 @@ function minify(src: string): string {
   )
 }
 
+/** One priced artifact, including the invocation and its text/layout dependencies. */
+export function renderTimeline(): string {
+  return buildSync({
+    stdin: {
+      contents:
+        "import {hostMotion} from './motionHost.ts'; hostMotion(document,window)",
+      resolveDir: fileURLToPath(dir),
+    },
+    bundle: true,
+    format: 'iife',
+    target: 'es2017',
+    minify: true,
+    write: false,
+  }).outputFiles[0].text.trim()
+}
+
 export function render(): string {
   const scripts = {
     BASE_SCRIPT: minify(BASE_SOURCE),
     OPEN_SCRIPT: minify(OPEN_SOURCE),
     EMAIL_SCRIPT: minify(EMAIL_SOURCE),
     STATES_SCRIPT: shipHost(),
-    TIMELINE_SCRIPT: buildSync({
-      stdin: {
-        contents:
-          "import {hostMotion} from './motionHost.ts'; hostMotion(document,window)",
-        resolveDir: fileURLToPath(dir),
-      },
-      bundle: true,
-      format: 'iife',
-      target: 'es2017',
-      minify: true,
-      write: false,
-    }).outputFiles[0].text.trim(),
+    TIMELINE_SCRIPT: renderTimeline(),
   }
   const body = Object.entries(scripts)
     .map(([k, v]) => `export const ${k} = ${JSON.stringify(v)}\n`)

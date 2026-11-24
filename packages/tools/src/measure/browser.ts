@@ -28,6 +28,8 @@ export type Page = {
   setTouch(enabled: boolean): Promise<void>
   /** Move focus with the browser's normal sequential keyboard navigation. */
   tab(): Promise<void>
+  /** Actual browser accessibility names, in tree order. */
+  names(role: string): Promise<string[]>
   /** Every console error, uncaught exception and failed request the page logged, in order. */
   errors: string[]
   /** Scripts on or off for the next navigation and after (on by default). */
@@ -615,6 +617,12 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
       return media()
     },
     setTouch: enabled => s('Emulation.setTouchEmulationEnabled', { enabled }),
+    async names(role) {
+      const { nodes } = await s('Accessibility.getFullAXTree')
+      return nodes
+        .filter((n: Json) => !n.ignored && n.role?.value === role)
+        .map((n: Json) => n.name.value)
+    },
     async tab() {
       await s('Page.bringToFront')
       const key = { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }

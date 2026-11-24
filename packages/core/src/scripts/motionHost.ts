@@ -1,3 +1,5 @@
+import { measureText, type TextPlan } from './motionText.ts'
+
 /** Fixed tracks share their keyframes across equal targets (the common stagger
  * case). Token 0 is the owner; other numeric tokens select inside it only. */
 export type PackedTrack = [
@@ -35,7 +37,9 @@ export type Scene = {
     duration: number
     stagger?: number
     mask?: true
+    clip?: PackedTrack[]
   }[]
+  text?: TextPlan
 }
 
 const token = (n: number) => '.cm-e' + +n
@@ -117,8 +121,7 @@ export function hostMotion(
       scrub = pointer || tr === 'scroll'
     const target = (id: number) => (id ? owner.querySelector(token(id)) : owner)
     const child = target(s.child || 0)
-    if (s.parts || !owner.animate || !owner.getBoundingClientRect || !child)
-      return
+    if (!owner.animate || !owner.getBoundingClientRect || !child) return
     const readInput = scrub || layout
     let entered = false
     const mount = (scope: AbortSignal) => {
@@ -140,39 +143,96 @@ export function hostMotion(
         })
       const marked = (value: boolean) =>
         owner.toggleAttribute('data-cm-on', value)
+      let duration = s.duration
+      let text: ReturnType<typeof measureText> | undefined
+      let sizes: ResizeObserver | undefined
+      let refused = false,
+        dirty = false
       const stop = () => {
         animations.forEach(a => a.cancel())
         animations.length = 0
         shifts.length = 0
+        if (sizes) sizes.disconnect()
+        sizes = undefined
+        if (text) text.restore()
+        text = undefined
+        refused = dirty = false
+        pending.delete(rebuild)
         marked(false)
       }
       const start = () => {
         marked(true)
         const origin = doc.timeline.currentTime
-        for (const [refs, frames, timing, reveal] of s.tracks)
-          for (const [id, delay] of refs) {
-            const el = target(id)
-            if (!el) continue
-            timing.delay = delay
-            const keys = reveal && clock('scroll') ? reveal : frames
-            if ('strokeDashoffset' in keys[0]) {
-              const path = el as SVGPathElement
-              const length =
-                path.getTotalLength &&
-                (path.pathLength.baseVal || path.getTotalLength())
-              if (!length) continue
-              for (const f of keys) f['--cm-length'] = length + 'px'
+        const apply = (
+          tracks: PackedTrack[],
+          offset: number,
+          member?: Element,
+        ) => {
+          for (const [refs, frames, timing, reveal] of tracks)
+            for (const [id, delay] of refs) {
+              const el = member || target(id)
+              if (!el) continue
+              timing.delay = delay + offset
+              const keys = reveal && clock('scroll') ? reveal : frames
+              if ('strokeDashoffset' in keys[0]) {
+                const path = el as SVGPathElement
+                const length =
+                  path.getTotalLength &&
+                  (path.pathLength.baseVal || path.getTotalLength())
+                if (!length) continue
+                for (const f of keys) f['--cm-length'] = length + 'px'
+              }
+              const a = el.animate(keys, timing)
+              if (!id && timing.id) shifts.push(a.effect as KeyframeEffect)
+              // No per-target callbacks/timers: every delay is on the same clock.
+              if (origin !== null) a.startTime = origin
+              if (scrub || !visible) a.pause()
+              keep(a)
             }
-            const a = el.animate(keys, timing)
-            if (!id && timing.id) shifts.push(a.effect as KeyframeEffect)
-            // No per-target callbacks/timers: every delay is on the same clock.
-            if (origin !== null) a.startTime = origin
-            if (scrub || !visible) a.pause()
-            keep(a)
+        }
+        if (s.parts) {
+          text = measureText(owner as HTMLElement, s.text!)
+          if (!text.probes.length) {
+            stop()
+            refused = true
+            return false
           }
+          duration = 0
+          for (const p of s.parts) {
+            duration += p.delay
+            if (p.clip) apply(p.clip, duration)
+            let tail = 0
+            if (p.unit) {
+              const groups = text.groups[p.unit]
+              groups.forEach((members, i) => {
+                tail = i * p.stagger!
+                for (const el of members) apply(p.tracks, duration + tail, el)
+              })
+            } else apply(p.tracks, duration)
+            duration += p.duration + tail
+          }
+          // Pin geometry covers the whole measured timeline.
+          for (const track of s.tracks) track[2].duration = duration
+          const seen = new Set<Element>()
+          const width = owner.clientWidth
+          sizes = new w.ResizeObserver(entries => {
+            // Initial deliveries only establish the baseline. Subsequent
+            // notifications include fractional font/box metric changes.
+            if (
+              width !== owner.clientWidth ||
+              entries.some(e => seen.has(e.target))
+            )
+              invalidate()
+            for (const e of entries) seen.add(e.target)
+          })
+          for (const el of [owner, owner.parentElement!, ...text.probes])
+            sizes.observe(el)
+        }
+        apply(s.tracks, 0)
+        return true
       }
       const play = () => {
-        if (animations.length) return
+        if (animations.length || refused) return
         const box = rect(child)
         if (!(box.width * box.height)) return
         if (!pin) return start()
@@ -205,7 +265,7 @@ export function hostMotion(
         } catch {
           return
         } // absent/singular geometry: leave the static box in flow
-        start()
+        if (!start()) return
         if (pinBox.offsetHeight < needed) hold({ minHeight: needed + 'px' })
         // Settle corrections inside out. An inner margin has already affected
         // the next boundary's actual height by the time it is read here.
@@ -216,6 +276,31 @@ export function hostMotion(
           )
       }
       abort(scope, stop)
+      const rebuild = () => {
+        if (!text || !animations.length) return
+        const time = max(...animations.map(a => Number(a.currentTime)))
+        const done = animations.every(a => a.playState === 'finished')
+        stop()
+        play()
+        for (const a of animations) {
+          if (done) a.finish()
+          else a.currentTime = time
+        }
+        if (scrub) syncView()
+      }
+      const invalidate = () => {
+        if (text) {
+          dirty = true
+          schedule(rebuild)
+        }
+      }
+      if (s.parts) {
+        if (!w.ResizeObserver) return
+        if (doc.fonts) on(doc.fonts, 'loadingdone', invalidate)
+        on(doc, 'visibilitychange', () => {
+          if (dirty) schedule(rebuild)
+        })
+      }
       const entrance = tr === 'enter-view'
       if (entered) {
         play()
@@ -288,7 +373,7 @@ export function hostMotion(
                   : pin
                     ? clamp(-r.top / pin)
                     : progress
-                const time = s.duration * p
+                const time = duration * p
                 for (const a of animations) a.currentTime = time
               }
             }
@@ -406,14 +491,24 @@ export function hostMotion(
       clear()
       if (media.matches) {
         run = new w.AbortController()
-        mount(run.signal)
+        const scope = run.signal
+        // Force layout before consulting ready: a used face can start loading
+        // only on first layout. Never mount a late font callback after abort.
+        if (s.parts && doc.fonts) {
+          rect(owner)
+          doc.fonts.ready.then(() => {
+            if (!scope.aborted) mount(scope)
+          })
+        } else mount(scope)
       }
     }
     on(media, 'change', configure)
     abort(signal, clear)
     configure()
   })
-  on(doc, 'visibilitychange', cancel)
+  on(doc, 'visibilitychange', () => {
+    if (doc.hidden) cancel()
+  })
   abort(signal, cancel)
   abort(signal, () => delete doc._cm)
 }
