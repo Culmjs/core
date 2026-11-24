@@ -18,8 +18,7 @@ import { resolveEffect } from '../registry/effect.ts'
 import { isObj } from '../document/rules.ts'
 import { dropSamples } from '../document/samples.ts'
 import { templateIndex, walk } from '../document/tree.ts'
-import { shownOn } from '../layout/placement.ts'
-import { layoutDisplays, stateDisplay } from '../layout/display.ts'
+import { visualChild } from '../layout/display.ts'
 import {
   add,
   fieldsOf,
@@ -94,31 +93,6 @@ function targetProblem(
   }
 }
 
-function visualChild(
-  e: StateScope,
-  lookup: Lookup,
-  scheme: Look['dark'],
-): boolean | 'cut' {
-  const w = e.w
-  // An element omitted from live output cannot be revealed by a CSS rule.
-  if (!(['desktop', 'tablet', 'phone'] as const).some(l => shownOn(w, l)))
-    return false
-  const canShow = (clamp: boolean) =>
-    (scheme === 'auto' ? [false, true] : [scheme === 'dark']).some(dark =>
-      Object.values(layoutDisplays(w, dark, clamp)).some(Boolean),
-    )
-  const ordinary = canShow(false)
-  const state = stateDisplay(
-    w,
-    name => {
-      const st = lookup(e, name)
-      return st === 'cut' ? st : st?.values
-    },
-    () => !ordinary && canShow(true),
-  )
-  return state ?? ordinary
-}
-
 function canPin(
   c: Ctx,
   owner: StateScope,
@@ -134,7 +108,10 @@ function canPin(
       ? w.children?.[templateIndex(w)]?.id
       : undefined
   for (const child of layoutOwner.children ?? []) {
-    const visual = visualChild({ w: child, parent: owner }, lookup, scheme)
+    const visual = visualChild(child, scheme, name => {
+      const st = lookup({ w: child, parent: owner }, name)
+      return st === 'cut' ? st : st?.values
+    })
     if (visual === 'cut') return 'cut'
     if (!visual) continue
     if (found || child.id === many) return false

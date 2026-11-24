@@ -23,6 +23,11 @@ export type Page = {
   blocked: string[]
   setViewport(width: number, height: number): Promise<void>
   setScheme(scheme: 'light' | 'dark'): Promise<void>
+  setReducedMotion(reduce: boolean): Promise<void>
+  /** Emulate a touch device's primary (coarse) pointer. */
+  setTouch(enabled: boolean): Promise<void>
+  /** Move focus with the browser's normal sequential keyboard navigation. */
+  tab(): Promise<void>
   /** Every console error, uncaught exception and failed request the page logged, in order. */
   errors: string[]
   /** Scripts on or off for the next navigation and after (on by default). */
@@ -525,6 +530,18 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
   hub.owners.set(targetId, owner)
   hub.last = owner
   const errors: string[] = []
+  let scheme: 'light' | 'dark' | undefined,
+    reduce = true
+  const media = () =>
+    s('Emulation.setEmulatedMedia', {
+      features: [
+        ...(scheme ? [{ name: 'prefers-color-scheme', value: scheme }] : []),
+        {
+          name: 'prefers-reduced-motion',
+          value: reduce ? 'reduce' : 'no-preference',
+        },
+      ],
+    })
   let guard: { identifier: string }
   const text = (a: Json) =>
     a?.value !== undefined ? String(a.value) : String(a?.description ?? a?.type)
@@ -589,13 +606,21 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
         deviceScaleFactor: 1,
         mobile: false,
       }),
-    setScheme: scheme =>
-      s('Emulation.setEmulatedMedia', {
-        features: [
-          { name: 'prefers-color-scheme', value: scheme },
-          { name: 'prefers-reduced-motion', value: 'reduce' },
-        ],
-      }),
+    setScheme: value => {
+      scheme = value
+      return media()
+    },
+    setReducedMotion: value => {
+      reduce = value
+      return media()
+    },
+    setTouch: enabled => s('Emulation.setTouchEmulationEnabled', { enabled }),
+    async tab() {
+      await s('Page.bringToFront')
+      const key = { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }
+      await s('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...key })
+      await s('Input.dispatchKeyEvent', { type: 'keyUp', ...key })
+    },
     async answer(fn) {
       owner.fn = fn
       hub.last = owner

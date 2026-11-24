@@ -138,6 +138,13 @@ export function shapeRefs(p: Record<string, unknown>): string {
 }
 
 type How = 'own' | 'bare' | 'cut'
+
+/** The immediate geometry of this shape, never a path inside its defs or a nested SVG. */
+export const directPath = (shape?: HtmlNode) =>
+  shape?.children?.find(
+    (e): e is HtmlNode => typeof e !== 'string' && e.tag === 'path',
+  )
+
 type Part = { attr: Attrs; style: string[]; kids: HtmlNode[] }
 
 /** A rounded rectangle of a known size as a path, each corner its own radius (held to half the short side). */

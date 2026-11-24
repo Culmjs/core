@@ -10,6 +10,7 @@ import {
   EMAIL_SCRIPT,
   OPEN_SCRIPT,
   STATES_SCRIPT,
+  TIMELINE_SCRIPT,
 } from '../../packages/core/src/scripts/scriptsMin.ts'
 
 test('scriptsMin.ts is up to date', () => {
@@ -31,7 +32,13 @@ test('each script is within its ceiling, all appendices included', () => {
 })
 
 test('the shipped scripts use no syntax newer than ES2017 and make no request and touch no storage', () => {
-  for (const s of [BASE_SCRIPT, OPEN_SCRIPT, EMAIL_SCRIPT, STATES_SCRIPT]) {
+  for (const s of [
+    BASE_SCRIPT,
+    OPEN_SCRIPT,
+    EMAIL_SCRIPT,
+    STATES_SCRIPT,
+    TIMELINE_SCRIPT,
+  ]) {
     // esbuild lowers newer syntax instead of throwing: if es2017 output differs from esnext output, something was lowered
     const out = (target: string) =>
       transformSync(s, { target, minify: false }).code

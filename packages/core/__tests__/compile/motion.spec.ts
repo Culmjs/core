@@ -554,6 +554,16 @@ test('a press timeline on a plain owner is reachable by keyboard', () => {
   )
 })
 
+test('a pin cannot reserve space or ship its host when its visual child was omitted', () => {
+  const owner = node('owner', 'box', [
+    { ...node('missing', 'image'), props: { alt: 'Missing' } },
+  ])
+  const doc = siteWith([owner])
+  const plain = page(doc)
+  owner.motion = { trigger: 'scroll', pinPx: 500, effect: 'rise' }
+  assert.equal(page(doc).html, plain.html)
+})
+
 test('a path in a nested SVG group resolves its own direct geometry, separate from an ordinary target', () => {
   const part = (id: string) => ({
     ...node(id, 'shape'),

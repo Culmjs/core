@@ -11,6 +11,8 @@ import {
 import { BUDGETS } from '../../src/compile/budgets.ts'
 import { Script } from 'node:vm'
 
+const rect = () => ({ top: 0, bottom: 10, width: 10, height: 10 })
+
 test('the complete invoked timeline is standalone, local, and within its raw ceiling', () => {
   assert.ok(TIMELINE_SCRIPT.length)
   assert.doesNotThrow(() => new Script(TIMELINE_SCRIPT))
@@ -34,9 +36,10 @@ test('preference changes and abort restore the document; an entered owner never 
     mark = false
   const enter = new Set<() => void>()
   const media = Object.assign(new EventTarget(), { matches: false })
-  const win = {
+  const win = Object.assign(new EventTarget(), {
     matchMedia: () => media,
     AbortController,
+    innerHeight: 100,
     IntersectionObserver: class {
       enter: () => void
       constructor(cb: (entries: { isIntersecting: boolean }[]) => void) {
@@ -49,8 +52,9 @@ test('preference changes and abort restore the document; an entered owner never 
         enter.delete(this.enter)
       }
     },
-  } as unknown as Window
+  }) as unknown as Window
   const owner = {
+    getBoundingClientRect: rect,
     getAttribute: () =>
       JSON.stringify({
         trigger: 'enter-view',
@@ -68,6 +72,7 @@ test('preference changes and abort restore the document; an entered owner never 
     animate() {
       plays++
       return {
+        pause() {},
         cancel() {
           cancels++
         },
@@ -77,15 +82,15 @@ test('preference changes and abort restore the document; an entered owner never 
       }
     },
   }
-  const doc = {
+  const doc = Object.assign(new EventTarget(), {
     querySelectorAll: () => [owner],
     timeline: { currentTime: 10 },
-  } as unknown as Document
+  }) as unknown as Document
   const controller = new AbortController()
   for (let i = 0; i < 2; i++) hostMotion(doc, win, controller.signal)
   assert.equal(enter.size, 1)
   for (const hit of enter) hit()
-  assert.deepEqual([plays, mark, enter.size], [1, true, 0])
+  assert.deepEqual([plays, mark, enter.size], [1, true, 1]) // still observing to pause while outside
   media.matches = true
   media.dispatchEvent(new Event('change'))
   assert.deepEqual([cancels, mark], [1, false])
@@ -104,6 +109,7 @@ test('aborting an active press preview cancels its tracks and detaches both inpu
   let plays = 0,
     stops = 0
   const owner = Object.assign(new EventTarget(), {
+    getBoundingClientRect: rect,
     getAttribute: () =>
       JSON.stringify({
         trigger: 'press',
@@ -116,6 +122,7 @@ test('aborting an active press preview cancels its tracks and detaches both inpu
     animate() {
       plays++
       return {
+        pause() {},
         cancel() {
           stops++
         },
@@ -124,12 +131,17 @@ test('aborting an active press preview cancels its tracks and detaches both inpu
   })
   const realm = Object.assign(new EventTarget(), {
     AbortController,
+    innerHeight: 100,
+    IntersectionObserver: class {
+      observe() {}
+      disconnect() {}
+    },
     matchMedia: () => Object.assign(new EventTarget(), { matches: false }),
   })
-  const doc = {
+  const doc = Object.assign(new EventTarget(), {
     querySelectorAll: () => [owner],
     timeline: { currentTime: 0 },
-  } as unknown as Document
+  }) as unknown as Document
   const controller = new AbortController()
   hostMotion(doc, realm as unknown as Window, controller.signal)
   const hold = () => {

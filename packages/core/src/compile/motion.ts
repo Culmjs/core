@@ -16,6 +16,8 @@ import type { Registry } from '../registry/index.ts'
 import type { HtmlNode } from './html.ts'
 import type { Scene } from '../scripts/motionHost.ts'
 import { prepareTracks, type BoundStep } from './motionTracks.ts'
+import { directPath } from './elementsShape.ts'
+import { visualChild } from '../layout/display.ts'
 import {
   APPEAR_SUPPORT,
   appearFrames,
@@ -139,7 +141,13 @@ function inlineTarget(n: Node, el: HtmlNode, style: InlineStyles) {
   return { natural, restore }
 }
 
-type Pending = { w: Node; owner: HtmlNode; steps: Step[]; state?: Binding }
+type Pending = {
+  w: Node
+  owner: HtmlNode
+  steps: Step[]
+  state?: Binding
+  pinChild?: Node
+}
 function timelines(
   programs: Pending[],
   rendered: ReadonlyMap<Node, HtmlNode>,
@@ -162,11 +170,22 @@ function timelines(
     restores = new Set<string>()
   let timeline = false
   let alpha = false
-  for (const { w, owner, steps, state } of programs) {
+  for (const { w, owner, steps, state, pinChild } of programs) {
     const bound: BoundStep[] = []
     const draw = new Set<number>(),
       reveals = new Set<number>()
     const m = w.motion!
+    const transformBox = (n: Node, el: HtmlNode, id: number) => {
+      const inl = inlineTarget(n, el, style)
+      if (!inl.natural && !inl.restore) return
+      const sel =
+        `.cm-e${token(owner)}[data-culm-playing]` + (id ? ` .cm-e${id}` : '')
+      if (inl.natural) natural.add(sel)
+      if (inl.restore) {
+        restores.add(sel)
+        inlineClasses.add(inl.restore)
+      }
+    }
     for (const step of steps) {
       const t = step.target
       const part =
@@ -185,12 +204,7 @@ function timelines(
         const element = rendered.get(n)
         // A grouped SVG can contain defs/masks and other shapes' paths. Bind
         // only the actual direct geometry of the validated mapped shape.
-        const el =
-          part === 'path'
-            ? element?.children?.find(
-                (e): e is HtmlNode => typeof e !== 'string' && e.tag === 'path',
-              )
-            : element
+        const el = part === 'path' ? directPath(element) : element
         if (!el) continue
         const id = owner === el ? 0 : token(el)
         targets.push(id)
@@ -199,15 +213,7 @@ function timelines(
         // from it are different targets and do not carry its root-scroll reveal.
         if (appear.has(el)) reveals.add(id)
         if (part || !Object.keys(step.from).some(k => k !== 'opacity')) continue
-        const inl = inlineTarget(n, el, style)
-        if (!inl.natural && !inl.restore) continue
-        const sel =
-          `.cm-e${token(owner)}[data-culm-playing]` + (id ? ` .cm-e${id}` : '')
-        if (inl.natural) natural.add(sel)
-        if (inl.restore) {
-          restores.add(sel)
-          inlineClasses.add(inl.restore)
-        }
+        transformBox(n, el, id)
       }
       if (targets.length) bound.push({ step, targets, part })
     }
@@ -225,7 +231,27 @@ function timelines(
       ...prepareTracks(bound, reveals),
       ...(native.has(w) && { native: true }),
       ...(draw.size && { draw: [...draw] }),
-      ...(m.pinPx && { pin: m.pinPx }),
+    }
+    if (pinChild && m.pinPx) {
+      scene.pin = m.pinPx
+      const visual = rendered.get(pinChild)!
+      scene.child = token(visual)
+      transformBox(pinChild, visual, scene.child)
+      // Geometry is also a track on this clock. Add to existing translation
+      // and flow spacing; cancel restores both without inline style mutations.
+      const options = {
+        duration: scene.duration,
+        fill: 'both',
+        composite: 'add',
+      } as const
+      scene.tracks.push(
+        [
+          [[scene.child, 0]],
+          [{ translate: '0px 0px' }, { translate: `0px ${m.pinPx}px` }],
+          options,
+        ],
+        [[[0, 0]], Array(2).fill({ paddingBottom: `${m.pinPx}px` }), options],
+      )
     }
     ;(owner.attrs ??= {})['data-culm-motion'] = JSON.stringify(scene)
     timeline = true
@@ -468,8 +494,34 @@ export function motionCss(
         registry,
       )
       const state = bindState(m, chain, depth, header, site, rendered)
-      if (tier === 2 || m.scrollFallback)
-        pending.push({ w, owner, steps, state })
+      if (tier === 2 || m.scrollFallback) {
+        let pinChild: Node | undefined
+        if (m.pinPx) {
+          for (const n of orderedChildren(w)) {
+            const el = rendered.get(n)
+            if (
+              el &&
+              visualChild(n, style.scheme, name => {
+                const declaration = [
+                  n,
+                  ...chain.slice(0, depth + 1).reverse(),
+                  header,
+                ]
+                  .flatMap(a => a.state ?? [])
+                  .find(s => s.name === name)
+                return declaration?.values === 'on-off'
+                  ? ['on', 'off']
+                  : declaration?.values
+              })
+            ) {
+              pinChild = n
+              break
+            }
+          }
+          if (!pinChild) return
+        }
+        pending.push({ w, owner, steps, state, pinChild })
+      }
       if (tier === 2) return
       const t = steps[0].target
       const nodes =

@@ -1,5 +1,5 @@
-import type { Decl, Layout, Node, Style } from '../document/index.ts'
-import { wrapping, type LayoutFlag } from './placement.ts'
+import type { Decl, Layout, Look, Node, Style } from '../document/index.ts'
+import { shownOn, wrapping, type LayoutFlag } from './placement.ts'
 
 type Layer = 'base' | 'tablet' | 'phone'
 type Align = NonNullable<Decl['align']>
@@ -145,4 +145,21 @@ export function stateDisplay(
       if (allowed?.includes(is)) return true
     }
   }
+}
+
+/** Pin validation and emission must agree on which rendered child can ever
+ * be visible, including displays restored by a layout or declared state. */
+export function visualChild(
+  w: Node,
+  scheme: Look['dark'],
+  values: (name: string) => readonly string[] | 'cut' | undefined,
+) {
+  if (!(['desktop', 'tablet', 'phone'] as const).some(l => shownOn(w, l)))
+    return false
+  const canShow = (clamp: boolean) =>
+    (scheme === 'auto' ? [false, true] : [scheme === 'dark']).some(dark =>
+      Object.values(layoutDisplays(w, dark, clamp)).some(Boolean),
+    )
+  const ordinary = canShow(false)
+  return stateDisplay(w, values, () => !ordinary && canShow(true)) ?? ordinary
 }
