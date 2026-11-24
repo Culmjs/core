@@ -21,6 +21,8 @@ export type Scene = {
   pin?: number
   /** The actual visual child; its additive travel and flow spacing are packed tracks. */
   child?: number
+  layout?: true
+  basis?: number
   /** Direct SVG geometry tokens needing normalized dashes during enhancement. */
   draw?: number[]
   /** A measured text group count determines the clock origins of later blocks. */
@@ -35,107 +37,117 @@ export type Scene = {
 }
 
 export function hostMotion(
-  doc: Document,
+  doc: Document & { _cm?: boolean },
   win: Window,
   signal?: AbortSignal,
 ): void {
-  const d = doc as Document & { _cm?: boolean }
   const w = win as Window & typeof globalThis
-  if (d._cm || signal?.aborted || !w.matchMedia || !w.IntersectionObserver)
+  if (
+    doc._cm ||
+    (signal && signal.aborted) ||
+    !w.matchMedia ||
+    !w.IntersectionObserver
+  )
     return
-  d._cm = true
-  const media = w.matchMedia('(prefers-reduced-motion:reduce)')
-  const entered = new WeakSet<Element>()
-  let run: AbortController | undefined
-  const configure = () => {
-    run?.abort()
-    if (media.matches) return
-    run = new w.AbortController()
-    const scope = run.signal
-    const on = (
-      el: EventTarget,
-      names: string,
-      f: EventListener,
-      capture?: boolean,
-    ) => {
+  doc._cm = true
+  const abort = (scope: AbortSignal | undefined, f: () => void) =>
+    scope && scope.addEventListener('abort', f)
+  const listen =
+    (scope?: AbortSignal) =>
+    (el: EventTarget, names: string, f: EventListener, capture?: boolean) => {
       for (const name of names.split(' '))
         el.addEventListener(name, f, { signal: scope, capture })
     }
-    const cleanup = (f: () => void) => scope.addEventListener('abort', f)
-    const token = (n: number) => '.cm-e' + +n
-    const attr = 'data-culm-motion',
-      playing = 'data-culm-playing'
-    const readers = new Set<() => void>()
-    let inputs = false
-    let frame = 0
-    const cancel = () => {
-      if (frame) w.cancelAnimationFrame(frame)
-      frame = 0
-    }
-    const schedule = () => {
-      if (!frame && readers.size && !doc.hidden)
-        frame = w.requestAnimationFrame(() => {
-          frame = 0
-          readers.forEach(read => read())
-        })
-    }
-    doc.querySelectorAll(`[${attr}]`).forEach(owner => {
-      const s: Scene = JSON.parse(owner.getAttribute(attr)!)
-      if (s.native && w.CSS.supports('animation-timeline:view()')) return
-      const tr = s.trigger
-      const pointer = tr === 'pointer-x',
-        scrub = pointer || tr === 'scroll'
-      const target = (id: number) =>
-        id ? owner.querySelector(token(id)) : owner
-      const child = target(s.child || 0)
-      if (
-        s.parts ||
-        !owner.animate ||
-        !owner.getBoundingClientRect ||
-        !child ||
-        (pointer && !w.matchMedia('(pointer:fine)').matches)
-      )
-        return
+  const on = listen(signal)
+  const token = (n: number) => '.cm-e' + +n
+  const clock = (name: string) => w.CSS.supports(`animation-timeline:${name}()`)
+  const rect = (el: Element) => el.getBoundingClientRect()
+  const attr = 'data-culm-motion'
+  const readers = new Set<() => void>()
+  let inputs = false
+  let frame = 0
+  const cancel = () => {
+    if (frame) w.cancelAnimationFrame(frame)
+    frame = 0
+  }
+  const schedule = () => {
+    if (!frame && readers.size && !doc.hidden)
+      frame = w.requestAnimationFrame(() => {
+        frame = 0
+        readers.forEach(read => read())
+      })
+  }
+  doc.querySelectorAll(`[${attr}]`).forEach(owner => {
+    const s: Scene = JSON.parse(owner.getAttribute(attr)!)
+    if (s.native && clock('view')) return
+    const { trigger: tr, pin, layout } = s
+    const pointer = tr === 'pointer-x',
+      scrub = pointer || tr === 'scroll'
+    const target = (id: number) => (id ? owner.querySelector(token(id)) : owner)
+    const child = target(s.child || 0)
+    if (s.parts || !owner.animate || !owner.getBoundingClientRect || !child)
+      return
+    const readInput = scrub || layout
+    inputs ||= !!readInput
+    let entered = false
+    const mount = (scope: AbortSignal) => {
+      const on = listen(scope)
       // IO owns visibility; a load/activation before its first delivery starts paused.
       let visible = false
       let x = -Infinity
       const animations: Animation[] = []
+      const shifts: KeyframeEffect[] = []
+      const project = (el: Element | null) =>
+        shifts.forEach(fx => {
+          fx.target = el
+        })
+      const marked = (value: boolean) =>
+        owner.toggleAttribute('data-cm-on', value)
       const stop = () => {
-        for (const a of animations) a.cancel()
+        animations.forEach(a => a.cancel())
         animations.length = 0
-        owner.removeAttribute(playing)
+        shifts.length = 0
+        marked(false)
       }
       const play = () => {
         if (animations.length) return
-        const box = child.getBoundingClientRect()
-        if (!box.width || !box.height) return
+        const box = rect(child)
+        if (!(box.width * box.height)) return
         const pinBox = owner as HTMLElement
-        const needed = s.pin && pinBox.offsetHeight + s.pin
-        owner.setAttribute(playing, '')
+        let needed = 0
+        const hold = (f: Keyframe) =>
+          animations.push(owner.animate([f, f], { fill: 'both' }))
+        if (pin) {
+          let m
+          try {
+            m = (target(s.basis!) as SVGSVGElement).getScreenCTM()!.inverse()
+          } catch {
+            return
+          } // absent or singular geometry cannot be pinned
+          const y = pin * m.d
+          if (!isFinite(y)) return
+          needed = pinBox.offsetHeight + y
+          const name = '--p' + s.child
+          hold({ [name]: `${pin * m.c}px ${y}px`, [name + 'y']: y + 'px' })
+        }
+        marked(true)
         const origin = doc.timeline.currentTime
         for (const [refs, frames, timing, reveal] of s.tracks)
           for (const [id, delay] of refs) {
             const el = target(id)
             if (!el) continue
             timing.delay = delay
-            let keys =
-              reveal && w.CSS.supports('animation-timeline:scroll()')
-                ? reveal
-                : frames
+            const keys = reveal && clock('scroll') ? reveal : frames
             if ('strokeDashoffset' in keys[0]) {
               const path = el as SVGPathElement
               const length =
                 path.getTotalLength &&
                 (path.pathLength.baseVal || path.getTotalLength())
               if (!length) continue
-              keys = keys.map(f =>
-                Object.assign({}, f, {
-                  strokeDasharray: length,
-                  strokeDashoffset: Number(f.strokeDashoffset) * length,
-                }),
-              )
+              for (const f of keys) f['--cm-length'] = length + 'px'
             }
             const a = el.animate(keys, timing)
+            if (!id && timing.id) shifts.push(a.effect as KeyframeEffect)
             // No per-target callbacks/timers: every delay is on the same clock.
             if (origin !== null) a.startTime = origin
             // A later filled activation must not auto-remove the earlier one:
@@ -147,50 +159,86 @@ export function hostMotion(
         // Additive padding extends an auto-sized owner (including its clip).
         // An explicit border-box height may absorb the padding instead.
         if (needed && pinBox.offsetHeight < needed) {
-          const minHeight = `${needed}px`
-          animations.push(
-            owner.animate([{ minHeight }, { minHeight }], { fill: 'both' }),
-          )
+          hold({ minHeight: needed + 'px' })
         }
       }
-      cleanup(stop)
-      const sample = () => {
-        if (!visible) readers.delete(sample)
-        const r = owner.getBoundingClientRect(),
-          h = w.innerHeight
-        if (!r.width || !r.height || (s.pin && !child.getClientRects().length))
-          return stop()
-        play()
-        const progress = pointer
-          ? (x - r.left) / r.width
-          : s.pin
-            ? -r.top / s.pin
-            : (h - r.top) / (h + r.height)
-        const time = s.duration * Math.min(1, Math.max(0, progress))
-        for (const a of animations) a.currentTime = time
-      }
+      abort(scope, stop)
       const entrance = tr === 'enter-view'
-      if (entrance && entered.has(owner)) {
+      if (entered) {
         play()
-        for (const a of animations) a.finish()
+        animations.forEach(a => a.finish())
         return
       }
       let intersecting = false
       const syncView = () => {
         visible = intersecting && !doc.hidden
-        if (scrub) {
-          if (!doc.hidden) sample() // settle even on the transition out of view
-          readers[visible ? 'add' : 'delete'](sample)
-        } else {
-          if (visible && (entrance || tr === 'load')) {
-            play()
-            if (entrance && animations.length) entered.add(owner)
+        if (readInput) {
+          let watching = false
+          if (!doc.hidden) {
+            // The layout reference is the original box without this scene's
+            // geometry effects. Never replace, wrap or reparent a control.
+            project(null)
+            const r = rect(owner),
+              h = w.innerHeight
+            if (shifts.length) {
+              // Intersect the unanimated subject with the *real* clipping
+              // ancestors. A scrollport can hide a link still inside the window.
+              const axis = (
+                lo: 'top' | 'left',
+                hi: 'bottom' | 'right',
+                overflow: 'overflowX' | 'overflowY',
+                end: number,
+              ) => {
+                let a = Math.max(0, r[lo]),
+                  b = Math.min(end, r[hi])
+                for (
+                  let n = owner.parentElement;
+                  n && a <= b;
+                  n = n.parentElement
+                ) {
+                  if (w.getComputedStyle(n)[overflow] === 'visible') continue
+                  const clip = rect(n)
+                  a = Math.max(a, clip[lo])
+                  b = Math.min(b, clip[hi])
+                }
+                return a <= b
+              }
+              visible =
+                axis('top', 'bottom', 'overflowY', h) &&
+                axis('left', 'right', 'overflowX', w.innerWidth)
+            }
+            if (scrub) {
+              if (
+                !(r.width * r.height) ||
+                (pin && !child.getClientRects().length)
+              )
+                stop()
+              else {
+                play()
+                const p = pointer
+                  ? (x - r.left) / r.width
+                  : pin
+                    ? -r.top / pin
+                    : (h - r.top) / (h + r.height)
+                const time = s.duration * Math.min(1, Math.max(0, p))
+                for (const a of animations) a.currentTime = time
+              }
+            }
+            // Once *both* boxes have left, IO observes the stable layout box.
+            // It wakes us on real re-entry, without offscreen frame requests.
+            watching = visible || intersecting
+            project(watching ? owner : null)
           }
-          for (const a of animations) {
-            if (a.playState === (visible ? 'paused' : 'running'))
-              a[visible ? 'play' : 'pause']()
-          }
+          readers[watching ? 'add' : 'delete'](syncView)
+          if (scrub) return
         }
+        if (visible && (entrance || tr === 'load')) {
+          play()
+          if (entrance && animations.length) entered = true
+        }
+        for (const a of animations)
+          if (a.playState === (visible ? 'paused' : 'running'))
+            a[visible ? 'play' : 'pause']()
       }
       const observer = new w.IntersectionObserver(entries => {
         if (scope.aborted) return
@@ -198,19 +246,23 @@ export function hostMotion(
         syncView()
       })
       observer.observe(owner)
-      cleanup(() => observer.disconnect())
+      abort(scope, () => {
+        observer.disconnect()
+        readers.delete(syncView)
+        if (!readers.size) cancel()
+      })
       on(doc, 'visibilitychange', syncView)
       if (scrub) {
-        inputs = true
-        if (s.pin)
+        if (pin)
           on(w, 'resize', () => {
             // Offscreen pins also determine the flow position of later scenes.
             stop()
-            readers.add(sample)
+            readers.add(syncView)
             schedule()
           })
         if (pointer)
           on(owner, 'pointermove', e => {
+            if ((e as PointerEvent).pointerType === 'touch') return
             x = (e as PointerEvent).clientX
             if (visible) schedule()
           })
@@ -225,14 +277,12 @@ export function hostMotion(
         // A key and several contacts can hold the same owner. Pointer releases
         // arrive on window, so match the actual contact before stopping it.
         const held = new Set<string | number>()
-        type Input = KeyboardEvent | PointerEvent
-        const id = (e: Input) => ('key' in e ? e.code || e.key : e.pointerId)
+        type Input = KeyboardEvent & PointerEvent
+        const id = (e: Input) => e.code || e.key || e.pointerId
         on(owner, 'pointerdown keydown', event => {
           const e = event as Input
           if (
-            'key' in e
-              ? !e.repeat && ['Enter', ' '].includes(e.key)
-              : e.button === 0
+            e.key ? !e.repeat && ['Enter', ' '].includes(e.key) : e.button === 0
           ) {
             held.add(id(e))
             play()
@@ -261,25 +311,34 @@ export function hostMotion(
         const sync = () =>
           holder.getAttribute(attr) === value ? play() : stop()
         const observer = new w.MutationObserver(sync)
-        observer.observe(holder, { attributes: true, attributeFilter: [attr] })
-        cleanup(() => observer.disconnect())
+        observer.observe(holder, { attributeFilter: [attr] })
+        abort(scope, () => observer.disconnect())
         sync()
       }
-    })
-    if (inputs) {
-      cleanup(cancel)
-      on(doc, 'visibilitychange', cancel)
-      on(w, 'scroll resize', schedule, true)
     }
+    const media = w.matchMedia(
+      '(prefers-reduced-motion:no-preference)' +
+        (pointer ? ' and (pointer:fine)' : ''),
+    )
+    let run: AbortController | undefined
+    const clear = () => {
+      if (run) run.abort()
+    }
+    const configure = () => {
+      clear()
+      if (media.matches) {
+        run = new w.AbortController()
+        mount(run.signal)
+      }
+    }
+    on(media, 'change', configure)
+    abort(signal, clear)
+    configure()
+  })
+  if (inputs) {
+    abort(signal, cancel)
+    on(doc, 'visibilitychange', cancel)
+    on(w, 'scroll resize', schedule, true)
   }
-  media.addEventListener('change', configure, { signal })
-  signal?.addEventListener(
-    'abort',
-    () => {
-      run?.abort()
-      delete d._cm
-    },
-    { once: true },
-  )
-  configure()
+  abort(signal, () => delete doc._cm)
 }

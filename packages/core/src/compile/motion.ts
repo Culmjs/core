@@ -17,6 +17,7 @@ import type { HtmlNode } from './html.ts'
 import type { Scene } from '../scripts/motionHost.ts'
 import { prepareTracks, type BoundStep } from './motionTracks.ts'
 import { directPath } from './elementsShape.ts'
+import { prepareCompound, drawTracks } from './pathStrokes.ts'
 import { visualChild } from '../layout/display.ts'
 import {
   APPEAR_SUPPORT,
@@ -168,6 +169,8 @@ function timelines(
   }
   const natural = new Set<string>(),
     restores = new Set<string>()
+  const compound = new Set<number>()
+  const geometry = new Map<HtmlNode, HtmlNode>()
   let timeline = false
   let alpha = false
   for (const { w, owner, steps, state, pinChild } of programs) {
@@ -178,8 +181,7 @@ function timelines(
     const transformBox = (n: Node, el: HtmlNode, id: number) => {
       const inl = inlineTarget(n, el, style)
       if (!inl.natural && !inl.restore) return
-      const sel =
-        `.cm-e${token(owner)}[data-culm-playing]` + (id ? ` .cm-e${id}` : '')
+      const sel = `.cm-e${token(owner)}[data-cm-on]` + (id ? ` .cm-e${id}` : '')
       if (inl.natural) natural.add(sel)
       if (inl.restore) {
         restores.add(sel)
@@ -204,9 +206,20 @@ function timelines(
         const element = rendered.get(n)
         // A grouped SVG can contain defs/masks and other shapes' paths. Bind
         // only the actual direct geometry of the validated mapped shape.
-        const el = part === 'path' ? directPath(element) : element
+        const el =
+          part === 'path' && element
+            ? (geometry.get(element) ?? directPath(element))
+            : element
         if (!el) continue
         const id = owner === el ? 0 : token(el)
+        if (
+          part === 'path' &&
+          step.from.draw !== undefined &&
+          prepareCompound(el)
+        ) {
+          compound.add(id)
+          geometry.set(element!, el)
+        }
         targets.push(id)
         if (step.from.draw !== undefined) draw.add(id)
         // This token describes the rendered element. Split members produced
@@ -232,6 +245,21 @@ function timelines(
       ...(native.has(w) && { native: true }),
       ...(draw.size && { draw: [...draw] }),
     }
+    scene.tracks = drawTracks(scene.tracks, compound)
+    // These owners need a layout-space clock even when their visual box
+    // moves entirely out of view. Ordinary stationary owners still use IO.
+    for (const [refs, frames, timing] of scene.tracks)
+      if (
+        refs.some(([id]) => !id) &&
+        ('translate' in frames[0] ||
+          'scale' in frames[0] ||
+          'rotate' in frames[0])
+      ) {
+        scene.layout = true
+        timing.id = 'cm-layout'
+      }
+    for (const part of scene.parts ?? [])
+      part.tracks = drawTracks(part.tracks, compound)
     if (pinChild && m.pinPx) {
       scene.pin = m.pinPx
       const visual = rendered.get(pinChild)!
@@ -247,10 +275,43 @@ function timelines(
       scene.tracks.push(
         [
           [[scene.child, 0]],
-          [{ translate: '0px 0px' }, { translate: `0px ${m.pinPx}px` }],
+          [{ translate: '0px 0px' }, { translate: `var(--p${scene.child})` }],
           options,
         ],
-        [[[0, 0]], Array(2).fill({ paddingBottom: `${m.pinPx}px` }), options],
+        [
+          [[0, 0]],
+          Array(2).fill({ paddingBottom: `var(--p${scene.child}y)` }),
+          options,
+        ],
+      )
+      // SVG supplies the browser's actual local→viewport matrix, including
+      // CSS rotate, skew, zoom and nonuniform scale on arbitrary ancestors.
+      const meter: HtmlNode = {
+        tag: 'svg',
+        attrs: {
+          width: 0,
+          height: 0,
+          'aria-hidden': 'true',
+          style: 'position:absolute;pointer-events:none;visibility:hidden',
+        },
+      }
+      scene.basis = token(meter)
+      // Keep table/list content models intact; a naked SVG under <table>
+      // would be foster-parented *outside* the motion owner's local scope.
+      const wrapper = (
+        { table: 'caption', tr: 'td', ul: 'li', ol: 'li' } as Record<
+          string,
+          string
+        >
+      )[owner.tag]
+      ;(owner.children ??= []).push(
+        wrapper
+          ? {
+              tag: wrapper,
+              attrs: { 'aria-hidden': 'true', style: 'display:contents' },
+              children: [meter],
+            }
+          : meter,
       )
     }
     ;(owner.attrs ??= {})['data-culm-motion'] = JSON.stringify(scene)

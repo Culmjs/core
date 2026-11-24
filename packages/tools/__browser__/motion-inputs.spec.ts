@@ -14,6 +14,7 @@ import {
   siteWith,
 } from '../../core/__tests__/kit.ts'
 import { openBrowser, type Browser, type Page } from '../src/measure/browser.ts'
+import { decodePng } from '../src/measure/png.ts'
 
 let browser: Browser
 async function launch(executable?: string) {
@@ -496,6 +497,298 @@ const pointerDoc = (extra: Node[] = []) => {
     '[data-id=owner]{width:200px;margin-left:100px}',
   )
 }
+
+test('self-transform scrub measures the same layout crossing on the way down and back', async t => {
+  const owner = node('owner', 'box')
+  owner.motion = {
+    trigger: 'scroll',
+    scrollFallback: 'timeline',
+    steps: [
+      {
+        ...fade,
+        target: 'self',
+        from: { yPx: 0, opacity: 0 },
+        to: { yPx: 600, opacity: 1 },
+      },
+    ],
+  }
+  const source = html(scrollScene(owner), '[data-id=owner]{height:300px}')
+  // This intrinsically host-only track catches feedback even in the default
+  // offline lane when the second, genuinely non-native engine isn't installed.
+  owner.motion.steps[0].staggerMs = 1
+  const hostOnly = html(scrollScene(owner), '[data-id=owner]{height:300px}')
+  const compat =
+    process.env.CULM_COMPAT_CHROME &&
+    (await launch(process.env.CULM_COMPAT_CHROME))
+  try {
+    const cases: [Browser, string][] = [
+      [browser, hostOnly],
+      [browser, source],
+    ]
+    if (compat) cases.push([compat, source])
+    for (const [engine, body] of cases) {
+      await fixture(
+        body,
+        async p => {
+          const rows = await p.evaluate<number[]>(
+            `(async()=>{const a=[];for(const y of [900,1200,1500,1800,1500,1200]){await at(y);a.push(+getComputedStyle(get('owner')).opacity)}return a})()`,
+          )
+          const native = await p.evaluate(
+            `CSS.supports('animation-timeline:view()')`,
+          )
+          assert.equal(
+            await p.evaluate(
+              `get('owner').getAnimations()[0] instanceof CSSAnimation`,
+            ),
+            body === source && native,
+          )
+          t.diagnostic(
+            `${engine.version} ${body === source && native ? 'CSS' : 'WAAPI'}: ${rows}`,
+          )
+          rows.forEach((v, i) =>
+            near(v, [0, 0.25, 0.5, 0.75, 0.5, 0.25][i], 0.015),
+          )
+        },
+        { engine },
+      )
+    }
+  } finally {
+    if (compat) await compat.close()
+  }
+})
+
+test('self-moving entrance finishes against its layout box and leaves the real link clickable', async t => {
+  const owner = {
+    ...node('owner', 'button'),
+    props: { label: 'Reed', link: { url: '#reed' } },
+  }
+  const m = {
+    ...owner,
+    motion: {
+      trigger: 'enter-view' as const,
+      steps: [
+        {
+          ...fade,
+          target: 'self' as const,
+          from: { yPx: -100 },
+          to: { yPx: 0 },
+          durationMs: 300,
+        },
+      ],
+    },
+  }
+  await fixture(
+    html(
+      [m, node('after', 'box')],
+      '[data-id=owner]{height:20px;display:block}',
+    ),
+    async p => {
+      await p.evaluate('tick()')
+      const values =
+        await p.evaluate(`(async()=>{const el=get('owner'),a=el.getAnimations()[0];await Promise.race([a.finished,new Promise(r=>setTimeout(r,650))]);
+      return [a.playState,el.getBoundingClientRect().top,el.contains(document.elementFromPoint(10,10)),el.getAttribute('href')]})()`)
+      t.diagnostic(JSON.stringify(values))
+      assert.deepEqual(values, ['finished', 0, true, '#reed'])
+    },
+  )
+})
+
+test('moving entrance pauses when its layout box scrolls behind a real nested clip, then resumes', async () => {
+  const owner = text('link', 'Reed', {
+    motion: {
+      trigger: 'enter-view',
+      steps: [
+        {
+          ...fade,
+          target: 'self',
+          from: { yPx: -100 },
+          to: { yPx: 0 },
+          durationMs: 1800,
+        },
+      ],
+    },
+  })
+  const wrap = node('clip', 'box', [
+    node('lead', 'box'),
+    owner,
+    node('tail', 'box'),
+  ])
+  await fixture(
+    html(
+      [wrap],
+      `[data-id=clip]{margin-top:300px;height:100px;overflow:auto}
+    [data-id=lead]{height:200px}[data-id=tail]{height:700px}[data-id=link]{height:20px}`,
+    ),
+    async p => {
+      await p.evaluate('tick()')
+      assert.equal(await p.evaluate(`get('link').getAnimations().length`), 0)
+      const rows =
+        await p.evaluate(`(async()=>{const el=get('link'),clip=get('clip');
+      clip.scrollTop=200;await tick();const a=el.getAnimations()[0];clip.scrollTop=260;await tick();
+      const t=a.currentTime,off=a.playState,n=calls;dispatchEvent(new Event('scroll'));await tick();const still=t===a.currentTime,quiet=calls===n;
+      clip.scrollTop=200;await tick();return [off,still,quiet,a.playState,el.getAnimations()[0]===a]})()`)
+      assert.deepEqual(rows, ['paused', true, true, 'running', true])
+    },
+  )
+})
+
+test('pin converts viewport travel through scaled and rotated ancestors into local displacement', async t => {
+  const panel = node('panel', 'box'),
+    owner = node('owner', 'box', [panel])
+  owner.motion = {
+    trigger: 'scroll',
+    pinPx: 500,
+    steps: [
+      {
+        ...fade,
+        target: 'children',
+        from: { opacity: 1 },
+        to: { opacity: 0.5 },
+      },
+    ],
+  }
+  for (const transform of ['scale(.5)', 'rotate(12deg) scale(.5,.75)']) {
+    await fixture(
+      html(
+        scrollScene(node('wrap', 'box', [owner])),
+        `[data-id=wrap]{transform:${transform};transform-origin:0 0}[data-id=panel]{height:120px;width:100px;transform:rotate(3deg)}`,
+      ),
+      async p => {
+        const rows = await p.evaluate<
+          number[][]
+        >(`(async()=>{await tick();const o=get('owner'),c=get('panel');
+        const start=Math.round(o.getBoundingClientRect().top+scrollY),rows=[];
+        for(const d of [0,250,500,532,125]){await at(start+d);const r=c.getBoundingClientRect();rows.push([r.left,r.top,+getComputedStyle(c).opacity])}return rows})()`)
+        t.diagnostic(`${transform}: ${JSON.stringify(rows)}`)
+        rows.forEach(([x, y, op], i) => {
+          near(x, rows[0][0], 2)
+          near(y, rows[0][1] - (i === 3 ? 32 : 0), 2)
+          near(op, [1, 0.75, 0.5, 0.5, 0.875][i])
+        })
+      },
+    )
+  }
+})
+
+test('compound draw paints the requested total fraction, reverses, restores compound fill and stroke', async t => {
+  const shape = node('drawing', 'shape')
+  shape.props = {
+    geometry: { type: 'path', d: 'M0 20H100 m-100 60h100', view: [100, 100] },
+    stroke: { width: 4, color: '#111111', dash: [4, 4] },
+    fill: 'none',
+  }
+  shape.motion = {
+    trigger: 'pointer-x',
+    steps: [{ ...fade, target: 'path', from: { draw: 0 }, to: { draw: 1 } }],
+  }
+  await fixture(
+    html(
+      [shape],
+      '[data-id=drawing]{display:block;width:100px;height:100px;background:white}',
+    ),
+    async p => {
+      const ink = async () => {
+        const { rgba } = decodePng(
+          await p.screenshot({ x: 0, y: 0, w: 100, h: 100 }),
+        )
+        let count = 0
+        for (const y of [20, 80])
+          for (let x = 0; x < 100; x++)
+            if (rgba[4 * (100 * y + x)] < 96) count++
+        return count / 200
+      }
+      const rows = []
+      for (const x of [0, 25, 50, 100, 25]) {
+        await p.evaluate(
+          `get('drawing').dispatchEvent(new PointerEvent('pointermove',{clientX:${x},bubbles:true}));tick()`,
+        )
+        rows.push(await ink())
+      }
+      t.diagnostic(JSON.stringify(rows))
+      rows.forEach((v, i) => near(v, [0, 0.25, 0.5, 1, 0.25][i], 0.025))
+      await p.setReducedMotion(true)
+      await p.evaluate('tick()')
+      near(await ink(), 0.52, 0.02)
+    },
+  )
+})
+
+test('compound holes keep their winding fill; abort restores the exact static painting', async () => {
+  const shape = node('drawing', 'shape')
+  shape.props = {
+    geometry: {
+      type: 'path',
+      d: 'M10 10h80v80H10z m20 20v40h40V30z',
+      view: [100, 100],
+    },
+    fill: '#e01010',
+    stroke: { width: 4, color: '#111111', dash: [4, 4] },
+  }
+  shape.motion = {
+    trigger: 'pointer-x',
+    steps: [{ ...fade, target: 'path', from: { draw: 0 }, to: { draw: 1 } }],
+  }
+  const source = html(
+    [shape],
+    '[data-id=drawing]{display:block;width:100px;height:100px;background:white}',
+  )
+  const pixels = async (p: Page) =>
+    decodePng(await p.screenshot({ x: 0, y: 0, w: 100, h: 100 })).rgba
+  let still: Uint8Array
+  await fixture(
+    source,
+    async p => {
+      still = await pixels(p)
+    },
+    { scripts: false },
+  )
+  await fixture(
+    source.replace(TIMELINE_SCRIPT, () => preview),
+    async p => {
+      await p.evaluate(
+        `get('drawing').dispatchEvent(new PointerEvent('pointermove',{clientX:50,bubbles:true}));tick()`,
+      )
+      const rgba = await pixels(p),
+        rgb = (x: number, y: number) =>
+          Array.from(rgba.slice((y * 100 + x) * 4, (y * 100 + x) * 4 + 3))
+      assert.deepEqual(rgb(20, 20), [224, 16, 16])
+      assert.deepEqual(rgb(50, 50), [255, 255, 255])
+      assert.notDeepEqual(rgba, still)
+      await p.evaluate('controller.abort();tick()')
+      assert.deepEqual(await pixels(p), still)
+    },
+  )
+})
+
+test('live fine/coarse changes release and reacquire only the pointer scene', async () => {
+  const mark = text('timed', 'Timed', {
+    motion: {
+      trigger: 'enter-view',
+      steps: [{ ...fade, target: 'self', durationMs: 30 }],
+    },
+  })
+  await fixture(
+    pointerDoc([mark]).replace(TIMELINE_SCRIPT, () => preview),
+    async p => {
+      await p.evaluate(
+        `tick().then(()=>{window.first=get('timed').getAnimations()[0];return first.finished.then(()=>true)})`,
+      )
+      for (const touch of [false, true, false, true, false]) {
+        await p.setTouch(touch)
+        await p.evaluate('tick()')
+        const val =
+          await p.evaluate(`(async()=>{get('owner').dispatchEvent(new PointerEvent('pointermove',{clientX:200,pointerType:'${touch ? 'touch' : 'mouse'}',bubbles:true}));await tick();
+        return [matchMedia('(pointer:fine)').matches,get('a').getAnimations().length,+getComputedStyle(get('a')).opacity,get('timed').getAnimations()[0]===first]})()`)
+        assert.deepEqual(val, [!touch, touch ? 0 : 1, touch ? 1 : 0.75, true])
+      }
+      await p.evaluate('controller.abort()')
+      assert.deepEqual(
+        await p.evaluate('[subs,observers.size,frames.size]'),
+        [0, 0, 0],
+      )
+    },
+  )
+})
 test('pointer-x seeks two ordered targets on one clock; one frame per burst across owners', async () => {
   const second = text('second', 'Second', {
     motion: {

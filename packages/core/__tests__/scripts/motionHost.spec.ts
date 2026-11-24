@@ -35,7 +35,7 @@ test('preference changes and abort restore the document; an entered owner never 
     ends = 0,
     mark = false
   const enter = new Set<() => void>()
-  const media = Object.assign(new EventTarget(), { matches: false })
+  const media = Object.assign(new EventTarget(), { matches: true })
   const win = Object.assign(new EventTarget(), {
     matchMedia: () => media,
     AbortController,
@@ -63,11 +63,8 @@ test('preference changes and abort restore the document; an entered owner never 
           [[[0, 0]], [{ opacity: 0 }, { opacity: 1 }], { duration: 100 }],
         ],
       }),
-    setAttribute() {
-      mark = true
-    },
-    removeAttribute() {
-      mark = false
+    toggleAttribute(_name: string, value: boolean) {
+      mark = value
     },
     animate() {
       plays++
@@ -91,10 +88,10 @@ test('preference changes and abort restore the document; an entered owner never 
   assert.equal(enter.size, 1)
   for (const hit of enter) hit()
   assert.deepEqual([plays, mark, enter.size], [1, true, 1]) // still observing to pause while outside
-  media.matches = true
+  media.matches = false
   media.dispatchEvent(new Event('change'))
   assert.deepEqual([cancels, mark], [1, false])
-  media.matches = false
+  media.matches = true
   media.dispatchEvent(new Event('change'))
   assert.deepEqual([ends, enter.size], [1, 0])
   controller.abort()
@@ -117,8 +114,7 @@ test('aborting an active press preview cancels its tracks and detaches both inpu
           [[[0, 0]], [{ opacity: 0 }, { opacity: 1 }], { duration: 100 }],
         ],
       }),
-    setAttribute() {},
-    removeAttribute() {},
+    toggleAttribute() {},
     animate() {
       plays++
       return {
@@ -136,7 +132,7 @@ test('aborting an active press preview cancels its tracks and detaches both inpu
       observe() {}
       disconnect() {}
     },
-    matchMedia: () => Object.assign(new EventTarget(), { matches: false }),
+    matchMedia: () => Object.assign(new EventTarget(), { matches: true }),
   })
   const doc = Object.assign(new EventTarget(), {
     querySelectorAll: () => [owner],
