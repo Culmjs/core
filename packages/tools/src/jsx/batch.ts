@@ -156,22 +156,32 @@ export function buildRequest(
   }
   if (a.theme !== undefined) add({ jsx: '', theme: a.theme }, 'theme')
   const root = () => doc.pages.find(p => p.id === page)?.root
-  if (
-    !root() &&
-    (inserts.length || edits.some(e => isObj(e) && e.op === 'insert'))
-  )
-    project(
-      [
-        {
-          op: 'addPage',
-          page,
-          title: a.title ?? page,
-          slug: a.path ?? (page === 'home' ? '/' : `/${page}`),
-          inMenu: true,
-        },
-      ],
-      'page',
-    )
+  const fromEdit = (index: number, emit: () => void) => {
+    const firstEntry = out.plan.entries.length
+    const firstError = out.errors.length
+    emit()
+    for (const e of out.plan.entries.slice(firstEntry)) e.editIndex = index
+    for (const p of out.errors.slice(firstError)) p.op = index
+  }
+  const firstInsert = edits.findIndex(e => isObj(e) && e.op === 'insert')
+  if (!root() && (inserts.length || firstInsert !== -1)) {
+    const addPage = () =>
+      project(
+        [
+          {
+            op: 'addPage',
+            page,
+            title: a.title ?? page,
+            slug: a.path ?? (page === 'home' ? '/' : `/${page}`),
+            inMenu: true,
+          },
+        ],
+        'page',
+      )
+    // A new page is projected before the batch, on behalf of its first insert.
+    if (firstInsert !== -1) fromEdit(firstInsert, addPage)
+    else addPage()
+  }
   const fields = (item: Obj, allowed: string[], path: string) => {
     for (const k of Object.keys(item))
       if (!allowed.includes(k))
@@ -388,12 +398,7 @@ export function buildRequest(
         error(`${path}.op`, 'Use insert, update, move, remove or theme.')
     }
   }
-  edits.forEach((edit, i) => {
-    const start = out.errors.length
-    orderedItem(edit, `ops[${i}]`)
-    // A compact edit may project several core operations; report the caller's index.
-    for (const p of out.errors.slice(start)) p.op = i
-  })
+  edits.forEach((edit, i) => fromEdit(i, () => orderedItem(edit, `ops[${i}]`)))
   out.trees.push(tree)
   return out.errors.length ? { ok: false, problems: out.errors } : out
 }

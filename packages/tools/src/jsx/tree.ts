@@ -436,7 +436,12 @@ export function emit(n: Node, ind = ''): string {
 
 // ---- reconcile
 
-export type Entry = { op: Obj; want?: Want }
+export type Entry = {
+  op: Obj
+  want?: Want
+  /** Index in write.ops when an ordered JSON edit produced this core operation. */
+  editIndex?: number
+}
 const canon = (v: unknown): string =>
   JSON.stringify(v, (_k, x: unknown) =>
     isObj(x)

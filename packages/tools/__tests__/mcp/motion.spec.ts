@@ -154,6 +154,113 @@ test('full plan, apply, replay, diff and restore for setMotion', async () => {
   assert.deepEqual(await files(dir), before)
 })
 
+for (const phase of ['diagnose', 'apply'] as const)
+  test(`compact ${phase} veto identifies the source edit rather than its second core operation`, async () => {
+    const dir = await copyFixture('site-basic')
+    const options = await folderMcpOptions(dir, await openProject(dir))
+    let seen = 0
+    const call = await connectClient(
+      createMcpServer({
+        ...options,
+        jsonOps: true,
+        allow(op) {
+          if (
+            op.op === 'setMotion' &&
+            ++seen === (phase === 'diagnose' ? 1 : 2)
+          )
+            return {
+              code: 'POLICY_VIOLATION',
+              message: 'Motion locked',
+              nodeId: op.id,
+              path: 'motion',
+            }
+        },
+      }),
+    )
+    const { revision } = await ok(call, 'describe')
+    const before = await files(dir)
+    const r = await call('write', {
+      baseRevision: revision,
+      ops: [{ op: 'update', id: 'intro', text: 'New title', motion: rise }],
+    })
+    assert.equal(r.error, true)
+    assert.equal(seen, phase === 'diagnose' ? 1 : 2)
+    assert.equal((await ok(call, 'describe')).revision, revision)
+    assert.deepEqual(await files(dir), before)
+    const p = r.json.problems[0]
+    assert.deepEqual(
+      [p.code, p.nodeId, p.path, p.op],
+      ['POLICY_VIOLATION', 'intro', 'motion', 0],
+    )
+  })
+
+test('compact implicit page creation belongs to the insert requesting the page', async () => {
+  const dir = await copyFixture('site-basic')
+  const options = await folderMcpOptions(dir, await openProject(dir))
+  const call = await connectClient(
+    createMcpServer({
+      ...options,
+      jsonOps: true,
+      allow(op) {
+        if (op.op === 'addPage')
+          return {
+            code: 'POLICY_VIOLATION',
+            message: 'Page locked',
+            path: 'page',
+          }
+      },
+    }),
+  )
+  const { revision } = await ok(call, 'describe')
+  const before = await files(dir)
+  const r = await call('write', {
+    page: 'studio',
+    baseRevision: revision,
+    ops: [
+      { op: 'theme', value: { brand: '#a04030' } },
+      { op: 'insert', node: { kind: 'text', id: 'title', text: 'Studio' } },
+    ],
+  })
+  assert.equal(r.error, true)
+  assert.equal((await ok(call, 'describe')).revision, revision)
+  assert.deepEqual(await files(dir), before)
+  const p = r.json.problems[0]
+  assert.deepEqual([p.code, p.path, p.op], ['POLICY_VIOLATION', 'page', 1])
+})
+
+test('full plan and apply report the core operation index for the same motion veto', async () => {
+  const dir = await copyFixture('site-basic')
+  const options = await folderMcpOptions(dir, await openProject(dir))
+  const call = await connectClient(
+    createMcpServer({
+      ...options,
+      allow(op) {
+        if (op.op === 'setMotion')
+          return {
+            code: 'POLICY_VIOLATION',
+            message: 'Motion locked',
+            nodeId: op.id,
+          }
+      },
+    }),
+  )
+  const { revision } = await ok(call, 'describe')
+  for (const name of ['plan', 'apply']) {
+    const r = await call(name, {
+      baseRevision: revision,
+      key: 'veto',
+      ops: [
+        { op: 'setText', tree, id: 'intro', text: 'New title' },
+        { op: 'setMotion', tree, id: 'intro', motion: rise },
+      ],
+    })
+    assert.equal(r.error, true)
+    const p = r.json.problems[0]
+    assert.deepEqual([p.code, p.nodeId, p.op], ['POLICY_VIOLATION', 'intro', 1])
+  }
+  assert.equal((await ok(call, 'describe')).revision, revision)
+})
+
 test('full subtree replacement reconciles motion on retained ids, including an omitted field', async () => {
   const dir = await copyFixture('site-basic')
   const { call } = await serve(dir)
@@ -271,6 +378,7 @@ test('effects catalogue pages registered numeric settings and provides a runnabl
   let cursor = first.cursor
   while (cursor) {
     const next = await query({ id: 'wave', cursor })
+    assert.deepEqual(next.example, first.example)
     rows.push(...next.rows)
     cursor = next.cursor
   }
@@ -291,4 +399,65 @@ test('effects catalogue pages registered numeric settings and provides a runnabl
   const missing = await call('catalogue', { what: 'effects', id: 'missing' })
   assert.equal(missing.error, true)
   assert.deepEqual(missing.json.problems[0].allowed, ['rise', 'wave'])
+  await ok(call, 'apply', {
+    key: 'reorder',
+    baseRevision: revision,
+    ops: [{ op: 'movePage', page: 'about', index: 0 }],
+  })
+  assert.deepEqual((await query({ id: 'wave' })).example.tree, {
+    page: 'about',
+  })
+  const stale = await call('catalogue', {
+    what: 'effects',
+    id: 'wave',
+    cursor: first.cursor,
+  })
+  assert.equal(stale.error, true)
+  assert.equal(stale.json.problems[0].code, 'REVISION_CONFLICT')
+})
+
+test('effect list continuation covers every name at one revision and refuses a stale cursor', async () => {
+  const dir = await copyFixture('site-basic')
+  const project = await openProject(dir)
+  const riseDef = project.registry.effect('rise')!
+  const names = Array.from(
+    { length: 300 },
+    (_, i) => `${'wave'.repeat(10)}${i}`,
+  )
+  project.registry.use({
+    name: 'waves',
+    version: 1,
+    api: [1],
+    runs: ['build'],
+    trust: 'declarative',
+    effects: names.map(name => ({ ...riseDef, name })),
+  })
+  const call = await connectClient(
+    createMcpServer(await folderMcpOptions(dir, project)),
+  )
+  const { revision } = await ok(call, 'describe')
+  const first = await ok(call, 'catalogue', { what: 'effects' })
+  assert.ok(first.cut && first.cursor)
+  const rows = [...first.rows]
+  let cursor = first.cursor
+  while (cursor) {
+    const next = await ok(call, 'catalogue', { what: 'effects', cursor })
+    rows.push(...next.rows)
+    cursor = next.cursor
+  }
+  assert.deepEqual(
+    rows.map(r => r.name),
+    ['rise', ...names],
+  )
+  await ok(call, 'apply', {
+    key: 'reorder',
+    baseRevision: revision,
+    ops: [{ op: 'movePage', page: 'about', index: 0 }],
+  })
+  const stale = await call('catalogue', {
+    what: 'effects',
+    cursor: first.cursor,
+  })
+  assert.equal(stale.error, true)
+  assert.equal(stale.json.problems[0].code, 'REVISION_CONFLICT')
 })

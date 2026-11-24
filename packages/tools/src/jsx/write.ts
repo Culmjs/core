@@ -740,9 +740,10 @@ const nameOfKind = (k: string) =>
 /** A problem of core with the element and the place in the JSX it belongs to, and a way to put it right where one is known. */
 export function locate(b: Extract<Built, { ok: true }>, p: Problem): Problem {
   const x = p as Problem & { fix?: string; jsx?: unknown }
+  const entry = p.op === undefined ? undefined : b.plan.entries[p.op - b.offset]
   let w: Want | undefined = p.nodeId ? b.plan.byId.get(p.nodeId) : undefined
   if (!w && p.op !== undefined) {
-    w = b.plan.entries[p.op - b.offset]?.want
+    w = entry?.want
     const m = /^node((?:\.children\.\d+)*)/.exec(p.path ?? '')
     if (w && m?.[1])
       for (const i of m[1].split('.children.').slice(1))
@@ -776,7 +777,7 @@ export function locate(b: Extract<Built, { ok: true }>, p: Problem): Problem {
   if (/cannot hold other nodes/.test(p.message))
     x.fix =
       'A Text, Image, Icon, Divider, Menu or Field holds no elements; put them beside it.'
-  return x
+  return entry?.editIndex === undefined ? x : { ...x, op: entry.editIndex }
 }
 
 /** Every problem of a write at once: what is wrong in the JSX itself, then what core refuses when the rest is checked as `apply` checks it. Sorted by place. */

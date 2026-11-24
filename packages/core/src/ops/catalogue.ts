@@ -876,6 +876,7 @@ export function catalogue(
     )
       return bad('"site" must be { doc, revision }.', { path: 'site' })
     const site = query.site
+    const revision = query.what === 'effects' ? (site?.revision ?? 0) : 0
     let views: Entryview[]
     let unknown: 'UNKNOWN_KIND' | 'UNKNOWN_BLOCK' | 'UNKNOWN_SOURCE' | undefined
     if (query.what === 'kinds') {
@@ -970,7 +971,7 @@ export function catalogue(
       return capped(
         paged(
           rows,
-          0,
+          revision,
           query.cursor,
           tagOf('catalogue', query.what, query.id),
           wrap(header),
@@ -980,7 +981,7 @@ export function catalogue(
     return capped(
       paged(
         views.map(v => v.list()),
-        0,
+        revision,
         query.cursor,
         tagOf('catalogue', query.what, null),
         wrap(
