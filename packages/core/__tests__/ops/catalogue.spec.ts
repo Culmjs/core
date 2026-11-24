@@ -69,6 +69,69 @@ const plugin = (name: string, more: Partial<Plugin>): Plugin => ({
   trust: 'declarative',
   ...more,
 })
+
+test('effect example selects compatible text without calling factories or site rules', () => {
+  const reg = createRegistry()
+  let calls = 0
+  reg.use(
+    plugin('ink', {
+      effects: [
+        {
+          name: 'lettering',
+          tier: 2,
+          settings: {},
+          steps: () => {
+            calls++
+            return [
+              {
+                target: 'letters',
+                from: { opacity: 0 },
+                to: { opacity: 1 },
+                durationMs: 200,
+              },
+            ]
+          },
+        },
+      ],
+      rules: [
+        {
+          name: 'policy',
+          check: () => {
+            calls++
+            return []
+          },
+        },
+      ],
+    }),
+  )
+  calls = 0
+  const site = { revision: 4, doc: siteWith([text('title', 'Title')]) }
+  const q = { what: 'effects', id: 'lettering' } as const
+  assert.deepEqual(ok(catalogue(reg, { ...q, id: 'rise' })).example, {
+    op: 'setMotion',
+    tree: { page: 'home' },
+    id: 'homeroot',
+    motion: { trigger: 'load', effect: 'rise' },
+  })
+  const detail = ok(catalogue(reg, { ...q, site }))
+  assert.equal(detail.example.id, 'title')
+  for (const fallback of [
+    ok(catalogue(reg, q)),
+    ok(catalogue(reg, { ...q, site: { ...site, doc: siteWith([]) } })),
+  ]) {
+    assert.match(fallback.requires, /text/i)
+    assert.ok(size(fallback) <= READ_CAP)
+  }
+  assert.equal(calls, 0)
+  ok(
+    plan(site.doc, reg, {
+      site: 's',
+      key: 'k',
+      baseRevision: 4,
+      ops: [detail.example],
+    }),
+  )
+})
 /** A block of `n` select settings of `k` short options each. */
 const selects = (
   id: string,

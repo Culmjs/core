@@ -1,4 +1,12 @@
 import { KINDS } from '../document/index.ts'
+import { walkBlocks } from '../document/tree.ts'
+import { split } from '../document/motionSteps.ts'
+import { defaultEffectSteps } from '../registry/effect.ts'
+import {
+  paintedStrokes,
+  presetTarget,
+  targetProblem,
+} from '../validate/motionTargets.ts'
 import { STATES } from '../document/layers.ts'
 import { ID_RE, STYLE_GROUPS } from '../document/kinds.ts'
 import type { KindSpec, PropField, Problem } from '../document/index.ts'
@@ -14,7 +22,7 @@ import { RECIPES } from './recipes.ts'
 import { OP_NAMES } from './plan.ts'
 import { capped, cut, len, marker } from './read.ts'
 import { refuse } from './types.ts'
-import type { Head, Op } from './types.ts'
+import type { Head, Op, TreeRef } from './types.ts'
 
 type Refusal = { ok: false; problems: Problem[] }
 type Row = Record<string, unknown>
@@ -445,33 +453,83 @@ function sourceView(s: DataSource): Entryview {
 
 // ---- effects
 
+function effectExample(e: EffectDef, site?: Head) {
+  const steps = defaultEffectSteps(e)
+  const at = (tree: TreeRef, id: string) => ({
+    example: {
+      op: 'setMotion',
+      tree,
+      id,
+      motion: { trigger: 'load', effect: e.name },
+    } satisfies Op,
+  })
+  // As with ready inserts, a self-only example works on emptySite's home root.
+  if (!site && steps?.every(s => s.target === 'self')) return at(T, ROOT)
+  if (site && steps) {
+    const { pages, header, footer } = site.doc
+    for (const [tree, root] of [
+      ...pages.map(p => [{ page: p.id }, p.root] as const),
+      ['header', header],
+      ['footer', footer],
+    ] as const) {
+      if (
+        typeof tree === 'object' &&
+        (typeof tree.page !== 'string' || !tree.page || tree.page.length > 100)
+      )
+        continue
+      let id: string | undefined,
+        painted: ReturnType<typeof paintedStrokes> | undefined
+      walkBlocks(root, (w, ns) => {
+        if (
+          !id &&
+          w.kind !== 'instance' &&
+          typeof w.id === 'string' &&
+          w.id.length <= 41 &&
+          w.id.split('.').every(s => ID_RE.test(s)) &&
+          steps.every(
+            s =>
+              !(s.target === 'children' && !w.children?.length) &&
+              !targetProblem(
+                w,
+                presetTarget(w, s.target, ns),
+                'draw' in s.from,
+                () => (painted ??= paintedStrokes(root)),
+              ),
+          )
+        )
+          id = w.id
+      })
+      if (id) return at(tree, id)
+    }
+  }
+  const targets = steps?.map(({ target: t, from }) =>
+    typeof t === 'object'
+      ? `descendant "${t.id}"${t.part ? ('draw' in from ? ' with a painted path stroke' : ' with path geometry') : ''}`
+      : split.some(unit => unit === t)
+        ? 'a text owner'
+        : t === 'path'
+          ? 'draw' in from
+            ? 'an owner with a painted path stroke'
+            : 'a path owner'
+          : t === 'children'
+            ? 'an owner with children'
+            : 'a node',
+  )
+  return {
+    requires: `Choose ${[...new Set(targets ?? ['a compatible owner'])].join(' and ')} for the default settings.`,
+  }
+}
+
 function effectView(e: EffectDef, site: Head | undefined): Entryview {
   const head = () => ({ name: str(e.name), tier: e.tier })
   return {
     name: e.name,
     list: head,
     detail: () => {
-      const page = site?.doc.pages?.[0]
-      const header = site?.doc.header?.id
-      // Page ids are text (up to 100 characters); only node ids follow ID_RE.
-      const at =
-        typeof page?.id === 'string' &&
-        page.id.length > 0 &&
-        page.id.length <= 100 &&
-        typeof page.root?.id === 'string' &&
-        ID_RE.test(page.root.id)
-          ? { tree: { page: page.id }, id: page.root.id }
-          : typeof header === 'string' && ID_RE.test(header)
-            ? { tree: 'header' as const, id: header }
-            : { tree: T, id: ROOT }
       return {
         header: {
           ...head(),
-          example: {
-            op: 'setMotion',
-            ...at,
-            motion: { trigger: 'load', effect: str(e.name) },
-          } satisfies Op,
+          ...effectExample(e, site),
         },
         rows: Object.entries(e.settings).map(([key, s]) => ({
           key: cut(key, TEXT),

@@ -9,6 +9,10 @@ export type EffectDef = {
   steps(settings: Readonly<Record<string, number>>): Step[]
 }
 
+// Catalogue reads registration's checked snapshot. Discovery never runs a factory.
+const defaults = new WeakMap<EffectDef, Step[]>()
+export const defaultEffectSteps = (d: EffectDef) => defaults.get(d)
+
 /** One isolated snapshot: the checked data is what callers receive, never a second call to the factory. */
 export function resolveEffect(
   d: EffectDef | undefined,
@@ -89,9 +93,10 @@ export function checkedEffect(input: EffectDef): EffectDef {
     settings: Object.freeze(settings),
     steps: input.steps,
   })
-  resolveEffect(d, undefined, (msg, path) => {
+  const steps = resolveEffect(d, undefined, (msg, path) => {
     throw new Error(`Effect "${d.name}" at ${path}: ${msg}`)
   })
+  defaults.set(d, steps!)
   return d
 }
 
