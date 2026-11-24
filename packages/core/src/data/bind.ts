@@ -10,7 +10,7 @@ import {
   type SiteStyles,
 } from '../document/index.ts'
 import { UNSAFE_FIELDS, isObj } from '../document/rules.ts'
-import { retarget } from '../document/tree.ts'
+import { retarget, templateIndex } from '../document/tree.ts'
 import type { Row } from '../registry/index.ts'
 import {
   DEPTH_GUARD,
@@ -77,8 +77,9 @@ function node(w: Node, c: Pass, depth: number): Node | null {
   delete out.bind
   delete out.showIfAny
   if (w.props) out.props = { ...w.props }
-  // Triggers are renamed per copy, so each copy owns its list.
+  // Internal targets are renamed per copy, so each copy owns its programs.
   if (w.on) out.on = structuredClone(w.on)
+  if (w.motion) out.motion = structuredClone(w.motion)
   if (isObj(w.bind) || Array.isArray(w.bind))
     for (const [k, ref] of Object.entries(w.bind)) {
       if (UNSAFE_FIELDS.includes(k) || k === 'runs') continue
@@ -120,7 +121,7 @@ function node(w: Node, c: Pass, depth: number): Node | null {
   if (repeat.marker && out.props?.marker === undefined)
     (out.props ??= {}).marker = repeat.marker
   // A table repeats its last row and keeps earlier rows as headers; otherwise the first child repeats.
-  const at = w.kind === 'table' ? kids.length - 1 : 0
+  const at = templateIndex(w)
   const tpl = kids[at]
   out.children = build(kids.slice(0, at))
   if (tpl) {

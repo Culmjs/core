@@ -134,7 +134,11 @@ export function slotFor(parentKind: Kind, w: Node, at?: At): Slot {
   }
 }
 
-/** Names every descendant `<rootId>.<localId>`, gives the root `rootId`, and rewrites `props.opens` that points inside. */
+/** A table repeats its last row; other repeats copy the first child. */
+export const templateIndex = (w: Node): number =>
+  w.kind === 'table' ? (w.children?.length ?? 0) - 1 : 0
+
+/** Names every descendant `<rootId>.<localId>`, gives the root `rootId`, and rewrites internal references. */
 export function blockIds(rootId: string, w: Node): Node {
   // A JSON copy, not structuredClone: structuredClone keeps a style object that several nodes share as one object,
   // so a hide switch written through one node would hide them all. Nodes are plain JSON.
@@ -171,7 +175,7 @@ export const targetOf = (d: unknown): string | undefined => {
   return k ? (o[k] as string) : undefined
 }
 
-/** Points every trigger target found in `ids` at its new id. */
+/** Points trigger actions and motion steps at the new ids in this copy. */
 export function retarget(w: Node, ids: ReadonlyMap<string, string>): void {
   for (const t of Array.isArray(w.on) ? w.on : []) {
     const d = t?.do as Record<string, unknown> | undefined
@@ -179,6 +183,12 @@ export function retarget(w: Node, ids: ReadonlyMap<string, string>): void {
       if (d && typeof d[k] === 'string' && ids.has(d[k] as string))
         d[k] = ids.get(d[k] as string)
   }
+  const m = w.motion
+  if (m && typeof m === 'object' && 'steps' in m && Array.isArray(m.steps))
+    for (const step of m.steps) {
+      const t = step?.target
+      if (t && typeof t === 'object' && ids.has(t.id)) t.id = ids.get(t.id)!
+    }
 }
 
 export function refsTo(root: Node, id: string): Node[] {

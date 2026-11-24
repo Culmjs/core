@@ -13,6 +13,7 @@ import {
 } from '../document/index.ts'
 import { EMBEDS, embedIdOk } from '../document/embed.ts'
 import { ID_RE, SHAPE_LIMITS } from '../document/kinds.ts'
+import { templateIndex } from '../document/tree.ts'
 import {
   isObj,
   DETAILS_NAME,
@@ -48,6 +49,7 @@ import {
   type Which,
 } from './common.ts'
 import { checkStates, checkTabs, stateIn } from './states.ts'
+import { checkInstanceMotions, checkMotion } from './motion.ts'
 import { checkData, refsFor, rowOf } from './data.ts'
 import {
   componentBad,
@@ -77,6 +79,7 @@ export const NODE_KEYS = fieldsOf<Node>({
   overrides: true,
   state: true,
   on: true,
+  motion: true,
   // only lets the key through; Task 6 checks its value and the rules
   required: true,
 })
@@ -211,7 +214,7 @@ export function collect(
     const row = isObj(e.w.repeat)
       ? rowOf(c, e.w.repeat, e.items, true)
       : undefined
-    const at = e.w.kind === 'table' ? ch.length - 1 : 0
+    const at = templateIndex(e.w)
     for (let i = ch.length - 1; i >= 0; i--) {
       if (!isObj(ch[i])) {
         say(
@@ -284,6 +287,7 @@ export function checkTrees(doc: SiteDocument, reg: Registry, out: Problem[]) {
   const seen = new Set<string>()
   for (const t of trees)
     checkTree(c, t, t.which === 'component' ? new Set() : seen)
+  if (!out.length) checkInstanceMotions(c, trees, doc.fonts)
 }
 
 export function checkTree(c: Ctx, t0: Tree, seen: Set<string>) {
@@ -958,6 +962,7 @@ export function checkNode(c: Ctx, t: TCtx, e: Entry) {
   }
 
   checkStates(c, t, e, say)
+  checkMotion(c, t, e)
 
   checkData(c, e, spec, refs, say)
 

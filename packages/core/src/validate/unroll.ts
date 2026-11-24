@@ -236,6 +236,8 @@ export function unrollInstances(
         ...inst.state.filter(s => !out.state?.some(m => m.name === s.name)),
       ]
     if (inst.on !== undefined) out.on = inst.on
+    // The use's motion addresses its own slot content, not the master's local part ids.
+    if (inst.motion !== undefined) out.motion = structuredClone(inst.motion)
     for (const k of [
       'slot',
       'hide',

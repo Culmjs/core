@@ -1,3 +1,5 @@
+import type { Motion } from './motion.ts'
+
 export type LookFamily = string
 
 export type Look = {
@@ -594,6 +596,7 @@ export type Node = {
   overrides?: Record<string, Override>
   state?: StateDecl[]
   on?: Trigger[]
+  motion?: Motion
   /**
    * This node must stay in the site: it is not hidden, and operations refuse to remove it. A `form` and a `field` count as required unless marked `false`.
    * Unrelated to the `required` setting of a `field` node (in `props`), which makes the input mandatory for a visitor. Both can be present.
