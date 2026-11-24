@@ -1,8 +1,8 @@
 // Writes packages/core/src/scripts/scriptsMin.ts: the shipped page scripts, minified from their readable sources.
 // Run `npm run gen:scripts` after changing a script source. esbuild comes with tsx.
 import { readFileSync, writeFileSync } from 'node:fs'
-import { pathToFileURL } from 'node:url'
-import { transformSync } from 'esbuild'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { buildSync, transformSync } from 'esbuild'
 import {
   BASE_SOURCE,
   EMAIL_SOURCE,
@@ -41,6 +41,18 @@ export function render(): string {
     OPEN_SCRIPT: minify(OPEN_SOURCE),
     EMAIL_SCRIPT: minify(EMAIL_SOURCE),
     STATES_SCRIPT: shipHost(),
+    TIMELINE_SCRIPT: buildSync({
+      stdin: {
+        contents:
+          "import {hostMotion} from './motionHost.ts'; hostMotion(document,window)",
+        resolveDir: fileURLToPath(dir),
+      },
+      bundle: true,
+      format: 'iife',
+      target: 'es2017',
+      minify: true,
+      write: false,
+    }).outputFiles[0].text.trim(),
   }
   const body = Object.entries(scripts)
     .map(([k, v]) => `export const ${k} = ${JSON.stringify(v)}\n`)

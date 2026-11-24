@@ -4,6 +4,7 @@ export const BUDGETS = {
   sharedScripts: 20_000,
   baseScript: 10_000,
   statesScript: 6_193,
+  timelineScript: 3_800,
   css: 16_000,
   elements: 2_000,
   depth: 12,
@@ -12,7 +13,7 @@ export const BUDGETS = {
 export type PageStats = {
   bytes: number
   styleBytes: number
-  scriptBytes: { base: number; states: number }
+  scriptBytes: { base: number; states: number; timeline?: number }
   elements: number
   depth: number
 }
@@ -23,12 +24,13 @@ export const byteLength = (s: string): number => encoder.encode(s).length
 
 /** One problem per ceiling passed, path = the key in BUDGETS. Exactly at a ceiling passes. */
 export function checkBudgets(stats: PageStats): Problem[] {
-  const { base, states } = stats.scriptBytes
+  const { base, states, timeline = 0 } = stats.scriptBytes
   const measured: [keyof typeof BUDGETS, number][] = [
     ['css', stats.styleBytes],
     ['baseScript', base],
     ['statesScript', states],
-    ['sharedScripts', base + states],
+    ['timelineScript', timeline],
+    ['sharedScripts', base + states + timeline],
     ['elements', stats.elements],
     ['depth', stats.depth],
   ]

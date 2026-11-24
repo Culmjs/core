@@ -6,7 +6,7 @@ import type {
   Problem,
   Step,
 } from '../document/index.ts'
-import { find, walk } from '../document/tree.ts'
+import { find, orderedChildren, walk } from '../document/tree.ts'
 import { cssEase } from '../scripts/motionEase.ts'
 import { stepsTier } from '../document/motionSteps.ts'
 import { scrollScene } from './scrollScene.ts'
@@ -14,6 +14,8 @@ import { StateConditions, StateAnalysisLimit } from './stateConditions.ts'
 import { resolveEffect } from '../registry/effect.ts'
 import type { Registry } from '../registry/index.ts'
 import type { HtmlNode } from './html.ts'
+import type { Scene } from '../scripts/motionHost.ts'
+import { prepareTracks, type BoundStep } from './motionTracks.ts'
 import {
   APPEAR_SUPPORT,
   appearFrames,
@@ -86,6 +88,162 @@ function classOn(e: HtmlNode, name: string) {
   return `.${name}`
 }
 
+function keyboardOwner(owner: HtmlNode) {
+  const attrs = (owner.attrs ??= {})
+  if (
+    attrs.tabindex === undefined &&
+    !['button', 'input', 'select', 'textarea'].includes(owner.tag) &&
+    !(owner.tag === 'a' && attrs.href)
+  )
+    attrs.tabindex = 0
+}
+
+type Binding = { holder: HtmlNode; attr: string; initial: string; is: string }
+function bindState(
+  m: Motion,
+  chain: Node[],
+  depth: number,
+  header: Node,
+  site: HtmlNode,
+  rendered: ReadonlyMap<Node, HtmlNode>,
+): Binding | undefined {
+  if (typeof m.trigger !== 'object') return
+  const { state, is } = m.trigger
+  const holds = (n: Node) => n.state?.find(s => s.name === state)
+  const n =
+    chain
+      .slice(0, depth + 1)
+      .reverse()
+      .find(holds) ?? header
+  const holder = n === header ? site : rendered.get(n),
+    declaration = holds(n)
+  if (holder && declaration)
+    return { holder, attr: `data-s-${state}`, initial: declaration.initial, is }
+}
+
+type InlineStyles = {
+  classOf: ReadonlyMap<string, string>
+  inlineRestores: ReadonlySet<string>
+}
+function inlineTarget(n: Node, el: HtmlNode, style: InlineStyles) {
+  const natural =
+    (el.tag === 'span' || el.tag === 'a') &&
+    !['button', 'icon', 'image'].includes(n.kind)
+  const cls = style.classOf.get(n.id)
+  const restore =
+    cls &&
+    style.inlineRestores.has(cls) &&
+    String(el.attrs?.class).split(' ').includes(cls)
+      ? cls
+      : undefined
+  return { natural, restore }
+}
+
+type Pending = { w: Node; owner: HtmlNode; steps: Step[]; state?: Binding }
+function timelines(
+  programs: Pending[],
+  rendered: ReadonlyMap<Node, HtmlNode>,
+  native: ReadonlySet<Node>,
+  style: InlineStyles,
+  inlineClasses: Set<string>,
+  appear: ReadonlyMap<HtmlNode, number>,
+) {
+  const tokens = new Map<HtmlNode, number>()
+  const token = (el: HtmlNode) => {
+    let id = tokens.get(el)
+    if (!id) {
+      id = tokens.size + 1
+      tokens.set(el, id)
+      classOn(el, `cm-e${id}`)
+    }
+    return id
+  }
+  const natural = new Set<string>(),
+    restores = new Set<string>()
+  let timeline = false
+  let alpha = false
+  for (const { w, owner, steps, state } of programs) {
+    const bound: BoundStep[] = []
+    const draw = new Set<number>(),
+      reveals = new Set<number>()
+    const m = w.motion!
+    for (const step of steps) {
+      const t = step.target
+      const part =
+        typeof t === 'object'
+          ? t.part
+          : t === 'self' || t === 'children'
+            ? undefined
+            : t
+      const nodes =
+        t === 'children'
+          ? orderedChildren(w)
+          : [typeof t === 'object' ? find(w, t.id) : w]
+      const targets: number[] = []
+      for (const n of nodes) {
+        if (!n) continue
+        const element = rendered.get(n)
+        // A grouped SVG can contain defs/masks and other shapes' paths. Bind
+        // only the actual direct geometry of the validated mapped shape.
+        const el =
+          part === 'path'
+            ? element?.children?.find(
+                (e): e is HtmlNode => typeof e !== 'string' && e.tag === 'path',
+              )
+            : element
+        if (!el) continue
+        const id = owner === el ? 0 : token(el)
+        targets.push(id)
+        if (step.from.draw !== undefined) draw.add(id)
+        if (step.from.opacity !== undefined && appear.has(el)) reveals.add(id)
+        if (part || !Object.keys(step.from).some(k => k !== 'opacity')) continue
+        const inl = inlineTarget(n, el, style)
+        if (!inl.natural && !inl.restore) continue
+        const sel =
+          `.cm-e${token(owner)}[data-culm-playing]` + (id ? ` .cm-e${id}` : '')
+        if (inl.natural) natural.add(sel)
+        if (inl.restore) {
+          restores.add(sel)
+          inlineClasses.add(inl.restore)
+        }
+      }
+      if (targets.length) bound.push({ step, targets, part })
+    }
+    if (!bound.length) continue
+    let trigger: Scene['trigger']
+    if (typeof m.trigger === 'object') {
+      if (!state) continue
+      const { holder, attr, initial, is } = state
+      ;(holder.attrs ??= {})[attr] ??= initial
+      trigger = [token(holder), attr, is]
+    } else trigger = m.trigger
+    if (trigger === 'hover' || trigger === 'press') keyboardOwner(owner)
+    const scene: Scene = {
+      trigger,
+      ...prepareTracks(bound, reveals),
+      ...(native.has(w) && { native: true }),
+      ...(draw.size && { draw: [...draw] }),
+      ...(m.pinPx && { pin: m.pinPx }),
+    }
+    ;(owner.attrs ??= {})['data-culm-motion'] = JSON.stringify(scene)
+    timeline = true
+    const usesReveal = (tracks: Scene['tracks']) => tracks.some(t => !!t[3])
+    alpha ||=
+      usesReveal(scene.tracks) || !!scene.parts?.some(p => usesReveal(p.tracks))
+  }
+  const css =
+    (natural.size ? `:where(${[...natural]}){display:inline-block}` : '') +
+    (restores.size
+      ? '@property --cm-inline{syntax:"*";inherits:false;initial-value:inline}' +
+        `:where(${[...restores]}){--cm-inline:inline-block}`
+      : '')
+  return {
+    timeline,
+    alpha,
+    css: css ? `@media (prefers-reduced-motion:no-preference){${css}}` : '',
+  }
+}
+
 type Track = {
   id: number
   selector: string
@@ -133,7 +291,11 @@ function sequence(
 
 /** CSS's animation shorthand replaces the entire list. Where two programs meet,
  * give each an independently activated slot and join the lists on the actual target. */
-function writeTracks(tracks: Track[], appear: Map<HtmlNode, number>) {
+function writeTracks(
+  tracks: Track[],
+  appear: Map<HtmlNode, number>,
+  hostAlpha: boolean,
+) {
   const byTarget = new Map<HtmlNode, Track[]>()
   for (const t of tracks)
     for (const el of t.targets) {
@@ -248,10 +410,9 @@ function writeTracks(tracks: Track[], appear: Map<HtmlNode, number>) {
       ? property('x', 'length-percentage', '0px') +
         property('y', 'length', '0px')
       : '')
-  const opacity = alpha.size
-    ? property('alpha', 'number', '1') +
-      appearFrames('cm-appear', 'var(--cm-alpha)')
-    : ''
+  const opacity =
+    (alpha.size || hostAlpha ? property('alpha', 'number', '1') : '') +
+    (alpha.size ? appearFrames('cm-appear', 'var(--cm-alpha)') : '')
   return `@media (prefers-reduced-motion:no-preference){${channels}${opacity}${rules.join('')}${joined.join('')}}`
 }
 
@@ -272,6 +433,7 @@ export function motionCss(
 ) {
   const tracks: Track[] = [],
     problems: Problem[] = []
+  const pending: Pending[] = []
   // Task 4 skips fallback playback on a capable browser ONLY for owners in this set.
   const nativeScroll = new Set<Node>()
   const appear = new Map<HtmlNode, number>(),
@@ -303,6 +465,9 @@ export function motionCss(
         m.scrollFallback ? { ...m, scrollFallback: undefined } : m,
         registry,
       )
+      const state = bindState(m, chain, depth, header, site, rendered)
+      if (tier === 2 || m.scrollFallback)
+        pending.push({ w, owner, steps, state })
       if (tier === 2) return
       const t = steps[0].target
       const nodes =
@@ -363,34 +528,17 @@ export function motionCss(
       if (m.trigger === 'hover' || m.trigger === 'press') {
         const ownerSel = self ? sel : classOn(owner, `cm-o${i}`)
         const hover = m.trigger === 'hover'
-        if (hover) {
-          const attrs = (owner.attrs ??= {})
-          if (
-            attrs.tabindex === undefined &&
-            !['button', 'input', 'select', 'textarea'].includes(owner.tag) &&
-            !(owner.tag === 'a' && attrs.href)
-          )
-            attrs.tabindex = 0
-        }
+        if (hover) keyboardOwner(owner)
         sel =
           ownerSel +
           (hover ? ':is(:hover,:focus-visible)' : ':active') +
           (self ? '' : ` ${sel}`)
       } else if (typeof m.trigger === 'object') {
-        const { state, is } = m.trigger
-        const holds = (x: Node) => x.state?.find(s => s.name === state)
-        const holder =
-          chain
-            .slice(0, depth + 1)
-            .reverse()
-            .find(holds) ?? header
-        const h = holder === header ? site : rendered.get(holder)
-        const declaration = holds(holder)
-        if (!h || !declaration) return
+        if (!state) return
+        const { holder: h, attr, initial, is } = state
         // Group parts bypass ordinary build attributes; install the real declaration
         // only if one is needed here. The header root's attribute lives on the site.
-        const attr = `data-s-${state}`
-        ;(h.attrs ??= {})[attr] ??= declaration.initial
+        ;(h.attrs ??= {})[attr] ??= initial
         const same = self && h === owner
         sel =
           (same ? sel : classOn(h, `cm-s${i}`)) +
@@ -408,19 +556,12 @@ export function motionCss(
           const el = n && rendered.get(n)
           if (!el || !n) continue
           // Core buttons/icons and fallback images already have an atomic display.
-          const natural =
-            (el.tag === 'span' || el.tag === 'a') &&
-            !['button', 'icon', 'image'].includes(n.kind)
-          const cls = style.classOf.get(n.id)
-          const restore =
-            cls &&
-            style.inlineRestores.has(cls) &&
-            String(el.attrs?.class).split(' ').includes(cls)
+          const { natural, restore } = inlineTarget(n, el, style)
           if (!natural && !restore) continue
           inlineBox ||= natural
           if (restore) {
             inlineRestore = true
-            inlineClasses.add(cls!)
+            inlineClasses.add(restore)
           }
           if (!inline.has(el)) {
             inline.add(el)
@@ -440,8 +581,21 @@ export function motionCss(
       })
     })
   }
+  const host = timelines(
+    pending,
+    rendered,
+    nativeScroll,
+    style,
+    inlineClasses,
+    appear,
+  )
   return {
-    css: tracks.length ? writeTracks(tracks, appear) : '',
+    css:
+      (tracks.length || host.alpha
+        ? writeTracks(tracks, appear, host.alpha)
+        : '') + host.css,
+    hostAlpha: host.alpha,
+    timeline: host.timeline,
     problems,
     nativeScroll,
     inlineClasses,

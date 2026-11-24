@@ -422,5 +422,204 @@ test('an omitted rendered target or owner emits no motion, including samples, hi
     }
     child.motion = { trigger: 'load', effect: 'rise' }
     assert.equal(page(doc).html, plain.html)
+    child.motion.trigger = owner.motion.trigger = 'enter-view'
+    assert.equal(page(doc).html, plain.html)
   }
+})
+
+test('timeline data is escaped on each rendered owner; one charged host for shared roots, live and measure', () => {
+  const doc = docFor({
+    trigger: 'enter-view',
+    steps: [{ ...rise(), target: { id: 'title' } }],
+  })
+  doc.footer.children = [
+    text('credits', 'Credits', {
+      motion: { trigger: 'enter-view', effect: 'rise' },
+    }),
+  ]
+  for (const mode of ['live', 'measure'] as const) {
+    for (const stateful of [false, true]) {
+      doc.footer.state = stateful
+        ? [{ name: 'mode', initial: 'off', values: 'on-off' }]
+        : []
+      const p = page(doc, mode)
+      const bytes = p.stats.scriptBytes
+      assert.deepEqual(
+        p.scripts.map(s => s.name),
+        stateful ? ['base', 'states', 'timeline'] : ['base', 'timeline'],
+      )
+      assert.equal(
+        p.html.match(/ data-culm-motion="[^"]*&quot;[^"]*"/g)?.length,
+        2,
+      )
+      assert.equal(Buffer.byteLength(p.scripts.at(-1)!.code), bytes.timeline)
+      assert.equal(
+        Buffer.byteLength(p.html.match(/<script>(.*?)<\/script>/s)![1]),
+        bytes.base + bytes.states + bytes.timeline!,
+      )
+      assert.equal(
+        bytes.base,
+        Buffer.byteLength(p.scripts[0].code) + p.scripts.length - 1,
+      )
+    }
+  }
+  const edit = page(doc, 'edit')
+  assert.deepEqual(edit.scripts, [])
+  assert.doesNotMatch(edit.html, /data-culm-motion/)
+  const sub = compileSubtree(doc, 'home', 'hero', { registry })
+  assert.doesNotMatch(JSON.stringify(sub), /data-culm-motion/)
+})
+
+test('timeline tokens bind checked component descendants after repeat expansion; no rows cost nothing', () => {
+  const root = node('panel', 'column', [text('title', 'Title')])
+  root.motion = {
+    trigger: 'enter-view',
+    steps: [{ ...rise(), target: { id: 'title' } }],
+  }
+  const use = { ...node('item', 'instance'), component: 'card' }
+  const doc = siteWith(
+    [{ ...node('list', 'list', [use]), repeat: { source: 'projects' } }],
+    {
+      components: [{ id: 'card', name: 'Card', root, props: [], variants: [] }],
+    },
+  )
+  assert.deepEqual(
+    page(doc).scripts.map(s => s.name),
+    ['base'],
+  )
+  const r = compilePage(doc, 'home', {
+    registry,
+    mode: 'measure',
+    data: { rows: { projects: [{ title: 'A' }, { title: 'B' }] } },
+  })
+  assert.ok(r.ok, JSON.stringify(r.problems))
+  for (const i of [0, 1]) {
+    assert.match(
+      r.html,
+      new RegExp(`<li[^>]*data-id="item~${i}"[^>]* data-culm-motion="([^"]*)"`),
+    )
+    assert.match(
+      r.html,
+      new RegExp(`<p[^>]*cm-e\\d+[^>]*data-id="item\\.title~${i}"`),
+    )
+  }
+  for (const [, attr] of r.html.matchAll(/ data-culm-motion="([^"]*)"/g))
+    assert.doesNotMatch(attr, /title|item~/)
+})
+
+test('every fallback is charged, but only the representable scroll owner has native playback', () => {
+  const fallback: Motion = {
+    trigger: 'scroll',
+    scrollFallback: 'timeline',
+    effect: 'rise',
+  }
+  const outside = text('outside', 'Viewport', { motion: fallback })
+  const scroller = node('scroller', 'column', [
+    text('inside', 'Nested', { motion: fallback }),
+  ])
+  scroller.style = { base: { overflow: 'scroll-y' } }
+  const p = page(
+    siteWith([
+      outside,
+      scroller,
+      text('timed', 'Timed', {
+        motion: { trigger: 'enter-view', effect: 'rise' },
+      }),
+    ]),
+    'measure',
+  )
+  const data = [...p.html.matchAll(/ data-culm-motion="([^"]*)"/g)].map(
+    ([, s]) => JSON.parse(s.replaceAll('&quot;', '"')),
+  )
+  assert.deepEqual(
+    data.map(s => [s.trigger, !!s.native]),
+    [
+      ['scroll', true],
+      ['scroll', false],
+      ['enter-view', false],
+    ],
+  )
+  assert.ok(p.stats.scriptBytes.timeline)
+})
+
+test('a press timeline on a plain owner is reachable by keyboard', () => {
+  const doc = docFor({
+    trigger: 'press',
+    steps: [rise(), { ...rise(), target: 'children' }],
+  })
+  assert.match(
+    page(doc, 'measure').html,
+    /<div[^>]*data-id="hero"[^>]*tabindex="0"[^>]*data-culm-motion=/,
+  )
+})
+
+test('a path in a nested SVG group resolves its own direct geometry, separate from an ordinary target', () => {
+  const part = (id: string) => ({
+    ...node(id, 'shape'),
+    slot: { x: 0, y: 0, w: 20, h: 20 },
+    props: {
+      geometry: { type: 'path' as const, d: 'M0 0L10 10' },
+      stroke: { width: 1, color: 'ink' as const },
+    },
+  })
+  const group = node('group', 'shape', [part('other'), part('mark')])
+  group.props = { geometry: { type: 'group' } }
+  group.motion = {
+    trigger: 'enter-view',
+    steps: [
+      { ...rise(), target: { id: 'mark' } },
+      {
+        target: { id: 'mark', part: 'path' },
+        from: { draw: 0 },
+        to: { draw: 1 },
+        durationMs: 250,
+      },
+    ],
+  }
+  const p = page(siteWith([group]))
+  assert.match(p.html, /<svg[^>]+data-culm-motion=/)
+  assert.match(
+    p.html,
+    /<svg x="0"[^>]+cm-e\d+[^>]*><path d="M0 0L10 10" class="cm-e\d+"/,
+  )
+  assert.equal(p.html.match(/<path d="M0 0L10 10" class=/g)?.length, 1)
+})
+
+test('dynamic text keeps prepared fixed blocks and leaves only measured group timing open', () => {
+  const hero = text('hero', 'Reed', {
+    motion: {
+      trigger: 'enter-view',
+      steps: [
+        {
+          ...rise(),
+          target: 'letters',
+          from: { xPercent: 105 },
+          to: { xPercent: 0 },
+          staggerMs: 42,
+          mask: true,
+          ease: 'expo-out',
+        },
+        { ...rise(), delayMs: 25 },
+      ],
+    },
+  })
+  const html = page(siteWith([hero])).html
+  const s = JSON.parse(
+    html.match(/ data-culm-motion="([^"]*)"/)![1].replaceAll('&quot;', '"'),
+  )
+  assert.equal(s.tracks.length, 0)
+  const [letters, fixed] = s.parts
+  assert.deepEqual(
+    [
+      letters.unit,
+      letters.stagger,
+      letters.duration,
+      letters.mask,
+      fixed.delay,
+      fixed.duration,
+    ],
+    ['letters', 42, 400, true, 25, 400],
+  )
+  assert.match(letters.tracks[0][1][0].easing, /^linear\(/)
+  assert.equal(letters.tracks[0][1][0].translate, '105%')
 })

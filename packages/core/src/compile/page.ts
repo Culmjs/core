@@ -19,6 +19,7 @@ import {
   EMAIL_SCRIPT,
   OPEN_SCRIPT,
   STATES_SCRIPT,
+  TIMELINE_SCRIPT,
 } from '../scripts/index.ts'
 import { checkedSite } from '../validate/validate.ts'
 import { BUDGETS, byteLength, checkBudgets, type PageStats } from './budgets.ts'
@@ -48,12 +49,13 @@ export type CompileOptions = {
   icons?: SiteIcons
 }
 
+type PageScript = { name: 'base' | 'states' | 'timeline'; code: string }
 export type CompiledPage =
   | {
       ok: true
       html: string
       css: string
-      scripts: { name: 'base' | 'states'; code: string }[]
+      scripts: PageScript[]
       stats: PageStats
       problems: Problem[]
     }
@@ -331,7 +333,7 @@ export function build(
     rendered && motionCss(p.trees, site, rendered, options.registry, p)
   if (motion?.problems.length) return { ok: false, problems: motion.problems }
 
-  const scripts: { name: 'base' | 'states'; code: string }[] = []
+  const scripts: PageScript[] = []
   if (mode === 'live') {
     const open = anyElement(site, e => e.attrs?.['data-s-open'] !== undefined)
     // Decided from what was written, not from the source trees: a node that is not drawn writes nothing for the script to read.
@@ -354,13 +356,14 @@ export function build(
         (mail.used ? EMAIL_SCRIPT : ''),
     })
     if (states) scripts.push({ name: 'states', code: STATES_SCRIPT })
+    if (motion?.timeline)
+      scripts.push({ name: 'timeline', code: TIMELINE_SCRIPT })
   }
 
-  const statesCode = scripts.find(s => s.name === 'states')?.code ?? ''
   const css =
     fontFaceCss(fontsOf(doc, p.shell), p.fontBase, p.fonts) +
     BASE_CSS +
-    p.sheet(motion?.inlineClasses).css +
+    p.sheet(motion?.inlineClasses, motion?.hostAlpha).css +
     (motion?.css ?? '')
   const body: HtmlNode[] = [site]
   const written = scripts.map(s => s.code).join(';')
@@ -392,10 +395,13 @@ export function build(
   const stats: PageStats = {
     bytes: byteLength(html),
     styleBytes: byteLength(css),
-    // base + states is exactly the bytes written: the `;` that joins them counts with the base.
+    // Charge each raw code string once. Every separator belongs to base.
     scriptBytes: {
-      base: byteLength(written) - byteLength(statesCode),
-      states: byteLength(statesCode),
+      base: scripts.length
+        ? byteLength(scripts[0].code) + scripts.length - 1
+        : 0,
+      states: byteLength(scripts.find(s => s.name === 'states')?.code ?? ''),
+      ...(motion?.timeline && { timeline: byteLength(TIMELINE_SCRIPT) }),
     },
     elements: body.reduce((n, e) => n + countElements(e), 0),
     depth: p.depth,

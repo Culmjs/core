@@ -10,7 +10,7 @@ import {
 const ok: PageStats = {
   bytes: 1,
   styleBytes: 16_000,
-  scriptBytes: { base: 10_000, states: 6_193 },
+  scriptBytes: { base: 10_000, states: 6_193, timeline: 3_800 },
   elements: 2_000,
   depth: 12,
 }
@@ -23,6 +23,10 @@ test('one over each ceiling is one problem naming that ceiling', () => {
     [{ styleBytes: 16_001 }, 'css'],
     [{ scriptBytes: { base: 10_001, states: 0 } }, 'baseScript'],
     [{ scriptBytes: { base: 0, states: 6_194 } }, 'statesScript'],
+    [
+      { scriptBytes: { base: 0, states: 0, timeline: 3_801 } },
+      'timelineScript',
+    ],
     [{ elements: 2_001 }, 'elements'],
     [{ depth: 13 }, 'depth'],
   ]
@@ -49,3 +53,20 @@ test('the shared total is checked on its own', () => {
 })
 
 test('byteLength counts UTF-8 bytes', () => assert.equal(byteLength('é€'), 5))
+
+test('the shared finding counts all three scripts independently of individual findings', () => {
+  assert.equal(BUDGETS.timelineScript, 3800)
+  for (const [base, paths] of [
+    [10007, ['baseScript']],
+    [10008, ['baseScript', 'sharedScripts']],
+  ] as const) {
+    const findings = checkBudgets({
+      ...ok,
+      scriptBytes: { base, states: 6193, timeline: 3800 },
+    })
+    assert.deepEqual(
+      findings.map(p => [p.code, p.path]),
+      paths.map(k => ['RESOURCE_LIMIT_EXCEEDED', k]),
+    )
+  }
+})

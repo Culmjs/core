@@ -19,6 +19,42 @@ import {
 
 const registry = sampleRegistry()
 
+test('the manifest charges just the page that delivers the universal timeline', () => {
+  const doc = twoPages(
+    [text('plain', 'Plain')],
+    [text('css', 'CSS', { motion: { trigger: 'load', effect: 'rise' } })],
+  )
+  doc.pages.push({
+    ...doc.pages[1],
+    id: 'scene',
+    slug: '/scene',
+    root: node('sceneroot', 'column', [
+      text('intro', 'Scene', {
+        motion: {
+          trigger: 'scroll',
+          scrollFallback: 'timeline',
+          effect: 'rise',
+        },
+      }),
+    ]),
+  })
+  const out = compileSite(doc, { registry })
+  assert.deepEqual(out.problems, [])
+  const p = compilePage(doc, 'scene', { registry })
+  assert.ok(p.ok)
+  assert.deepEqual(
+    out.manifest.scripts.map(s => [s.name, s.pages]),
+    [
+      ['base', ['home', 'about', 'scene']],
+      ['timeline', ['scene']],
+    ],
+  )
+  assert.equal(
+    out.manifest.scripts[1].bytes,
+    Buffer.byteLength(p.scripts[1].code),
+  )
+})
+
 test('compileSite writes one file per page that is on, and a manifest of scripts by page', () => {
   const out = compileSite(twoPages([text('t', 'Home')], [stateful()]), {
     registry,

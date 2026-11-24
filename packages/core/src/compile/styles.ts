@@ -985,7 +985,7 @@ export function prepareStyles(
   ]
   // Classes are needed to render the elements. Finish the sheet once the page
   // knows which of those elements actually received transform motion.
-  function emit(inline?: ReadonlySet<string>) {
+  function emit(inline?: ReadonlySet<string>, hostAlpha = false) {
     const rules = (v: Variant, sel: (c: string, kind: CompileKind) => string) =>
       all
         .map(
@@ -1070,7 +1070,7 @@ export function prepareStyles(
         )}{background-image:var(--s-tf);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}}}`
     // appearAfter: hidden until the page has scrolled that far, only where the browser can tie an animation to the page's scroll and the visitor has not asked for less motion; everywhere else the block simply shows.
     if (appearing.size)
-      css += `@media (prefers-reduced-motion: no-preference){@supports ${APPEAR_SUPPORT}{${appearFrames('s-appear')}${[
+      css += `@media (prefers-reduced-motion: no-preference){@supports ${APPEAR_SUPPORT}{${appearFrames('s-appear', hostAlpha ? 'var(--cm-alpha)' : '1')}${[
         ...appearing,
       ]
         .map(
