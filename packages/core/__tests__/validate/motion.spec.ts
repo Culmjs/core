@@ -4,6 +4,7 @@ import {
   compilePage,
   defaultSiteStyles,
   expand,
+  plan,
   type Component,
   type Motion,
   type Node,
@@ -459,4 +460,148 @@ test('nested templates retarget a component path through both repeat suffixes', 
   assert.deepEqual(doc, original)
   outer.motion = motion(step({ id: 'carduse' }))
   refused(doc, 'motion.steps.0.target', 'outer')
+})
+
+test('checking an unused component cannot bind over the stored default text runs', () => {
+  const card = master(text('copy', 'Initial'))
+  card.props = [
+    {
+      key: 'words',
+      label: 'Words',
+      type: 'text',
+      part: 'copy',
+      field: 'text',
+      default: [{ text: 'Stored words' }],
+    },
+    {
+      key: 'word',
+      label: 'Word',
+      type: 'text',
+      part: 'copy',
+      field: 'text',
+      run: 0,
+    },
+  ]
+  const inst = use('bound', 'card')
+  inst.bind = { word: { from: 'site', field: 'title' } }
+  const wrapper = { ...master(node('wrapper', 'column', [inst])), id: 'unused' }
+  wrapper.root.motion = motion(step())
+  const before = siteWith([], { components: [card, wrapper] })
+  for (const run of [
+    (doc: SiteDocument) => assert.deepEqual(validateSite(doc, reg), []),
+    (doc: SiteDocument) =>
+      assert.equal(compilePage(doc, 'home', { registry: reg }).ok, true),
+    (doc: SiteDocument) =>
+      assert.equal(
+        plan(doc, reg, {
+          site: 'example',
+          key: 'empty',
+          baseRevision: 0,
+          ops: [],
+        }).ok,
+        true,
+      ),
+  ]) {
+    const input = structuredClone(before)
+    run(input)
+    assert.deepEqual(input, before)
+  }
+})
+
+function branchStates() {
+  const branch = (id: string, values: string[]): Node => ({
+    ...node(id, 'column'),
+    state: [{ name: 'mode', values, initial: values[0] }],
+  })
+  const component = master(
+    node('panel', 'column', [
+      branch('sibling', ['light', 'dark']),
+      branch('slotpart', ['short', 'long']),
+    ]),
+  )
+  component.props = [
+    { key: 'slot', type: 'slot', label: 'Slot', part: 'slotpart' },
+  ]
+  const inst = use('hero', 'card')
+  return { component, inst, doc: siteWith([inst], { components: [component] }) }
+}
+
+test('an instance root cannot use a state declared below it in a sibling of the slot', () => {
+  const { doc, inst } = branchStates()
+  inst.motion = { trigger: { state: 'mode', is: 'dark' }, steps: [step()] }
+  refused(doc, 'motion.trigger.state')
+  assert.equal(compilePage(doc, 'home', { registry: reg }).ok, false)
+})
+
+test('a slotted node gets its actual ancestor’s values, not the first declaration in the master', () => {
+  const { doc, inst } = branchStates()
+  const child = text('slotted', 'Slot')
+  inst.children = [child]
+  child.motion = { trigger: { state: 'mode', is: 'long' }, steps: [step()] }
+  assert.deepEqual(validateSite(doc, reg), [])
+  assert.equal(compilePage(doc, 'home', { registry: reg }).ok, true)
+  child.motion.trigger = { state: 'mode', is: 'dark' }
+  refused(doc, 'motion.trigger.is', 'slotted')
+})
+
+test('page and footer motion see a state on the composed header root', () => {
+  const header = master(node('bar', 'column', [text('name', 'Site')]))
+  header.root.state = [{ name: 'contrast', values: 'on-off', initial: 'off' }]
+  const m: Motion = {
+    trigger: { state: 'contrast', is: 'on' },
+    steps: [step()],
+  }
+  const doc = siteWith([{ ...hero(), motion: m }], {
+    components: [header],
+    header: use('head', 'card'),
+  })
+  doc.footer.motion = m
+  assert.deepEqual(validateSite(doc, reg), [])
+  delete header.root.state
+  header.root.children![0].state = [
+    { name: 'contrast', values: 'on-off', initial: 'off' },
+  ]
+  refused(doc, 'motion.trigger.state')
+})
+
+test('pinning needs a potentially visible child across layouts, theme and declared states', () => {
+  const child = text('title', 'Pinned')
+  const owner = node('hero', 'column', [child])
+  owner.state = [{ name: 'mode', values: 'on-off', initial: 'off' }]
+  owner.motion = { trigger: 'scroll', pinPx: 500, steps: [step()] }
+  const doc = siteWith([owner])
+  child.style = { base: { hidden: true } }
+  refused(doc, 'motion.pinPx')
+  assert.equal(compilePage(doc, 'home', { registry: reg }).ok, false)
+  child.style.tablet = { hidden: false }
+  child.style.phone = { hidden: true }
+  assert.deepEqual(validateSite(doc, reg), [])
+  child.hide = { tablet: true }
+  refused(doc, 'motion.pinPx')
+  child.style.when = [{ state: 'mode', is: 'on', decl: { hidden: false } }]
+  assert.deepEqual(validateSite(doc, reg), [])
+  child.style.when.push({ state: 'mode', is: 'on', decl: { hidden: true } })
+  refused(doc, 'motion.pinPx') // the later rule wins for the same state/value
+  child.style.when.pop()
+  child.hide = { desktop: true, phone: true }
+  refused(doc, 'motion.pinPx') // omitted even from the live tree
+  delete child.hide
+  child.style = { base: { hidden: true }, dark: { hidden: false } }
+  assert.deepEqual(validateSite(doc, reg), [])
+  doc.look = { ...doc.look, dark: 'light' }
+  refused(doc, 'motion.pinPx')
+  child.style = { base: { hidden: true } }
+  owner.children!.push(text('visible', 'One visual child'))
+  assert.deepEqual(validateSite(doc, reg), [])
+})
+
+test('a pin on a use sees the visual child after a part override', () => {
+  const card = master(hero())
+  const inst = use('use', 'card')
+  inst.motion = { trigger: 'scroll', pinPx: 200, steps: [step()] }
+  inst.overrides = { title: { style: { base: { hidden: true } } } }
+  const doc = siteWith([inst], { components: [card] })
+  refused(doc, 'motion.pinPx', 'use')
+  inst.overrides.title.style!.phone = { hidden: false }
+  assert.deepEqual(validateSite(doc, reg), [])
 })

@@ -84,7 +84,8 @@ function write(
   let o = part as unknown as Record<string, unknown>
   for (const k of path.slice(0, -1))
     o = (o[k] ??= {}) as Record<string, unknown>
-  o[path.at(-1)!] = val
+  // A default or instance value belongs to the stored document. Later bindings can edit its runs.
+  o[path.at(-1)!] = typeof val === 'object' ? structuredClone(val) : val
   if (given && (p.field === 'text' || p.field === 'label') && part.props)
     part.props = touched(part.props)
 }

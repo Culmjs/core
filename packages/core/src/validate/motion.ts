@@ -1,15 +1,18 @@
 import type {
   FontRef,
   Frame,
+  Look,
   Motion,
   MotionTarget,
   MotionTrigger,
   Node,
+  StateDecl,
   Step,
 } from '../document/index.ts'
 import { ID_RE } from '../document/kinds.ts'
 import { isObj } from '../document/rules.ts'
 import { templateIndex, walk } from '../document/tree.ts'
+import { shownOn } from '../layout/placement.ts'
 import {
   add,
   fieldsOf,
@@ -23,7 +26,7 @@ import {
   type TCtx,
   type Tree,
 } from './common.ts'
-import { stateIn } from './states.ts'
+import { stateIn, type StateScope } from './states.ts'
 import { unrollInstances } from './unroll.ts'
 
 type Say = (message: string, path: string) => void
@@ -144,14 +147,78 @@ function targetProblem(
   }
 }
 
-function checkPin(c: Ctx, w: Node, say: Say) {
-  if (
-    w.kind !== 'instance' &&
-    (specOf(c, w.kind)?.role !== 'container' ||
-      w.children?.length !== 1 ||
-      (w.repeat && w.repeat.max !== 1))
-  )
-    say('Pinning needs a container with one visual child.', 'motion.pinPx')
+/** Is there any layout/theme in which the child's own display can be visible?
+ * Base, dark, tablet and phone rules cascade in that order. A hide on desktop or tablet resets on phone. */
+function layoutCanShow(w: Node, scheme: Look['dark']): boolean {
+  const s = w.style
+  const base = s?.base?.hidden,
+    tablet = s?.tablet?.hidden,
+    phone = s?.phone?.hidden
+  for (const dark of scheme === 'auto' ? [false, true] : [scheme === 'dark']) {
+    let visible = !base && !w.hide?.desktop
+    if (dark && s?.dark?.hidden === true) visible = false
+    if (dark && base && s?.dark?.hidden === false) visible = true
+    if (visible) return true
+    if (base && tablet === false) visible = true
+    if (tablet || w.hide?.tablet) visible = false
+    if (visible) return true
+    if (w.hide?.desktop || w.hide?.tablet) visible = true
+    if (phone ?? (s?.dark?.hidden !== false && tablet !== false && base))
+      visible = false
+    else if (phone === false && (tablet ?? base)) visible = true
+    if (visible && !w.hide?.phone) return true
+  }
+  return false
+}
+
+function visualChild(
+  c: Ctx,
+  t: Tree,
+  e: StateScope,
+  siteStates: StateDecl[],
+  scheme: Look['dark'],
+): boolean {
+  const w = e.w
+  // An element omitted from live output cannot be revealed by a CSS rule.
+  if (!(['desktop', 'tablet', 'phone'] as const).some(l => shownOn(w, l)))
+    return false
+  // Declared-state visibility comes last. Look back for a possible reveal without
+  // a later rule winning; if every value of a state is covered there is no fallback.
+  const whens = w.style?.when ?? []
+  const later = new Map<string, Set<string>>()
+  for (let i = whens.length - 1; i >= 0; i--) {
+    const { state, is, decl } = whens[i]
+    if (decl.hidden === undefined) continue
+    const st = stateIn(c, t, e, state, siteStates)
+    if (!st?.values.includes(is)) continue
+    const blocked = later.get(state) ?? new Set<string>()
+    if (blocked.has(is)) continue
+    if (!decl.hidden) return true
+    blocked.add(is)
+    if (blocked.size === st.values.length) return false
+    later.set(state, blocked)
+  }
+  return layoutCanShow(w, scheme)
+}
+
+function canPin(
+  c: Ctx,
+  t: Tree,
+  owner: StateScope,
+  siteStates: StateDecl[],
+  scheme: Look['dark'],
+): boolean {
+  const w = owner.w
+  if (specOf(c, w.kind)?.role !== 'container') return false
+  let found = false
+  for (const [i, child] of (w.children ?? []).entries()) {
+    if (!visualChild(c, t, { w: child, parent: owner }, siteStates, scheme))
+      continue
+    if (found || (w.repeat && i === templateIndex(w) && w.repeat.max !== 1))
+      return false
+    found = true
+  }
+  return found
 }
 
 function checkStep(owner: Node, s: unknown, path: string, say: Say) {
@@ -203,7 +270,8 @@ function checkSteps(owner: Node, steps: unknown, say: Say) {
     checkStep(owner, s, `motion.steps.${i}`, say)
 }
 
-export function checkMotion(c: Ctx, t: TCtx, e: Entry): void {
+/** Check the stored program and its authored IDs. State scope and visual children require the composed tree. */
+export function checkMotion(c: Ctx, _t: TCtx, e: Entry): void {
   const m: unknown = e.w.motion
   if (m === undefined) return
   const say: Say = (message, path) => add(c, e.w, message, path)
@@ -213,26 +281,19 @@ export function checkMotion(c: Ctx, t: TCtx, e: Entry): void {
   const tr = m.trigger
   if (isObj(tr)) {
     checkKeys(tr, stateKeys, 'motion.trigger', say)
-    const st = typeof tr.state === 'string' && stateIn(c, t, e, tr.state)
-    if (!st)
-      say(
-        'This node does not have a state with that name in scope.',
-        'motion.trigger.state',
-      )
-    else if (typeof tr.is !== 'string' || !st.values.includes(tr.is))
-      say('This is not a value of the declared state.', 'motion.trigger.is')
+    if (typeof tr.state !== 'string')
+      say('A state trigger needs a state name.', 'motion.trigger.state')
+    else if (typeof tr.is !== 'string')
+      say('A state trigger needs a state value.', 'motion.trigger.is')
   } else if (
     !oneOf(tr, ['load', 'enter-view', 'hover', 'press', 'scroll', 'pointer-x'])
   )
     say('This motion trigger is not valid.', 'motion.trigger')
-  if (m.pinPx !== undefined) {
-    if (tr !== 'scroll' || !isNum(m.pinPx, 1, 4000))
-      say(
-        'Pinning needs a scroll trigger and a distance of 1 to 4,000 pixels.',
-        'motion.pinPx',
-      )
-    else checkPin(c, e.w, say)
-  }
+  if (m.pinPx !== undefined && (tr !== 'scroll' || !isNum(m.pinPx, 1, 4000)))
+    say(
+      'Pinning needs a scroll trigger and a distance of 1 to 4,000 pixels.',
+      'motion.pinPx',
+    )
   if (
     m.scrollFallback !== undefined &&
     (tr !== 'scroll' || m.scrollFallback !== 'timeline')
@@ -259,16 +320,28 @@ export function checkMotion(c: Ctx, t: TCtx, e: Entry): void {
   checkSteps(e.w, m.steps, say)
 }
 
-/** A slot can add a second visual child; a look or override can change a path's geometry.
- * Recheck geometry and target scope on the bounded composition, after the authored trees have passed. */
-export function checkInstanceMotions(
+/** Only the header's effective root declarations are site-wide. Follow root uses, never their other parts. */
+function headerRootStates(c: Ctx): StateDecl[] {
+  const states: StateDecl[] = []
+  for (let w = c.header?.root; w; w = c.comps.get(w.component!)?.root) {
+    if (w.state) states.unshift(...w.state)
+    if (w.kind !== 'instance') break
+  }
+  return states
+}
+
+/** Recheck slot ancestry, visual children and effective path geometry on the bounded composition
+ * after the authored trees (including component cycles) have passed. */
+export function checkComposedMotions(
   c: Ctx,
   trees: Tree[],
   fonts: FontRef[],
+  scheme: Look['dark'],
 ): void {
   if (!trees.some(t => t.entries.some(e => e.w.motion))) return
   const components = [...c.comps.values()]
   const env = { fonts, styles: c.styles, kinds: c.kinds }
+  const siteStates = headerRootStates(c)
   const memo = new Map<Tree, boolean>()
   const hasMotion = (t: Tree): boolean => {
     if (!memo.has(t))
@@ -284,7 +357,7 @@ export function checkInstanceMotions(
     return memo.get(t)!
   }
   for (const t of trees) {
-    if (!t.entries.some(e => e.w.kind === 'instance') || !hasMotion(t)) continue
+    if (!hasMotion(t)) continue
     const budget = { n: 0, over: false }
     const tree = unrollInstances(t.root, components, env, budget)
     if (budget.over) {
@@ -298,7 +371,9 @@ export function checkInstanceMotions(
       continue
     }
     const authored = new Map(t.entries.map(e => [e.w.id, e.w]))
-    walk(tree, w => {
+    const scopes: StateScope[] = []
+    walk(tree, (w, _parent, depth) => {
+      const scope = (scopes[depth] = { w, parent: scopes[depth - 1] ?? null })
       const m = w.motion
       if (!m) return
       const say: Say = (message, path) => {
@@ -313,8 +388,19 @@ export function checkInstanceMotions(
           id === w.id ? path : `parts.${w.id.slice(id.length + 1)}.${path}`,
         )
       }
-      if (m.pinPx !== undefined) checkPin(c, w, say)
-      if ('steps' in m)
+      if (typeof m.trigger === 'object') {
+        const st = stateIn(c, t, scope, m.trigger.state, siteStates)
+        if (!st)
+          say(
+            'This node does not have a state with that name in scope.',
+            'motion.trigger.state',
+          )
+        else if (!st.values.includes(m.trigger.is))
+          say('This is not a value of the declared state.', 'motion.trigger.is')
+      }
+      if (m.pinPx !== undefined && !canPin(c, t, scope, siteStates, scheme))
+        say('Pinning needs a container with one visual child.', 'motion.pinPx')
+      if (tree !== t.root && 'steps' in m)
         m.steps.forEach((s, i) => {
           const bad = targetProblem(w, s.target, 'draw' in s.from)
           if (bad) say(bad, `motion.steps.${i}.target`)

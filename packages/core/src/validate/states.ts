@@ -64,6 +64,8 @@ export const heldIn = (c: Ctx, t: Tree | undefined, name: string) =>
         masterStates(c, c.comps.get(w.component as string)).names.has(name)),
   )
 
+/** The scope needed for lookup, also available on composed nodes which have no authored Entry. */
+export type StateScope = { w: Node; parent: StateScope | null }
 /**
  * The nearest state of that name held by this node or an ancestor, with its values. A use's slot children also see the states of its component.
  * The header root's states are site-wide, so a page or the footer sees them too.
@@ -71,8 +73,9 @@ export const heldIn = (c: Ctx, t: Tree | undefined, name: string) =>
 export function stateIn(
   c: Ctx,
   t: Tree,
-  e: Entry | null,
+  e: StateScope | null,
   name: unknown,
+  headerStates = c.header?.root.state,
 ): { s: StateDecl; values: string[] } | undefined {
   const found = (s: StateDecl) => ({
     s,
@@ -95,7 +98,7 @@ export function stateIn(
   }
   const site =
     t.which === 'page' || t.which === 'footer'
-      ? declIn(c.header?.root.state, name)
+      ? declIn(headerStates, name)
       : undefined
   if (site) return found(site)
 }

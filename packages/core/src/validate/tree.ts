@@ -49,7 +49,7 @@ import {
   type Which,
 } from './common.ts'
 import { checkStates, checkTabs, stateIn } from './states.ts'
-import { checkInstanceMotions, checkMotion } from './motion.ts'
+import { checkComposedMotions, checkMotion } from './motion.ts'
 import { checkData, refsFor, rowOf } from './data.ts'
 import {
   componentBad,
@@ -287,7 +287,7 @@ export function checkTrees(doc: SiteDocument, reg: Registry, out: Problem[]) {
   const seen = new Set<string>()
   for (const t of trees)
     checkTree(c, t, t.which === 'component' ? new Set() : seen)
-  if (!out.length) checkInstanceMotions(c, trees, doc.fonts)
+  if (!out.length) checkComposedMotions(c, trees, doc.fonts, doc.look.dark)
 }
 
 export function checkTree(c: Ctx, t0: Tree, seen: Set<string>) {
