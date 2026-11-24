@@ -1,6 +1,8 @@
 # Stage 3 motion references and byte budget
 
-**Owner decision (2026-11-23):** approved the GSAP entrance, the GSAP pinned scroll panel and the Codrops masked-letter reveal, the tolerances below, and a **3,800-byte timeline ceiling**. Implementation may proceed while the Stage 3c benchmark decision remains open. The checkpoints were independently reviewed at commit `79f2ee4` before tuning.
+**Owner decision (2026-11-23):** approved the GSAP entrance, the GSAP pinned scroll panel and the Codrops masked-letter reveal, the tolerances below, and an initial **3,800-byte timeline ceiling**. The checkpoints were independently reviewed at commit `79f2ee4` before tuning.
+
+**Current budget decision (after independent Task 6 review):** the complete invoked host at `0fad2a3` measured **7,918 raw UTF-8 bytes**. The owner approved **8,192 bytes for the timeline alone** and kept the **20,000-byte aggregate**, base, states and all other ceilings unchanged. This leaves 274 bytes over the reviewed host. The three reference tolerances are unchanged. Check the actual feature mix: exactly 8,192 timeline bytes and exactly 20,000 total each pass; one more byte in either measure fails that measure. The individual maxima can no longer all coexist: `10,000 + 6,193 + 8,192 = 24,385`. With both base and states at their maxima the aggregate still permits only 3,807 timeline bytes.
 
 ## How to read the checkpoints
 
@@ -97,7 +99,7 @@ These are **measured raw UTF-8 bytes** of script text, including the host invoca
 
 The throwaway host is minified by esbuild 0.28.2 with the generator's TS loader, `minify: true`, `target: 'es2017'`, and the same `(function…)(document,window)` invocation. It splits a plain-text heading into masked glyphs, builds delayed tracks for them and two marks, maps the document's scroll range onto their timeline, seeks backward and forward, reseeks on resize, removes its listeners and restores the fixture on `pagehide`. This is a byte sample, not an implementation of the reference scenes.
 
-**Approved ceiling: 3,800 bytes for the full timeline script alone.** This allows **2,743 bytes above the measured slice**. Allocation below is an engineering estimate in minified bytes, not four measurements:
+**Original engineering estimate and initial ceiling: 3,800 bytes for the full timeline script alone.** This allowed **2,743 bytes above the measured slice**. The allocation below records that estimate, not four measurements:
 
 | Production work absent from the slice                                                                                                                 | Allowance |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------: |
@@ -106,4 +108,4 @@ The throwaway host is minified by esbuild 0.28.2 with the generator's TS loader,
 | General text splitting, accessibility, bounded growth, reflow and restoring original DOM                                                              |       750 |
 | Integration margin across those pieces                                                                                                                |       243 |
 
-At the approved cap and today's generated base/states, the worst mixed page is **6,451 bytes** (`686 + 2 + 1963 + 3800`), leaving **13,549**. The [compiler charges separators to base](../../packages/core/src/compile/page.ts#L378-L385): the unjoined 686 needs both joins added, but the 10,000-byte base ceiling already includes them. At all three accounted maxima the total is **19,993** (`10,000 + 6,193 + 3,800`), leaving **7**. The largest compatible timeline ceiling is **3,807** (`20,000 − 10,000 − 6,193`). Keep the 20,000 shared limit and remeasure the real host as each feature lands; if it cannot fit 3,800 bytes, return the numbers and feature tradeoff to the owner.
+At the original cap and the measured base/states, the all-appendix mixed page would be **6,451 bytes** (`686 + 2 + 1963 + 3800`). Under that decision even the three simultaneous maxima totaled only **19,993**, leaving **7**. The [compiler charges separators to base](../../packages/core/src/compile/page.ts): the unjoined 686 needs both joins added, but the 10,000-byte base ceiling already includes them. Under the new decision the same feature mix at the approved timeline maximum would be **10,843 bytes** (`686 + 2 + 1963 + 8192`). Continue pricing the whole invoked script and checking the independent aggregate on every page; return to the owner if the reviewed host exceeds 8,192.

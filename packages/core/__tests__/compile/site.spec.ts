@@ -42,6 +42,10 @@ test('the manifest charges just the page that delivers the universal timeline', 
   assert.deepEqual(out.problems, [])
   const p = compilePage(doc, 'scene', { registry })
   assert.ok(p.ok)
+  assert.equal(
+    byteLength(p.html.match(/<script>([\s\S]*?)<\/script>/)![1]),
+    p.stats.scriptBytes.base + out.manifest.scripts[1].bytes,
+  )
   assert.deepEqual(
     out.manifest.scripts.map(s => [s.name, s.pages]),
     [

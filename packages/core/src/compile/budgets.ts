@@ -4,7 +4,7 @@ export const BUDGETS = {
   sharedScripts: 20_000,
   baseScript: 10_000,
   statesScript: 6_193,
-  timelineScript: 3_800,
+  timelineScript: 8_192,
   css: 16_000,
   elements: 2_000,
   depth: 12,

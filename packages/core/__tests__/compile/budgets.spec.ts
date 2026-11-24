@@ -10,12 +10,12 @@ import {
 const ok: PageStats = {
   bytes: 1,
   styleBytes: 16_000,
-  scriptBytes: { base: 10_000, states: 6_193, timeline: 3_800 },
+  scriptBytes: { base: 10_000, states: 6_193 },
   elements: 2_000,
   depth: 12,
 }
 
-test('exactly at every ceiling passes', () =>
+test('the base, state, style and document ceilings are inclusive', () =>
   assert.deepEqual(checkBudgets(ok), []))
 
 test('one over each ceiling is one problem naming that ceiling', () => {
@@ -24,7 +24,7 @@ test('one over each ceiling is one problem naming that ceiling', () => {
     [{ scriptBytes: { base: 10_001, states: 0 } }, 'baseScript'],
     [{ scriptBytes: { base: 0, states: 6_194 } }, 'statesScript'],
     [
-      { scriptBytes: { base: 0, states: 0, timeline: 3_801 } },
+      { scriptBytes: { base: 0, states: 0, timeline: 8_193 } },
       'timelineScript',
     ],
     [{ elements: 2_001 }, 'elements'],
@@ -55,14 +55,16 @@ test('the shared total is checked on its own', () => {
 test('byteLength counts UTF-8 bytes', () => assert.equal(byteLength('é€'), 5))
 
 test('the shared finding counts all three scripts independently of individual findings', () => {
-  assert.equal(BUDGETS.timelineScript, 3800)
+  assert.equal(BUDGETS.timelineScript, 8192)
   for (const [base, paths] of [
-    [10007, ['baseScript']],
-    [10008, ['baseScript', 'sharedScripts']],
+    [5615, []], // exactly 8192 timeline and 20000 combined
+    [5616, ['sharedScripts']],
+    [10000, ['sharedScripts']], // individual maxima cannot all coexist
+    [10001, ['baseScript', 'sharedScripts']],
   ] as const) {
     const findings = checkBudgets({
       ...ok,
-      scriptBytes: { base, states: 6193, timeline: 3800 },
+      scriptBytes: { base, states: 6193, timeline: 8192 },
     })
     assert.deepEqual(
       findings.map(p => [p.code, p.path]),
