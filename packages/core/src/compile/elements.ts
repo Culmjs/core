@@ -188,6 +188,18 @@ function build(
   grand: Kind | null,
   head: boolean,
 ): HtmlNode | null {
+  const element = draw(w, ctx, parent, grand, head)
+  if (element) ctx.rendered?.set(w, element)
+  return element
+}
+
+function draw(
+  w: Node,
+  ctx: Inner,
+  parent: Kind | null,
+  grand: Kind | null,
+  head: boolean,
+): HtmlNode | null {
   const { mode, classOf } = ctx
   if (w.kind === 'instance') return null
   if (mode === 'live' && LAYOUT_WORDS.every(l => !shownOn(w, l))) return null

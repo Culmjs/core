@@ -57,6 +57,7 @@ const PUBLIC_NAMES = [
   'isAsInserted',
   'isRequired',
   'kindSpec',
+  'lowerMotion',
   'memoryStore',
   'migrate',
   'move',

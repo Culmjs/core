@@ -158,6 +158,7 @@ function geometry(
   pt: Paint,
   size?: [number, number],
   how: How = 'own',
+  rendered?: Map<Node, HtmlNode>,
 ): Part {
   const attr: Attrs = {},
     style: string[] = [],
@@ -234,7 +235,7 @@ function geometry(
       kids.push(el('path', { d: g.d }))
       break
     case 'group':
-      kids.push(...groupKids(w, g, pt, how))
+      kids.push(...groupKids(w, g, pt, how, rendered))
       break
   }
   return { attr, style, kids }
@@ -247,15 +248,15 @@ const validGeometry = (p: Record<string, unknown>) =>
  * One part of a group at its slot, a nested svg. `own` keeps its paint, `bare` takes the group's, `cut` is black for a mask.
  * Ids come from the part's own (unrolled) id, so a repeated row or a component copy keeps its own gradient.
  */
-function part(c: Node, how: How): HtmlNode {
+function part(c: Node, how: How, rendered?: Map<Node, HtmlNode>): HtmlNode {
   const cp = (c.props ?? {}) as Record<string, unknown>
   const g = validGeometry(cp)
   const sl = c.slot as { x?: number; y?: number; w?: number; h?: number }
   const pt = paint(c.id, cp, g.type === 'line')
-  const geo = geometry(c, cp, g, pt, [sl.w ?? 0, sl.h ?? 0], how)
+  const geo = geometry(c, cp, g, pt, [sl.w ?? 0, sl.h ?? 0], how, rendered)
   const own =
     how === 'own' ? pt.style : how === 'cut' ? 'fill:#000;stroke:none' : ''
-  return el(
+  const svg = el(
     'svg',
     {
       x: sl.x,
@@ -267,6 +268,8 @@ function part(c: Node, how: How): HtmlNode {
     },
     [how === 'own' ? pt.defs : undefined, ...geo.kids],
   )
+  rendered?.set(c, svg)
+  return svg
 }
 
 /** The parts of a group: each its own (layer), in one `g` with the group's fill (union), or the first under a mask the others cut (subtract). */
@@ -275,6 +278,7 @@ function groupKids(
   g: Extract<ShapeGeometry, { type: 'group' }>,
   pt: Paint,
   how: How = 'own',
+  rendered?: Map<Node, HtmlNode>,
 ): HtmlNode[] {
   const kids = w.children ?? []
   // inside a union or a subtract the outer paint rules: an inner group writes none of its own, and its parts take the outer mode
@@ -286,7 +290,7 @@ function groupKids(
       el(
         'g',
         fill,
-        kids.map(c => part(c, how === 'own' ? 'bare' : how)),
+        kids.map(c => part(c, how === 'own' ? 'bare' : how, rendered)),
       ),
     ]
   if (g.combine === 'subtract' && kids.length) {
@@ -311,23 +315,23 @@ function groupKids(
               height: vh,
               style: 'fill:#fff',
             }),
-            ...kids.slice(1).map(c => part(c, 'cut')),
+            ...kids.slice(1).map(c => part(c, 'cut', rendered)),
           ],
         ),
       ]),
       el('g', { mask: `url(#${id})`, ...fill }, [
-        part(kids[0]!, how === 'own' ? 'bare' : how),
+        part(kids[0]!, how === 'own' ? 'bare' : how, rendered),
       ]),
     ]
   }
-  return kids.map(c => part(c, how))
+  return kids.map(c => part(c, how, rendered))
 }
 
 export function shapeElement(b: Build): HtmlNode {
   const { w, p, attrs } = b
   const g = validGeometry(p)
   const pt = paint(w.id, p, g.type === 'line')
-  const geo = geometry(w, p, g, pt)
+  const geo = geometry(w, p, g, pt, undefined, 'own', b.ctx.rendered)
   const label = typeof p.label === 'string' && p.label ? p.label : undefined
   return el(
     'svg',

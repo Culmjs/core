@@ -3,6 +3,7 @@ import {
   type Code,
   type Component,
   type KindSpec,
+  type Motion,
   type Node,
   type Problem,
   type SiteStyles,
@@ -16,8 +17,7 @@ export const isStr = (v: unknown, max = 200): v is string =>
   typeof v === 'string' && v.length <= max
 
 // The allowed field lists are typed against the document types, so a field added there fails to compile until it is listed here.
-export const fieldsOf = <T>(all: Record<keyof T, true>) =>
-  new Set(Object.keys(all))
+export { fieldsOf, isInt, isNum, oneOf } from '../document/rules.ts'
 
 export type Schema = Record<string, FieldType>
 export type Refs = (r: unknown) => 'ok' | 'shape' | 'unknown'
@@ -44,6 +44,7 @@ export type Tree = {
 }
 export type Ctx = {
   reg: Registry
+  effects: Map<Node, Motion>
   kinds: ReadonlyMap<string, KindSpec>
   styles: SiteStyles
   fonts: ReadonlySet<string>
@@ -66,14 +67,8 @@ export type Ctx = {
 /** What the checks of a single value need: the kinds, the site styles and the fonts. */
 export type Checks = Pick<Ctx, 'kinds' | 'styles' | 'fonts'>
 
-export const isInt = (v: unknown, lo: number, hi: number): v is number =>
-  typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi
-export const isNum = (v: unknown, lo: number, hi: number): v is number =>
-  typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi
 export const only = (o: Obj, keys: readonly string[]) =>
   Object.keys(o).every(k => keys.includes(k))
-export const oneOf = (v: unknown, list: readonly string[]): v is string =>
-  typeof v === 'string' && list.includes(v)
 export const idOf = (w: unknown) =>
   isObj(w) && typeof w.id === 'string' ? w.id.slice(0, 40) : undefined
 

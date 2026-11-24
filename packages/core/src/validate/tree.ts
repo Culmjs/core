@@ -251,6 +251,7 @@ export function checkTrees(doc: SiteDocument, reg: Registry, out: Problem[]) {
   }
   const c: Ctx = {
     reg,
+    effects: new Map(),
     kinds: reg.kinds(),
     styles,
     fonts: new Set(doc.fonts),
@@ -287,7 +288,32 @@ export function checkTrees(doc: SiteDocument, reg: Registry, out: Problem[]) {
   const seen = new Set<string>()
   for (const t of trees)
     checkTree(c, t, t.which === 'component' ? new Set() : seen)
-  if (!out.length) checkComposedMotions(c, trees, doc.fonts, doc.look.dark)
+  if (out.length) return
+  // Only the private composition/render view contains expanded effects. Keep authored
+  // entries for diagnostics and the original document for plug-in rules and callers.
+  if (c.effects.size) {
+    const project = (w: Node): Node => {
+      const motion = c.effects.get(w)
+      const children = w.children?.map(project)
+      if (!motion && !children?.some((n, i) => n !== w.children![i])) return w
+      return { ...w, ...(motion && { motion }), ...(children && { children }) }
+    }
+    const roots = new Map(trees.map(t => [t.root, project(t.root)]))
+    for (const t of trees) t.root = roots.get(t.root)!
+    doc = {
+      ...doc,
+      header: roots.get(doc.header)!,
+      footer: roots.get(doc.footer)!,
+      pages: doc.pages.map(p => ({ ...p, root: roots.get(p.root)! })),
+      components: doc.components.map(comp => ({
+        ...comp,
+        root: roots.get(comp.root)!,
+      })),
+    }
+    c.comps = new Map(doc.components.map(comp => [comp.id, comp]))
+  }
+  checkComposedMotions(c, trees, doc.fonts, doc.look.dark)
+  return doc
 }
 
 export function checkTree(c: Ctx, t0: Tree, seen: Set<string>) {

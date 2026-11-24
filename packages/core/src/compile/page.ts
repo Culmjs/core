@@ -20,7 +20,7 @@ import {
   OPEN_SCRIPT,
   STATES_SCRIPT,
 } from '../scripts/index.ts'
-import { validateSite } from '../validate/index.ts'
+import { checkedSite } from '../validate/validate.ts'
 import { BUDGETS, byteLength, checkBudgets, type PageStats } from './budgets.ts'
 import { el } from './elementsBase.ts'
 import {
@@ -32,6 +32,7 @@ import {
 import { writeHtml, type HtmlNode } from './html.ts'
 import { type Links } from './links.ts'
 import { compileStyles } from './styles.ts'
+import { motionCss } from './motion.ts'
 
 export type CompileOptions = {
   registry: Registry
@@ -67,23 +68,24 @@ export const failed = (pageId: string, e: unknown): Problem[] => [
 ]
 
 /** Problems with the options, the document, or the rows supplied for a registered source; empty when the compile may go on. Every entry point checks through here. */
-export function refusals(
-  doc: SiteDocument,
-  options: CompileOptions,
-): Problem[] {
+export function checkedInput(doc: SiteDocument, options: CompileOptions) {
   const { registry, data } = options
   const bad = optionProblems(options)
-  const problems = validateSite(doc, registry)
-  if (bad.length || problems.length) return [...bad, ...problems]
+  const checked = checkedSite(doc, registry)
+  const problems = [...bad, ...checked.problems]
+  if (problems.length || !checked.doc) return { doc, problems }
   const rows =
     isObj(data) && (isObj(data.rows) || Array.isArray(data.rows))
       ? data.rows
       : {}
-  return registry
-    .sources()
-    .flatMap(s =>
-      Object.hasOwn(rows, s.name) ? checkRows(s, rows[s.name]) : [],
-    )
+  return {
+    doc: checked.doc,
+    problems: registry
+      .sources()
+      .flatMap(s =>
+        Object.hasOwn(rows, s.name) ? checkRows(s, rows[s.name]) : [],
+      ),
+  }
 }
 
 /** The problem for a page that expansion cut at the element or depth limit: the same for every entry point. */
@@ -251,11 +253,13 @@ export function siteElement(
   page: SiteDocument['pages'][number],
   p: Prepared,
   mail: { used: boolean },
+  rendered?: Map<Node, HtmlNode>,
 ): HtmlNode {
   const [root, header, footer] = p.trees
   const { mode } = p
   const ctx: ElementCtx = {
     classOf: p.classOf,
+    rendered,
     doc,
     links: p.links,
     ...(p.icons ? { icons: p.icons } : {}),
@@ -290,9 +294,9 @@ export function compilePage(
   options: CompileOptions,
 ): CompiledPage {
   try {
-    const problems = refusals(doc, options)
+    const { doc: projected, problems } = checkedInput(doc, options)
     if (problems.length) return { ok: false, problems }
-    const page = doc.pages.find(p => p.id === pageId)
+    const page = projected.pages.find(p => p.id === pageId)
     if (!page)
       return {
         ok: false,
@@ -304,13 +308,13 @@ export function compilePage(
           },
         ],
       }
-    return build(doc, page, options)
+    return build(projected, page, options)
   } catch (e) {
     return { ok: false, problems: failed(pageId, e) }
   }
 }
 
-function build(
+export function build(
   doc: SiteDocument,
   page: SiteDocument['pages'][number],
   options: CompileOptions,
@@ -318,7 +322,16 @@ function build(
   const p = prepare(doc, [page.root, doc.header, doc.footer], options)
   const { mode } = p
   const mail = { used: false }
-  const site = siteElement(doc, page, p, mail)
+  const hasMotion = (w: Node): boolean =>
+    !!w.motion || !!w.children?.some(hasMotion)
+  const rendered =
+    mode === 'live' && p.trees.some(hasMotion)
+      ? new Map<Node, HtmlNode>()
+      : undefined
+  const site = siteElement(doc, page, p, mail, rendered)
+  const motion = rendered
+    ? motionCss(p.trees, site, rendered, options.registry)
+    : ''
 
   const scripts: { name: 'base' | 'states'; code: string }[] = []
   if (mode === 'live') {
@@ -347,7 +360,10 @@ function build(
 
   const statesCode = scripts.find(s => s.name === 'states')?.code ?? ''
   const css =
-    fontFaceCss(fontsOf(doc, p.shell), p.fontBase, p.fonts) + BASE_CSS + p.css
+    fontFaceCss(fontsOf(doc, p.shell), p.fontBase, p.fonts) +
+    BASE_CSS +
+    p.css +
+    motion
   const body: HtmlNode[] = [site]
   const written = scripts.map(s => s.code).join(';')
   if (scripts.length)

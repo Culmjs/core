@@ -107,16 +107,21 @@ export const LANG_RE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/
 
 /** Checks a site document against the registry and returns every problem found. Never throws and never changes `doc`. */
 export function validateSite(doc: unknown, registry: Registry): Problem[] {
+  return checkedSite(doc, registry).problems
+}
+
+/** Build consumes this private projection instead of running a checked factory again after expansion. */
+export function checkedSite(doc: unknown, registry: Registry) {
   const out: Problem[] = []
   try {
-    checkDocument(doc, registry, out)
+    return { doc: checkDocument(doc, registry, out), problems: out }
   } catch {
     out.push({
       code: 'INVALID_DOCUMENT',
       message: 'The document could not be checked.',
     })
   }
-  return out
+  return { doc: undefined, problems: out }
 }
 
 export function checkDocument(
@@ -278,12 +283,13 @@ export function checkDocument(
   }
   // A document that is not a site is not handed to the rules.
   if (out.length) return
-  checkTrees(doc as unknown as SiteDocument, registry, out)
+  const projected = checkTrees(doc as unknown as SiteDocument, registry, out)
   // The two checks below assume a well-formed tree.
   if (!out.length) {
     out.push(...checkShown(doc as unknown as SiteDocument, registry))
   }
   runRules(doc as unknown as SiteDocument, registry, out)
+  return projected
 }
 
 /** A rule's problem, copied field by field: a rule is outside code, so only the known fields, short and of the right type, reach the result. */

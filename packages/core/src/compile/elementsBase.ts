@@ -21,6 +21,8 @@ export type ElementCtx = {
   mode: 'edit' | 'live'
   /** Measure mode: live output that also writes `data-id`. */
   ids?: boolean
+  /** Actual output elements for the live motion pass, including nested SVG parts. */
+  rendered?: Map<Node, HtmlNode>
   /** The kinds plug-ins add. */
   kinds?: ReadonlyMap<string, KindSpec>
   mail?: { used: boolean }

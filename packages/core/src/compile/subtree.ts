@@ -7,7 +7,7 @@ import {
   failed,
   fontsOf,
   prepare,
-  refusals,
+  checkedInput,
   siteElement,
   type CompileOptions,
 } from './page.ts'
@@ -138,7 +138,7 @@ export function compileSubtree(
   options: CompileOptions,
 ): CompiledSubtree {
   try {
-    const problems = refusals(doc, options)
+    const { problems } = checkedInput(doc, options)
     if (problems.length) return refused(problems)
     const page = doc.pages.find(p => p.id === pageId)
     if (!page)

@@ -5,11 +5,13 @@ import { checkDeclaration } from './declaration.ts'
 import type { Declaration } from './declaration.ts'
 import type { DataSource } from './dataSource.ts'
 import type { Rule } from './rule.ts'
+import { checkedEffect, rise, type EffectDef } from './effect.ts'
 
 export type Plugin = Declaration & {
   blocks?: BlockDef[]
   sources?: DataSource[]
   rules?: Rule[]
+  effects?: EffectDef[]
   kinds?: Record<string, KindSpec>
   settingFns?: Record<string, SettingFn>
 }
@@ -21,6 +23,8 @@ export type Registry = {
   source(name: string): DataSource | undefined
   sources(): DataSource[]
   rules(): Rule[]
+  effect(name: string): EffectDef | undefined
+  effects(): EffectDef[]
   kinds(): ReadonlyMap<string, KindSpec>
   settingFn(name: string): SettingFn | undefined
   /** Each registered plug-in's name and version, in name order. */
@@ -34,6 +38,7 @@ export function createRegistry(): Registry {
   const blocks = new Map<string, BlockDef>()
   const sources = new Map<string, DataSource>()
   const rules = new Map<string, Rule>()
+  const effects = new Map<string, EffectDef>([[rise.name, rise]])
   const kinds = new Map<string, KindSpec>()
   const fns = new Map<string, SettingFn>()
 
@@ -93,6 +98,11 @@ export function createRegistry(): Registry {
         (p.rules ?? []).map(x => [x.name, x]),
       )
       const k = stage('kind', kinds, Object.entries(p.kinds ?? {}), KINDS)
+      const e = stage(
+        'effect',
+        effects,
+        (p.effects ?? []).map(checkedEffect).map(d => [d.name, d]),
+      )
       const f = stage(
         'setting function',
         fns,
@@ -103,6 +113,7 @@ export function createRegistry(): Registry {
         [blocks, b],
         [sources, s],
         [rules, r],
+        [effects, e],
         [kinds, k],
         [fns, f],
       ] as const)
@@ -113,6 +124,8 @@ export function createRegistry(): Registry {
     source: name => sources.get(name),
     sources: () => [...sources.values()],
     rules: () => [...rules.values()],
+    effect: name => effects.get(name),
+    effects: () => [...effects.values()],
     kinds: () => new Map(kinds),
     settingFn: name => fns.get(name),
     plugins: () =>

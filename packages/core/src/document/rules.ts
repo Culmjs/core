@@ -4,6 +4,15 @@
 export const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
+export const fieldsOf = <T>(all: Record<keyof T, true>) =>
+  new Set(Object.keys(all))
+export const isInt = (v: unknown, lo: number, hi: number): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi
+export const isNum = (v: unknown, lo: number, hi: number): v is number =>
+  typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi
+export const oneOf = (v: unknown, list: readonly string[]): v is string =>
+  typeof v === 'string' && list.includes(v)
+
 /** Field names that must never be read from or written to by a path from outside. */
 export const UNSAFE_FIELDS: readonly string[] = [
   '__proto__',

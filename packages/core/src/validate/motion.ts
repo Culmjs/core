@@ -1,7 +1,6 @@
 import type {
   Code,
   FontRef,
-  Frame,
   Look,
   Motion,
   MotionTarget,
@@ -9,7 +8,13 @@ import type {
   Node,
   Step,
 } from '../document/index.ts'
-import { ID_RE } from '../document/kinds.ts'
+import {
+  checkKeys,
+  checkSteps,
+  split,
+  type Say,
+} from '../document/motionSteps.ts'
+import { resolveEffect } from '../registry/effect.ts'
 import { isObj } from '../document/rules.ts'
 import { dropSamples } from '../document/samples.ts'
 import { templateIndex, walk } from '../document/tree.ts'
@@ -18,20 +23,17 @@ import { childLayoutDisplay, listDisplay } from '../layout/display.ts'
 import {
   add,
   fieldsOf,
-  isInt,
   isNum,
   oneOf,
   specOf,
   type Ctx,
   type Entry,
-  type Obj,
   type TCtx,
   type Tree,
 } from './common.ts'
 import { stateIn, type StateScope } from './states.ts'
 import { unrollInstances } from './unroll.ts'
 
-type Say = (message: string, path: string) => void
 type Lookup = (
   scope: StateScope,
   name: string,
@@ -46,71 +48,10 @@ const effectKeys = fieldsOf<Extract<Motion, { effect: string }>>({
   effect: true,
   settings: true,
 })
-const stepKeys = fieldsOf<Step>({
-  target: true,
-  from: true,
-  to: true,
-  durationMs: true,
-  delayMs: true,
-  staggerMs: true,
-  ease: true,
-  mask: true,
-})
 const stateKeys = fieldsOf<Exclude<MotionTrigger, string>>({
   state: true,
   is: true,
 })
-const targetKeys = fieldsOf<Exclude<MotionTarget, string>>({
-  id: true,
-  part: true,
-})
-const bounds = {
-  opacity: [0, 1],
-  xPx: [-2000, 2000],
-  yPx: [-2000, 2000],
-  xPercent: [-200, 200],
-  scale: [0, 8],
-  scaleX: [0, 8],
-  rotateDeg: [-360, 360],
-  draw: [0, 1],
-} satisfies Record<keyof Frame, [number, number]>
-const split = ['lines', 'words', 'letters'] as const
-
-function checkKeys(o: Obj, keys: ReadonlySet<string>, path: string, say: Say) {
-  for (const k of Object.keys(o))
-    if (!keys.has(k))
-      say('This motion field is not supported.', `${path}.${k.slice(0, 40)}`)
-}
-
-function checkFrame(v: unknown, path: string, say: Say) {
-  if (!isObj(v) || !Object.keys(v).length)
-    return say('A frame needs at least one motion property.', path)
-  for (const [k, n] of Object.entries(v)) {
-    const at = `${path}.${k.slice(0, 40)}`
-    if (!Object.hasOwn(bounds, k)) say('This is not a motion property.', at)
-    else {
-      const [lo, hi] = bounds[k as keyof Frame]
-      if (!isNum(n, lo, hi))
-        say(`This value must be a finite number from ${lo} to ${hi}.`, at)
-    }
-  }
-  if (('xPx' in v && 'xPercent' in v) || ('scale' in v && 'scaleX' in v))
-    say('Use one horizontal translation and one scale per frame.', path)
-}
-
-function isTarget(v: unknown): v is MotionTarget {
-  if (!isObj(v)) return oneOf(v, ['self', 'children', 'path', ...split])
-  if (
-    !Object.keys(v).every(k => targetKeys.has(k)) ||
-    typeof v.id !== 'string' ||
-    v.id.length > 41 ||
-    (Object.hasOwn(v, 'part') && v.part !== 'path')
-  )
-    return false
-  // Stored ids are plain or block-qualified. Copy suffixes are never authored.
-  const parts = v.id.split('.')
-  return parts.length <= 2 && parts.every(x => ID_RE.test(x))
-}
 
 /** Stay below the owner, without crossing into a template which will produce a different id per copy. */
 function descendant(owner: Node, id: string): Node | undefined {
@@ -245,53 +186,11 @@ function canPin(
   return found
 }
 
-function checkStep(owner: Node, s: unknown, path: string, say: Say) {
-  if (!isObj(s)) return say('A step must be an object.', path)
-  checkKeys(s, stepKeys, path, say)
-  checkFrame(s.from, `${path}.from`, say)
-  checkFrame(s.to, `${path}.to`, say)
-  const { from, to } = s
-  if (isObj(from) && isObj(to)) {
-    const keys = Object.keys(from)
-    if (
-      keys.length !== Object.keys(to).length ||
-      keys.some(k => !Object.hasOwn(to, k))
-    )
-      say('Both frames must have the same motion properties.', `${path}.to`)
-  }
-  for (const [k, lo, hi] of [
-    ['durationMs', 1, 10000],
-    ['delayMs', 0, 10000],
-    ['staggerMs', 0, 1000],
-  ] as const)
-    if ((k === 'durationMs' || s[k] !== undefined) && !isInt(s[k], lo, hi))
-      say(
-        `Use a whole number from ${lo} to ${hi} milliseconds.`,
-        `${path}.${k}`,
-      )
-  if (
-    s.ease !== undefined &&
-    !oneOf(s.ease, ['linear', 'ease-out', 'expo-out'])
-  )
-    say('Use linear, ease-out or expo-out.', `${path}.ease`)
-  if (
-    s.mask !== undefined &&
-    (typeof s.mask !== 'boolean' || !oneOf(s.target, split))
-  )
-    say('Mask is a switch for split text only.', `${path}.mask`)
-  const draw =
-    (isObj(s.from) && 'draw' in s.from) || (isObj(s.to) && 'draw' in s.to)
-  const bad = isTarget(s.target)
-    ? targetProblem(owner, s.target, draw)
-    : 'This motion target is not valid.'
-  if (bad) say(bad, `${path}.target`)
-}
-
-function checkSteps(owner: Node, steps: unknown, say: Say) {
-  if (!Array.isArray(steps) || steps.length < 1 || steps.length > 16)
-    return say('A motion sequence needs 1 to 16 steps.', 'motion.steps')
-  for (const [i, s] of steps.entries())
-    checkStep(owner, s, `motion.steps.${i}`, say)
+function checkTargets(owner: Node, steps: Step[], say: Say) {
+  steps.forEach((s, i) => {
+    const bad = targetProblem(owner, s.target, 'draw' in s.from)
+    if (bad) say(bad, `motion.steps.${i}.target`)
+  })
 }
 
 /** Check the stored program and its authored IDs. State scope and visual children require the composed tree. */
@@ -327,21 +226,20 @@ export function checkMotion(c: Ctx, _t: TCtx, e: Entry): void {
       'motion.scrollFallback',
     )
   if (effect) {
-    if (m.settings !== undefined) {
-      if (!isObj(m.settings))
-        say('Effect settings must be an object of numbers.', 'motion.settings')
-      else
-        for (const [k, v] of Object.entries(m.settings))
-          if (typeof v !== 'number' || !Number.isFinite(v))
-            say(
-              'An effect setting must be a finite number.',
-              `motion.settings.${k.slice(0, 40)}`,
-            )
+    const def =
+      typeof m.effect === 'string' ? c.reg.effect(m.effect) : undefined
+    const steps = resolveEffect(def, m.settings, say)
+    if (steps) {
+      checkTargets(e.w, steps, say)
+      // Internal composition copy: retain the preset name (its declared tier is a floor)
+      // alongside the exact checked steps, so the ordinary ID maps retarget them.
+      c.effects.set(e.w, { ...e.w.motion!, steps })
     }
-    // No effect definitions exist until the registry can resolve and check their steps.
-    return say('This motion effect is not registered.', 'motion.effect')
+    return
   }
-  checkSteps(e.w, m.steps, say)
+  const before = c.out.length
+  checkSteps(m.steps, say)
+  if (c.out.length === before) checkTargets(e.w, m.steps as Step[], say)
 }
 
 /** Recheck slot ancestry, visual children and effective path geometry on the bounded composition
@@ -469,11 +367,7 @@ export function checkComposedMotions(
             'motion.pinPx',
           )
       }
-      if (tree !== t.root && 'steps' in m)
-        m.steps.forEach((s, i) => {
-          const bad = targetProblem(w, s.target, 'draw' in s.from)
-          if (bad) say(bad, `motion.steps.${i}.target`)
-        })
+      if (tree !== t.root && 'steps' in m) checkTargets(w, m.steps, say)
     })
   }
 }

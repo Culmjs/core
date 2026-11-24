@@ -1,6 +1,12 @@
 import type { Problem, SiteDocument } from '../document/index.ts'
 import { byteLength } from './budgets.ts'
-import { compilePage, failed, refusals, type CompileOptions } from './page.ts'
+import {
+  build,
+  failed,
+  checkedInput,
+  type CompiledPage,
+  type CompileOptions,
+} from './page.ts'
 
 export type Manifest = {
   schemaVersion: 1
@@ -35,10 +41,12 @@ export function compileSite(
     scripts: [],
     styles: [],
   }
-  // The document, the rows and the options are checked once for the site; the pages then repeat the document check (ponytail: validate once per site if a site of many pages is slow).
+  // All pages use the same checked factory results.
   let invalid: Problem[]
   try {
-    invalid = refusals(doc, options)
+    const checked = checkedInput(doc, options)
+    doc = checked.doc
+    invalid = checked.problems
   } catch (e) {
     invalid = failed('site', e)
   }
@@ -47,7 +55,12 @@ export function compileSite(
   const live = { ...options, mode: 'live' as const }
   for (const page of doc.pages) {
     if (!page.on) continue
-    const r = compilePage(doc, page.id, live)
+    let r: CompiledPage
+    try {
+      r = build(doc, page, live)
+    } catch (e) {
+      r = { ok: false, problems: failed(page.id, e) }
+    }
     const at = (p: Problem): Problem => ({
       ...p,
       path:
