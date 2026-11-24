@@ -1,10 +1,24 @@
-import type { Frame, Motion, Node, Step } from '../document/index.ts'
+import type {
+  Decl,
+  Frame,
+  Look,
+  Motion,
+  Node,
+  Problem,
+  Step,
+} from '../document/index.ts'
 import { find, walk } from '../document/tree.ts'
 import { cssEase } from '../scripts/motionEase.ts'
 import { stepsTier } from '../document/motionSteps.ts'
 import { resolveEffect } from '../registry/effect.ts'
 import type { Registry } from '../registry/index.ts'
 import type { HtmlNode } from './html.ts'
+import {
+  APPEAR_SUPPORT,
+  appearFrames,
+  appearRange,
+  appearTrack,
+} from './appear.ts'
 
 type Lowered = { tier: 1 | 2; steps: Step[] }
 
@@ -31,10 +45,24 @@ export function lowerMotion(m: Motion, registry: Registry): Lowered {
 
 /** Animate individual transform properties, so the author's (possibly responsive)
  * transform continues to apply. Preserve the other axis across steps. */
-function frame(f: Frame, last: Frame): string {
+function frame(f: Frame, last: Frame, axes: boolean, alpha: boolean): string {
   const css: string[] = []
-  if (f.opacity !== undefined) css.push(`opacity:${f.opacity}`)
-  if (f.xPercent !== undefined || f.xPx !== undefined || f.yPx !== undefined) {
+  if (f.opacity !== undefined) {
+    css.push(`opacity:${f.opacity}`)
+    // The scroll reveal reads this endpoint; other targets keep ordinary opacity.
+    if (alpha) css.push(`--cm-alpha:${f.opacity}`)
+  }
+  if (axes) {
+    // Independent animations cannot replace the same translate pair. Animate
+    // typed, non-inheriting axes instead and assemble translate on activation.
+    if (f.xPercent !== undefined) css.push(`--cm-x:${f.xPercent}%`)
+    if (f.xPx !== undefined) css.push(`--cm-x:${f.xPx}px`)
+    if (f.yPx !== undefined) css.push(`--cm-y:${f.yPx}px`)
+  } else if (
+    f.xPercent !== undefined ||
+    f.xPx !== undefined ||
+    f.yPx !== undefined
+  ) {
     if (f.xPx !== undefined) delete last.xPercent
     if (f.xPercent !== undefined) delete last.xPx
     Object.assign(last, f)
@@ -57,22 +85,28 @@ function classOn(e: HtmlNode, name: string) {
   return `.${name}`
 }
 
-type CssTrack = {
+type Track = {
   id: number
   selector: string
   targets: HtmlNode[]
-  frames: string
-  animation: string
+  steps: Step[]
+  extra: string
+  inlineBox: boolean
+  inlineRestore: boolean
   clock?: string
-  ranges: string
-  count: number
 }
 
 const VIEW = '(animation-timeline:view())'
 
 /** Each step occupies its own interval on one clock. Separate 0/100% keyframes
  * permit discontinuous endpoints; a delay holds the preceding endpoint. */
-function sequence(steps: Step[], id: number, scroll: boolean) {
+function sequence(
+  steps: Step[],
+  id: number,
+  scroll: boolean,
+  axes: boolean,
+  alpha: boolean,
+) {
   const total = steps.reduce((ms, s) => ms + (s.delayMs ?? 0) + s.durationMs, 0)
   const animations: string[] = [],
     ranges: string[] = [],
@@ -83,7 +117,7 @@ function sequence(steps: Step[], id: number, scroll: boolean) {
     const key = `cm-k${id}-${j}`,
       start = end + (s.delayMs ?? 0)
     end = start + s.durationMs
-    frames += `@keyframes ${key}{0%{${frame(s.from, last)}}100%{${frame(s.to, last)}}}`
+    frames += `@keyframes ${key}{0%{${frame(s.from, last, axes, alpha)}}100%{${frame(s.to, last, axes, alpha)}}}`
     animations.push(
       `${key} ${scroll ? 'auto' : `${s.durationMs}ms`} ${cssEase(s.ease)} ${scroll ? 0 : start}ms ${j ? 'forwards' : 'both'}`,
     )
@@ -93,63 +127,131 @@ function sequence(steps: Step[], id: number, scroll: boolean) {
     frames,
     animation: animations.join(','),
     ranges: ranges.join(','),
-    count: steps.length,
   }
 }
 
 /** CSS's animation shorthand replaces the entire list. Where two programs meet,
  * give each an independently activated slot and join the lists on the actual target. */
-function writeTracks(tracks: CssTrack[]) {
-  const byTarget = new Map<HtmlNode, CssTrack[]>()
+function writeTracks(tracks: Track[], appear: Map<HtmlNode, number>) {
+  const byTarget = new Map<HtmlNode, Track[]>()
   for (const t of tracks)
     for (const el of t.targets) {
       const list = byTarget.get(el) ?? []
       list.push(t)
       byTarget.set(el, list)
     }
-  const shared = new Set<CssTrack>(),
+  const shared = new Set<Track>(),
+    axes = new Set<Track>(),
+    alpha = new Set<Track>(),
     groups = new Map<string, string>(),
     joined: string[] = []
   const list = (value: string, count: number) =>
     Array(count).fill(value).join(',')
   for (const [el, ts] of byTarget) {
-    if (ts.length === 1) continue
-    const key = ts.map(t => t.id).join('-')
+    const translating = ts.filter(t =>
+      t.steps.some(
+        ({ from: f }) =>
+          f.xPx !== undefined ||
+          f.xPercent !== undefined ||
+          f.yPx !== undefined,
+      ),
+    )
+    if (
+      translating.length > 1 &&
+      translating.some(t => t.steps.some(s => s.from.yPx !== undefined)) &&
+      translating.some(t =>
+        t.steps.some(
+          s => s.from.xPx !== undefined || s.from.xPercent !== undefined,
+        ),
+      )
+    )
+      for (const t of translating) axes.add(t)
+    if (appear.has(el))
+      for (const t of ts)
+        if (t.steps.some(s => s.from.opacity !== undefined)) alpha.add(t)
+  }
+  const seq = new Map(
+    tracks.map(t => [
+      t,
+      sequence(t.steps, t.id, !!t.clock, axes.has(t), alpha.has(t)),
+    ]),
+  )
+  for (const [el, ts] of byTarget) {
+    const vh = appear.get(el)
+    if (ts.length === 1 && vh === undefined) continue
+    const key = ts.map(t => t.id).join('-') + ':' + (vh ?? '')
     let name = groups.get(key)
     if (!name) {
       name = `cm-g${groups.size + 1}`
       groups.set(key, name)
       for (const t of ts) shared.add(t)
-      const join = (active: CssTrack[]) => {
+      const join = (active: Track[], withAppear: boolean) => {
         const slots = active.map(
-          t => `var(--cm-a${t.id},${list('none', t.count)})`,
+          t => `var(--cm-a${t.id},${list('none', t.steps.length)})`,
         )
-        let css = `animation:${slots.join(',')}`
-        if (active.some(t => t.clock)) {
-          css += `;animation-timeline:${active.map(t => list(t.clock ?? 'auto', t.count)).join(',')}`
-          css += `;animation-range:${active.map(t => (t.clock ? t.ranges : list('normal', t.count))).join(',')}`
+        const clocks = active.map(t => list(t.clock ?? 'auto', t.steps.length))
+        const ranges = active.map(t =>
+          t.clock ? seq.get(t)!.ranges : list('normal', t.steps.length),
+        )
+        if (withAppear) {
+          slots.push(
+            appearTrack(
+              active.some(t => alpha.has(t)) ? 'cm-appear' : 's-appear',
+            ),
+          )
+          clocks.push('scroll(root)')
+          ranges.push(appearRange(vh!))
         }
+        let css = `animation:${slots.join(',')}`
+        if (withAppear || active.some(t => t.clock))
+          css += `;animation-timeline:${clocks.join(',')};animation-range:${ranges.join(',')}`
         return `.${name}:is(${active.map(t => t.selector).join(',')}){${css}}`
       }
       const timed = ts.filter(t => !t.clock)
-      if (timed.length === ts.length) joined.push(join(ts))
-      else {
-        joined.push(`@supports ${VIEW}{${join(ts)}}`)
-        if (timed.length > 1)
-          joined.push(`@supports not ${VIEW}{${join(timed)}}`)
+      const combine = (ap: boolean) => {
+        if (timed.length === ts.length) return join(ts, ap)
+        return (
+          `@supports ${VIEW}{${join(ts, ap)}}` +
+          (timed.length > (ap ? 0 : 1)
+            ? `@supports not ${VIEW}{${join(timed, ap)}}`
+            : '')
+        )
       }
+      if (ts.length > 1) joined.push(combine(false))
+      if (vh !== undefined)
+        joined.push(`@supports ${APPEAR_SUPPORT}{${combine(true)}}`)
     }
     classOn(el, name)
   }
   const rules = tracks.map(t => {
+    const s = seq.get(t)!
     const slot = `--cm-a${t.id}`
-    let css = `${t.frames}${t.selector}{${shared.has(t) ? `${slot}:${t.animation};animation:var(${slot})` : `animation:${t.animation}`}`
+    let css = `${t.extra}${s.frames}${t.selector}{${shared.has(t) ? `${slot}:${s.animation};animation:var(${slot})` : `animation:${s.animation}`}`
     if (t.clock)
-      css += `;animation-timeline:${t.clock};animation-range:${t.ranges}`
+      css += `;animation-timeline:${t.clock};animation-range:${s.ranges}`
+    if (axes.has(t)) css += ';translate:var(--cm-x) var(--cm-y)'
     css += '}'
+    if (t.inlineBox)
+      css += `:where(${t.selector}.cm-inline:is(span,a)){display:inline-block}`
+    if (t.inlineRestore)
+      css += `:where(${t.selector}.cm-inline){--cm-inline:inline-block}`
     return t.clock ? `@supports ${VIEW}{${css}}` : css
   })
-  return `@media (prefers-reduced-motion:no-preference){${rules.join('')}${joined.join('')}}`
+  const property = (name: string, type: string, initial: string) =>
+    `@property --cm-${name}{syntax:"<${type}>";inherits:false;initial-value:${initial}}`
+  const channels =
+    (tracks.some(t => t.inlineRestore)
+      ? '@property --cm-inline{syntax:"*";inherits:false;initial-value:inline}'
+      : '') +
+    (axes.size
+      ? property('x', 'length-percentage', '0px') +
+        property('y', 'length', '0px')
+      : '')
+  const opacity = alpha.size
+    ? property('alpha', 'number', '1') +
+      appearFrames('cm-appear', 'var(--cm-alpha)')
+    : ''
+  return `@media (prefers-reduced-motion:no-preference){${channels}${opacity}${rules.join('')}${joined.join('')}}`
 }
 
 /** Emit only after the real builders have chosen their elements. A table's tbody, a
@@ -159,8 +261,31 @@ export function motionCss(
   site: HtmlNode,
   rendered: ReadonlyMap<Node, HtmlNode>,
   registry: Registry,
-): string {
-  const tracks: CssTrack[] = []
+  style: {
+    appearByClass: ReadonlyMap<string, number>
+    sideClasses: ReadonlySet<string>
+    inlineRestores: ReadonlySet<string>
+    classOf: ReadonlyMap<string, string>
+    scheme: Look['dark']
+  },
+) {
+  const tracks: Track[] = [],
+    problems: Problem[] = []
+  // Task 4 skips fallback playback on a capable browser ONLY for owners in this set.
+  const nativeScroll = new Set<Node>()
+  const appear = new Map<HtmlNode, number>(),
+    inline = new Set<HtmlNode>(),
+    inlineClasses = new Set<string>()
+  let side = false
+  for (const el of rendered.values()) {
+    const classes = el.attrs?.class
+    if (typeof classes === 'string')
+      for (const cls of classes.split(' ')) {
+        const vh = style.appearByClass.get(cls)
+        if (vh !== undefined) appear.set(el, vh)
+        if (style.sideClasses.has(cls)) side = true
+      }
+  }
   const header = trees[1]
   for (const root of trees) {
     const chain: Node[] = []
@@ -187,6 +312,31 @@ export function motionCss(
               : []
       const targets = nodes.flatMap(v => (v && rendered.get(v)) || [])
       if (!targets.length) return
+      if (m.trigger === 'scroll') {
+        const obstacle =
+          chain
+            .slice(0, depth)
+            .reverse()
+            .find(n =>
+              scrollport(
+                n,
+                rendered.get(n),
+                style.classOf.get(n.id),
+                style.scheme,
+              ),
+            )?.id ?? (root === header && side ? 'site header' : undefined)
+        if (obstacle) {
+          if (!m.scrollFallback)
+            problems.push({
+              code: 'INVALID_NODE',
+              nodeId: w.id,
+              path: 'motion.trigger',
+              message: `The scroll container "${obstacle}" prevents a native viewport timeline. Use the timeline scroll fallback or move this motion outside it.`,
+            })
+          return
+        }
+        nativeScroll.add(w)
+      }
       const i = tracks.length + 1,
         name = `cm-t${i}`,
         self = t === 'self'
@@ -235,17 +385,94 @@ export function motionCss(
         clock = `--cm-v${i}`
         extra = `${classOn(owner, `cm-o${i}`)}{view-timeline-name:${clock}}`
       }
+      let inlineBox = false,
+        inlineRestore = false
+      if (steps.some(s => Object.keys(s.from).some(k => k !== 'opacity')))
+        for (const n of nodes) {
+          const el = n && rendered.get(n)
+          if (!el || !n) continue
+          // Core buttons/icons and fallback images already have an atomic display.
+          const natural =
+            (el.tag === 'span' || el.tag === 'a') &&
+            !['button', 'icon', 'image'].includes(n.kind)
+          const cls = style.classOf.get(n.id)
+          const restore =
+            cls &&
+            style.inlineRestores.has(cls) &&
+            String(el.attrs?.class).split(' ').includes(cls)
+          if (!natural && !restore) continue
+          inlineBox ||= natural
+          if (restore) {
+            inlineRestore = true
+            inlineClasses.add(cls!)
+          }
+          if (!inline.has(el)) {
+            inline.add(el)
+            classOn(el, 'cm-inline')
+          }
+        }
       for (const el of targets) classOn(el, name)
-      const seq = sequence(steps, i, scroll)
       tracks.push({
-        ...seq,
+        steps,
         id: i,
         selector: sel,
         targets,
         clock: scroll ? clock : undefined,
-        frames: extra + seq.frames,
+        extra,
+        inlineBox,
+        inlineRestore,
       })
     })
   }
-  return tracks.length ? writeTracks(tracks) : ''
+  return {
+    css: tracks.length ? writeTracks(tracks, appear) : '',
+    problems,
+    nativeScroll,
+    inlineClasses,
+  }
+}
+
+/** A CSS view timeline measures its nearest scroll container, even when only
+ * overflow-x was set. One static page must work on every layout and in every state. */
+function scrollport(
+  n: Node,
+  el: HtmlNode | undefined,
+  cls: string | undefined,
+  scheme: Look['dark'],
+): boolean {
+  if (!el) return false
+  const native = el.tag === 'dialog' || el.attrs?.popover !== undefined
+  // An SVG group part does not receive the normal layout/style class.
+  const s =
+    cls && String(el.attrs?.class).split(' ').includes(cls)
+      ? n.style
+      : undefined
+  if (!s) return native
+  // clip:pill/arch and line clamping write overflow:hidden after overflow itself.
+  const overflow = (d?: Decl) =>
+    d?.clip === 'pill' || d?.clip === 'arch' || d?.clampLines
+      ? true
+      : d?.overflow === undefined
+        ? undefined
+        : d.overflow === 'scroll-x' || d.overflow === 'scroll-y'
+  const base = overflow(s.base) ?? native
+  const interactive = (
+    [
+      'hover',
+      'pressed',
+      'focus',
+      'open',
+      'current',
+      'checked',
+      'invalid',
+    ] as const
+  ).some(k => overflow(s[k]) === true)
+  const state = s.when?.some(v => overflow(v.decl) === true)
+  for (const dark of scheme === 'auto' ? [false, true] : [scheme === 'dark']) {
+    const desktop =
+      (dark ? overflow(s.dark) : undefined) ?? (base || interactive)
+    const tablet = overflow(s.tablet) ?? (desktop || state)
+    if (desktop || state || tablet || (overflow(s.phone) ?? tablet)) return true
+  }
+  return false
 }

@@ -306,7 +306,8 @@ test('the page css written by the compiler ends with its node and page-wide rule
     { registry, mode: 'edit' },
     'a',
   )
-  assert.ok(p.rules.length > 0 && p.css.endsWith(p.rules))
+  const { css, rules } = p.sheet()
+  assert.ok(rules.length > 0 && css.endsWith(rules))
 })
 
 test('a subtree of a page that was cut says so, as compilePage does', () => {

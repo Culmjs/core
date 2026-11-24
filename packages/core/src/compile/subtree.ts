@@ -96,16 +96,20 @@ function split(css: string, used: Set<string>, named: boolean): string {
  * stylesheet that name no node class (a tooltip, the reduced-motion rule, keyframes). In the page's own order, so it equals `compilePage`'s
  * CSS without the rules for node classes.
  */
-function pageWideCss(doc: SiteDocument, p: ReturnType<typeof prepare>): string {
+function pageWideCss(
+  doc: SiteDocument,
+  p: ReturnType<typeof prepare>,
+  sheet: { css: string; rules: string },
+): string {
   // `compileStyles` writes the look first and the rules last: the look is what comes before them
-  if (!p.css.endsWith(p.rules))
+  if (!sheet.css.endsWith(sheet.rules))
     throw new Error('the page css does not end with its rules')
-  const look = p.css.slice(0, p.css.length - p.rules.length)
+  const look = sheet.css.slice(0, sheet.css.length - sheet.rules.length)
   return (
     fontFaceCss(fontsOf(doc, p.shell), p.fontBase, p.fonts) +
     BASE_CSS +
     look +
-    split(p.rules, new Set(p.classOf.values()), false)
+    split(sheet.rules, new Set(p.classOf.values()), false)
   )
 }
 
@@ -169,11 +173,12 @@ export function compileSubtree(
     )
     const used = new Set<string>()
     for (const e of found) classesOf(e, used)
+    const sheet = p.sheet()
     return {
       ok: true,
       html: found.map(writeHtml).join(''),
-      css: split(p.rules, used, true),
-      pageCss: pageWideCss(doc, p),
+      css: split(sheet.rules, used, true),
+      pageCss: pageWideCss(doc, p, sheet),
       problems: cutProblems(p.over),
     }
   } catch (e) {

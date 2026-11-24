@@ -194,7 +194,7 @@ function checkTargets(owner: Node, steps: Step[], say: Say) {
 }
 
 /** Check the stored program and its authored IDs. State scope and visual children require the composed tree. */
-export function checkMotion(c: Ctx, _t: TCtx, e: Entry): void {
+export function checkMotion(c: Ctx, t: TCtx, e: Entry): void {
   const m: unknown = e.w.motion
   if (m === undefined) return
   const say: Say = (message, path) => add(c, e.w, message, path)
@@ -230,6 +230,17 @@ export function checkMotion(c: Ctx, _t: TCtx, e: Entry): void {
       typeof m.effect === 'string' ? c.reg.effect(m.effect) : undefined
     const steps = resolveEffect(def, m.settings, say)
     if (steps) {
+      // insertBlock has already applied blockIds to the stored look. Reconstruct
+      // only that exact namespace mapping, then apply the ordinary owner/template check.
+      for (const { target } of steps)
+        if (
+          typeof target === 'object' &&
+          typeof e.ns === 'string' &&
+          !target.id.includes('.')
+        ) {
+          const qualified = `${e.ns}.${target.id}`
+          if (t.here.has(qualified)) target.id = qualified
+        }
       checkTargets(e.w, steps, say)
       // Internal composition copy: retain the preset name (its declared tier is a floor)
       // alongside the exact checked steps, so the ordinary ID maps retarget them.

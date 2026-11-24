@@ -7,7 +7,11 @@ import {
   type Motion,
   type Step,
   type CompileOptions,
+  type Node,
+  type HtmlNode,
 } from '../../src/index.ts'
+import { prepare, siteElement } from '../../src/compile/page.ts'
+import { motionCss } from '../../src/compile/motion.ts'
 import { node, sampleRegistry, siteWith, text } from '../kit.ts'
 
 test('both a grouped SVG owner and its nested target receive the scoped classes', () => {
@@ -113,6 +117,62 @@ test('native scroll, including the native branch of the compatibility option', (
     docFor({ trigger: 'scroll', scrollFallback: 'timeline', steps: [rise()] }),
   )
   assert.equal(compat.css, nativeScroll.css)
+})
+
+test('a native viewport track refuses an intervening scrollport; explicit fallback stays host-only', () => {
+  for (const layer of ['base', 'phone'] as const) {
+    const m: Motion = { trigger: 'scroll', steps: [rise()] }
+    const owner = {
+      ...node('hero', 'column', [text('title', 'Reed')]),
+      motion: m,
+    }
+    const scroller = node('scroller', 'column', [owner])
+    scroller.style = { [layer]: { overflow: 'scroll-x' } }
+    const doc = siteWith([scroller])
+    const r = compilePage(doc, 'home', { registry })
+    assert.equal(r.ok, false)
+    assert.ok(
+      r.problems.some(
+        p =>
+          p.nodeId === 'hero' &&
+          p.path === 'motion.trigger' &&
+          /viewport/i.test(p.message) &&
+          /scroller/.test(p.message),
+      ),
+      JSON.stringify(r.problems),
+    )
+    m.scrollFallback = 'timeline'
+    assert.doesNotMatch(page(doc).css, /animation-timeline:view\(\)/)
+    scroller.style = { [layer]: { overflow: 'clip' } }
+    assert.match(page(doc).css, /animation-timeline:view\(\)/)
+  }
+})
+
+test('native fallback membership is per rendered owner, including when a scrollport is layout-dependent', () => {
+  const m: Motion = {
+    trigger: 'scroll',
+    scrollFallback: 'timeline',
+    steps: [rise()],
+  }
+  const track = (id: string) => text(id, 'Reed', { motion: m })
+  const inside = node('scroller', 'column', [track('inside')])
+  inside.style = { tablet: { overflow: 'scroll-y' } }
+  const dark = node('dark', 'box', [track('light')])
+  dark.style = { dark: { overflow: 'scroll-x' } }
+  const gone = track('gone')
+  gone.showIf = { from: 'site', field: 'missing' }
+  const doc = siteWith([track('outside'), inside, dark, gone])
+  doc.look.dark = 'light'
+  const [home] = doc.pages
+  const p = prepare(doc, [home.root, doc.header, doc.footer], { registry })
+  const rendered = new Map<Node, HtmlNode>()
+  const site = siteElement(doc, home, p, { used: false }, rendered)
+  const result = motionCss(p.trees, site, rendered, registry, p)
+  assert.deepEqual(result.problems, [])
+  assert.deepEqual(
+    [...result.nativeScroll].map(n => n.id),
+    ['outside', 'light'],
+  )
 })
 test('built-in rise compiles identically to its explicit steps; edit/subtree stay static', () => {
   for (const distance of [undefined, 0, 42, 100]) {

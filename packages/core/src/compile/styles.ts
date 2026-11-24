@@ -83,6 +83,13 @@ import {
   type Variant,
 } from './stylesRules.ts'
 
+import {
+  APPEAR_SUPPORT,
+  appearFrames,
+  appearRange,
+  appearTrack,
+} from './appear.ts'
+
 const DISPLAY = /^[a-z]+(-[a-z]+)*( [a-z]+(-[a-z]+)*)?$/
 /** A plug-in kind's display value, written only if it is a display keyword (or two); anything else is `block`. The plug-in is outside code. */
 const displayOf = (spec: KindSpec, w: Node) => {
@@ -135,7 +142,7 @@ function lone(on: boolean | undefined, w: Node, p: Node | null): boolean {
   )
 }
 
-export function compileStyles(
+export function prepareStyles(
   t: Node,
   ctx: {
     look: Look
@@ -149,7 +156,7 @@ export function compileStyles(
     /** The kinds a registry's plug-ins add; a node of one is styled like any other node. */
     kinds?: ReadonlyMap<string, KindSpec>
   },
-): { css: string; rules: string; classOf: Map<string, string> } {
+) {
   const classOf = new Map<string, string>()
   const prefix = classStart(ctx.prefix ?? '')
   const rtl = ctx.dir === 'rtl'
@@ -166,6 +173,7 @@ export function compileStyles(
       cls: string
       kind: CompileKind
       r: Record<Variant, string>
+      inline?: Partial<Record<Variant, string>>
       extra?: Extra
     }
   >()
@@ -206,6 +214,13 @@ export function compileStyles(
     let e = classes.get(key)
     if (!e) {
       e = { cls: `${prefix}c${classes.size.toString(36)}`, kind, r, extra }
+      // Keep explicit show/restore declarations in their original cascade positions.
+      // An actual inline motion target can opt into an atomic box at these points.
+      for (const v of VARIANTS)
+        if (rules[v].includes('display:inline'))
+          (e.inline ??= {})[v] = rules[v]
+            .map(d => (d === 'display:inline' ? INLINE_DISPLAY : d))
+            .join(';')
       classes.set(key, e)
       if (defaults) byKind.set(kind, [...(byKind.get(kind) ?? []), e.cls])
     }
@@ -622,10 +637,11 @@ export function compileStyles(
     const whenFn = (list: typeof whens, late: boolean) => {
       const own = list.filter(x => !!x.late === late)
       return own.length
-        ? (cls: string) =>
+        ? (cls: string, motionInline = false) =>
             own
               .map(
-                x => `:where(${x.at}) .${cls},.${cls}:where(${x.at}){${x.css}}`,
+                x =>
+                  `:where(${x.at}) .${cls},.${cls}:where(${x.at}){${motionInline && x.css === 'display:inline' ? INLINE_DISPLAY : x.css}}`,
               )
               .join('')
         : undefined
@@ -804,6 +820,9 @@ export function compileStyles(
       ownAll || whens.length
         ? {
             key: `${ownAll?.key ?? ''}|${JSON.stringify(whens)}`,
+            restoresInline: whens.some(
+              x => x.late && x.css === 'display:inline',
+            ),
             base: ownAll?.rules,
             when: whenFn(whens, false),
             show: whenFn(whens, true),
@@ -961,137 +980,168 @@ export function compileStyles(
   })
 
   const all = [...classes.values()]
-  const rules = (v: Variant, sel: (c: string, kind: CompileKind) => string) =>
-    all
-      .map(
-        e =>
-          (e.r[v] ? `${sel(e.cls, e.kind)}{${e.r[v]}}` : '') +
-          (v === 'base' ? (e.extra?.base?.(e.cls) ?? '') : ''),
-      )
-      .join('')
-  // Every variant selector weighs 0,1,0 like the base, so source order decides: base, the states, dark, tablet, phone.
-  let css = ''
-  for (const [k, cs] of byKind)
-    css += `${cs.map(c => `.${c}`).join(',')}{${KIND_CSS[k]}}`
   const clsOf = (ids: string[]) => [
     ...new Set(ids.flatMap(i => classOf.get(i) ?? [])),
   ]
-  // grain sits in a ::before under the content (the block becomes its own stacking context, positioned unless something else positions it: `:where` has no weight)
-  if (grainy.length) {
-    const g = clsOf(grainy)
-    css += `:where(${g.map(c => `.${c}`).join(',')}){position:relative;isolation:isolate}${g.map(c => `.${c}::before`).join(',')}{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;border-radius:inherit;background:${GRAIN};mix-blend-mode:overlay;opacity:var(--s-grain,0)}`
-  }
-  // the parent of a line that fits its width measures it
-  if (fitted.length)
-    css += `:has(${clsOf(fitted)
-      .map(c => `>.${c}`)
-      .join(',')}){container-type:inline-size}`
-  css += rules('base', c => `.${c}`)
-  // A menu's current layer styles its current link, the one place a menu renders aria-current.
-  // A Form field's wrapper is never focused itself: its focus layer applies while the control inside has focus.
-  for (const [v, tail] of STATE_SEL)
-    css += rules(v, (c, k) =>
-      v === 'current' && k === 'menu'
-        ? `.${c} ${tail}`
-        : v === 'focus' && k === 'field'
-          ? `.${c}:where(:focus-within)`
-          : `.${c}${tail}`,
-    )
-  const dark = rules('dark', c => `:where(.s-site.s-scheme-dark) .${c}`)
-  if (dark)
-    css +=
-      dark +
-      `@media (prefers-color-scheme: dark){${rules('dark', c => `:where(.s-site.s-scheme-auto) .${c}`)}}`
-  if (codeColors.size) {
-    const all = [...codeColors.values()]
-    css += all
-      .filter(c => c.light)
-      .map(c => `.${c.cls}{color:${c.light}}`)
-      .join('')
-    const sel = (scheme: string) =>
+  // Classes are needed to render the elements. Finish the sheet once the page
+  // knows which of those elements actually received transform motion.
+  function emit(inline?: ReadonlySet<string>) {
+    const rules = (v: Variant, sel: (c: string, kind: CompileKind) => string) =>
       all
-        .filter(c => c.dark)
         .map(
-          c => `:where(.s-site.s-scheme-${scheme}) .${c.cls}{color:${c.dark}}`,
+          e =>
+            (e.r[v]
+              ? `${sel(e.cls, e.kind)}{${(inline?.has(e.cls) && e.inline?.[v]) || e.r[v]}}`
+              : '') + (v === 'base' ? (e.extra?.base?.(e.cls) ?? '') : ''),
         )
         .join('')
-    css += `${sel('dark')}@media (prefers-color-scheme: dark){${sel('auto')}}`
-  }
-  // Layers that react to a state come after every state layer and before the tablet and phone blocks.
-  css += all.map(e => e.extra?.when?.(e.cls) ?? '').join('')
-  const tablet = rules('tablet', c => `:where(.s-site--live) .${c}`)
-  // A word is never split across lines: `anywhere` and `break-word` break "Permissions" in a narrow track, so the word stays whole and a word too wide for its box overflows (the overflow and off-screen checks report it).
-  if (ctx.centre)
-    css +=
-      ':where(.s-site) :where(p,h1,h2,h3,h4,h5,h6,span,a,li,td,th){overflow-wrap:normal;word-break:normal;hyphens:manual}'
-  if (tablet) css += `@media (max-width: 1024px){${tablet}}`
-  const phone = rules('phone', c => `:where(.s-site--live) .${c}`)
-  if (phone) css += `@media (max-width: 600px){${phone}}`
-  if (ctx.mode === 'edit')
-    css +=
-      rules('tablet', c => `:where(.s-site--tablet, .s-site--phone) .${c}`) +
-      rules('phone', c => `:where(.s-site--phone) .${c}`)
-  // A state that shows or hides a block wins on every layout, so it follows the phone blocks.
-  css += all.map(e => e.extra?.show?.(e.cls) ?? '').join('')
-  // textFill: the gradient (--s-tf, set by the block's layers) is painted into the letters only where the browser can clip a background to text and forced colours are off; elsewhere the plain colour shows. Last, so a colour set by any layer, state or width does not undo the transparent fill. Only a fill set on the base layer paints (a layer alone would leave the letters with nothing to show).
-  if (filled.length)
-    css += `@supports ((-webkit-background-clip:text) or (background-clip:text)){@media (forced-colors:none){${clsOf(
-      filled,
-    )
-      .map(c => `.${c}`)
-      .join(
-        ',',
-      )}{background-image:var(--s-tf);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}}}`
-  // appearAfter: hidden until the page has scrolled that far, only where the browser can tie an animation to the page's scroll and the visitor has not asked for less motion; everywhere else the block simply shows.
-  if (appearing.size)
-    css += `@media (prefers-reduced-motion: no-preference){@supports (animation-timeline:scroll()){@keyframes s-appear{from{opacity:0;visibility:hidden}to{opacity:1;visibility:visible}}${[
-      ...appearing,
-    ]
-      .map(
-        ([vh, ids]) =>
-          `${clsOf(ids)
-            .map(c => `.${c}`)
-            .join(
-              ',',
-            )}{animation:s-appear linear both;animation-timeline:scroll(root);animation-range:${vh}vh ${vh + 12}vh}`,
+    // Every variant selector weighs 0,1,0 like the base, so source order decides: base, the states, dark, tablet, phone.
+    let css = ''
+    for (const [k, cs] of byKind)
+      css += `${cs.map(c => `.${c}`).join(',')}{${KIND_CSS[k]}}`
+    // grain sits in a ::before under the content (the block becomes its own stacking context, positioned unless something else positions it: `:where` has no weight)
+    if (grainy.length) {
+      const g = clsOf(grainy)
+      css += `:where(${g.map(c => `.${c}`).join(',')}){position:relative;isolation:isolate}${g.map(c => `.${c}::before`).join(',')}{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;border-radius:inherit;background:${GRAIN};mix-blend-mode:overlay;opacity:var(--s-grain,0)}`
+    }
+    // the parent of a line that fits its width measures it
+    if (fitted.length)
+      css += `:has(${clsOf(fitted)
+        .map(c => `>.${c}`)
+        .join(',')}){container-type:inline-size}`
+    css += rules('base', c => `.${c}`)
+    // A menu's current layer styles its current link, the one place a menu renders aria-current.
+    // A Form field's wrapper is never focused itself: its focus layer applies while the control inside has focus.
+    for (const [v, tail] of STATE_SEL)
+      css += rules(v, (c, k) =>
+        v === 'current' && k === 'menu'
+          ? `.${c} ${tail}`
+          : v === 'focus' && k === 'field'
+            ? `.${c}:where(:focus-within)`
+            : `.${c}${tail}`,
       )
-      .join('')}}}`
-  // reveal: the footer's wrapper stays at the foot of the window and the page, opaque and above it, scrolls off to uncover it. Wide and tall windows only: a footer taller than the window could not be read.
-  if (revealed.length)
-    css += `@media (min-width:601px) and (min-height:561px){${revealed.map(id => `.s-site:has(.${classOf.get(id)})`).join(',')}{isolation:isolate}${revealed.map(id => `.s-site:has(.${classOf.get(id)})>.s-footer`).join(',')}{position:sticky;bottom:0;z-index:-1;background-color:var(--s-bg)}${revealed.map(id => `.s-site:has(.${classOf.get(id)})>main`).join(',')}{position:relative;background-color:var(--s-bg)}}`
-  // side: from 901 px up the header is a sticky left column and the page and footer stack beside it; narrower, the header stays the bar it is.
-  if (sided.length)
-    css += `@media (min-width:901px){${sided
-      .map(({ id, w }) => {
-        const s = `.s-site:has(.${classOf.get(id)})`
-        return `${s}{display:grid;grid-template-columns:${w}px minmax(0,1fr);grid-template-rows:1fr auto}${s}>.s-header{grid-row:1/3;grid-column:1;position:sticky;top:0;height:100vh;overflow:auto;align-self:start}${s}>.s-header>section{height:100%}${s}>main{grid-column:2;grid-row:1}${s}>.s-footer{grid-column:2;grid-row:2}`
-      })
-      .join('')}}`
-  // spotlight sits in a ::after under the content, as grain does in a ::before (the glow itself is --s-sp, written by the block's layers)
-  if (spotty.length) {
-    const g = clsOf(spotty)
-    css += `:where(${g.map(c => `.${c}`).join(',')}){position:relative;isolation:isolate}${g.map(c => `.${c}::after`).join(',')}{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;border-radius:inherit;background:var(--s-sp)}`
+    const dark = rules('dark', c => `:where(.s-site.s-scheme-dark) .${c}`)
+    if (dark)
+      css +=
+        dark +
+        `@media (prefers-color-scheme: dark){${rules('dark', c => `:where(.s-site.s-scheme-auto) .${c}`)}}`
+    if (codeColors.size) {
+      const all = [...codeColors.values()]
+      css += all
+        .filter(c => c.light)
+        .map(c => `.${c.cls}{color:${c.light}}`)
+        .join('')
+      const sel = (scheme: string) =>
+        all
+          .filter(c => c.dark)
+          .map(
+            c =>
+              `:where(.s-site.s-scheme-${scheme}) .${c.cls}{color:${c.dark}}`,
+          )
+          .join('')
+      css += `${sel('dark')}@media (prefers-color-scheme: dark){${sel('auto')}}`
+    }
+    // Layers that react to a state come after every state layer and before the tablet and phone blocks.
+    css += all.map(e => e.extra?.when?.(e.cls) ?? '').join('')
+    const tablet = rules('tablet', c => `:where(.s-site--live) .${c}`)
+    // A word is never split across lines: `anywhere` and `break-word` break "Permissions" in a narrow track, so the word stays whole and a word too wide for its box overflows (the overflow and off-screen checks report it).
+    if (ctx.centre)
+      css +=
+        ':where(.s-site) :where(p,h1,h2,h3,h4,h5,h6,span,a,li,td,th){overflow-wrap:normal;word-break:normal;hyphens:manual}'
+    if (tablet) css += `@media (max-width: 1024px){${tablet}}`
+    const phone = rules('phone', c => `:where(.s-site--live) .${c}`)
+    if (phone) css += `@media (max-width: 600px){${phone}}`
+    if (ctx.mode === 'edit')
+      css +=
+        rules('tablet', c => `:where(.s-site--tablet, .s-site--phone) .${c}`) +
+        rules('phone', c => `:where(.s-site--phone) .${c}`)
+    // A state that shows or hides a block wins on every layout, so it follows the phone blocks.
+    css += all
+      .map(e => e.extra?.show?.(e.cls, inline?.has(e.cls)) ?? '')
+      .join('')
+    // textFill: the gradient (--s-tf, set by the block's layers) is painted into the letters only where the browser can clip a background to text and forced colours are off; elsewhere the plain colour shows. Last, so a colour set by any layer, state or width does not undo the transparent fill. Only a fill set on the base layer paints (a layer alone would leave the letters with nothing to show).
+    if (filled.length)
+      css += `@supports ((-webkit-background-clip:text) or (background-clip:text)){@media (forced-colors:none){${clsOf(
+        filled,
+      )
+        .map(c => `.${c}`)
+        .join(
+          ',',
+        )}{background-image:var(--s-tf);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}}}`
+    // appearAfter: hidden until the page has scrolled that far, only where the browser can tie an animation to the page's scroll and the visitor has not asked for less motion; everywhere else the block simply shows.
+    if (appearing.size)
+      css += `@media (prefers-reduced-motion: no-preference){@supports ${APPEAR_SUPPORT}{${appearFrames('s-appear')}${[
+        ...appearing,
+      ]
+        .map(
+          ([vh, ids]) =>
+            `${clsOf(ids)
+              .map(c => `.${c}`)
+              .join(
+                ',',
+              )}{animation:${appearTrack()};animation-timeline:scroll(root);animation-range:${appearRange(vh)}}`,
+        )
+        .join('')}}}`
+    // reveal: the footer's wrapper stays at the foot of the window and the page, opaque and above it, scrolls off to uncover it. Wide and tall windows only: a footer taller than the window could not be read.
+    if (revealed.length)
+      css += `@media (min-width:601px) and (min-height:561px){${revealed.map(id => `.s-site:has(.${classOf.get(id)})`).join(',')}{isolation:isolate}${revealed.map(id => `.s-site:has(.${classOf.get(id)})>.s-footer`).join(',')}{position:sticky;bottom:0;z-index:-1;background-color:var(--s-bg)}${revealed.map(id => `.s-site:has(.${classOf.get(id)})>main`).join(',')}{position:relative;background-color:var(--s-bg)}}`
+    // side: from 901 px up the header is a sticky left column and the page and footer stack beside it; narrower, the header stays the bar it is.
+    if (sided.length)
+      css += `@media (min-width:901px){${sided
+        .map(({ id, w }) => {
+          const s = `.s-site:has(.${classOf.get(id)})`
+          return `${s}{display:grid;grid-template-columns:${w}px minmax(0,1fr);grid-template-rows:1fr auto}${s}>.s-header{grid-row:1/3;grid-column:1;position:sticky;top:0;height:100vh;overflow:auto;align-self:start}${s}>.s-header>section{height:100%}${s}>main{grid-column:2;grid-row:1}${s}>.s-footer{grid-column:2;grid-row:2}`
+        })
+        .join('')}}`
+    // spotlight sits in a ::after under the content, as grain does in a ::before (the glow itself is --s-sp, written by the block's layers)
+    if (spotty.length) {
+      const g = clsOf(spotty)
+      css += `:where(${g.map(c => `.${c}`).join(',')}){position:relative;isolation:isolate}${g.map(c => `.${c}::after`).join(',')}{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;border-radius:inherit;background:var(--s-sp)}`
+    }
+    // tooltips: the words are in data-tip; the bubble shows on hover and keyboard focus, and eases in only for visitors who have not asked for less motion
+    if (tips) css += TIP_CSS
+    if (toTop && ctx.mode === 'live')
+      css +=
+        '@media (prefers-reduced-motion: no-preference){html{scroll-behavior:smooth}}'
+    // Reduced motion always turns motion off; only pages that use a transition carry the rule.
+    if (css.includes('transition-property:'))
+      css +=
+        '@media (prefers-reduced-motion: reduce){:where(.s-site) *{transition:none!important}}'
+    const own = escapeCss(css)
+    // A shape writes its paint inline, so the site colours and shadows it points at are named here for the look's variables.
+    let shapeRefsOf = ''
+    walk(t, w => {
+      if (w.kind === 'shape' && w.props) shapeRefsOf += shapeRefs(w.props)
+    })
+    return {
+      css:
+        lookCss(ctx.look, siteStyles, css + shapeRefsOf, ctx.style.fontFamily) +
+        own,
+      rules: own,
+    }
   }
-  // tooltips: the words are in data-tip; the bubble shows on hover and keyboard focus, and eases in only for visitors who have not asked for less motion
-  if (tips) css += TIP_CSS
-  if (toTop && ctx.mode === 'live')
-    css +=
-      '@media (prefers-reduced-motion: no-preference){html{scroll-behavior:smooth}}'
-  // Reduced motion always turns motion off; only pages that use a transition carry the rule.
-  if (css.includes('transition-property:'))
-    css +=
-      '@media (prefers-reduced-motion: reduce){:where(.s-site) *{transition:none!important}}'
-  const own = escapeCss(css)
-  // A shape writes its paint inline, so the site colours and shadows it points at are named here for the look's variables.
-  let shapeRefsOf = ''
-  walk(t, w => {
-    if (w.kind === 'shape' && w.props) shapeRefsOf += shapeRefs(w.props)
-  })
   return {
-    css:
-      lookCss(ctx.look, siteStyles, css + shapeRefsOf, ctx.style.fontFamily) +
-      own,
-    rules: own,
+    sheet: emit,
     classOf,
+    appearByClass: new Map(
+      [...appearing].flatMap(([vh, ids]) =>
+        clsOf(ids).map(cls => [cls, vh] as const),
+      ),
+    ),
+    sideClasses: new Set(clsOf(sided.map(s => s.id))),
+    inlineRestores: new Set(
+      all.filter(e => e.inline || e.extra?.restoresInline).map(e => e.cls),
+    ),
+    scheme: ctx.look.dark,
   }
+}
+
+const INLINE_DISPLAY = 'display:var(--cm-inline,inline)'
+
+export function compileStyles(
+  t: Node,
+  ctx: Parameters<typeof prepareStyles>[1],
+) {
+  const p = prepareStyles(t, ctx)
+  return { classOf: p.classOf, ...p.sheet() }
 }

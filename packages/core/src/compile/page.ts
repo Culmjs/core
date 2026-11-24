@@ -31,7 +31,7 @@ import {
 } from './elements.ts'
 import { writeHtml, type HtmlNode } from './html.ts'
 import { type Links } from './links.ts'
-import { compileStyles } from './styles.ts'
+import { prepareStyles } from './styles.ts'
 import { motionCss } from './motion.ts'
 
 export type CompileOptions = {
@@ -179,7 +179,7 @@ export function prepare(
     slot: {},
     children: done.map(d => d.tree),
   }
-  const { css, rules, classOf } = compileStyles(shell, {
+  const stylesForPage = prepareStyles(shell, {
     look: doc.look,
     centre: doc.centreMaxWidth === true,
     mode: r.mode,
@@ -192,14 +192,12 @@ export function prepare(
       fontFamily: ref => fontFamily(ref, r.fonts),
     },
   })
-  classOf.delete(SHELL)
+  stylesForPage.classOf.delete(SHELL)
   return {
     ...r,
     shell,
     trees: done.map(d => d.tree),
-    css,
-    rules,
-    classOf,
+    ...stylesForPage,
     depth: Math.max(...done.map(d => d.depth)),
     over: done.some(d => d.over),
   }
@@ -329,9 +327,9 @@ export function build(
       ? new Map<Node, HtmlNode>()
       : undefined
   const site = siteElement(doc, page, p, mail, rendered)
-  const motion = rendered
-    ? motionCss(p.trees, site, rendered, options.registry)
-    : ''
+  const motion =
+    rendered && motionCss(p.trees, site, rendered, options.registry, p)
+  if (motion?.problems.length) return { ok: false, problems: motion.problems }
 
   const scripts: { name: 'base' | 'states'; code: string }[] = []
   if (mode === 'live') {
@@ -362,8 +360,8 @@ export function build(
   const css =
     fontFaceCss(fontsOf(doc, p.shell), p.fontBase, p.fonts) +
     BASE_CSS +
-    p.css +
-    motion
+    p.sheet(motion?.inlineClasses).css +
+    (motion?.css ?? '')
   const body: HtmlNode[] = [site]
   const written = scripts.map(s => s.code).join(';')
   if (scripts.length)

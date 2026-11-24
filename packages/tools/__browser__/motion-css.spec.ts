@@ -23,7 +23,12 @@ before(async () => {
 after(async () => {
   await browser?.close()
 })
-const read = async <T>(doc: SiteDocument, expression: string) => {
+const read = async <T>(
+  doc: SiteDocument,
+  expression: string,
+  width = 1280,
+  reduced = false,
+) => {
   const r = compilePage(doc, 'home', {
     registry: sampleRegistry(),
     mode: 'measure',
@@ -36,7 +41,8 @@ const read = async <T>(doc: SiteDocument, expression: string) => {
         ? { type: 'text/html', body: r.html }
         : undefined,
     )
-    await p.setViewport(1280, 900)
+    await p.setViewport(width, 900)
+    if (reduced) await p.setScheme('light') // measure's scheme emulation also requests reduced motion
     assert.ok((await p.goto('https://site.culm.invalid/', 15000)).ok)
     return await p.evaluate<T>(
       `(async()=>{const get=id=>document.querySelector('[data-id="'+id+'"]');${expression}})()`,
@@ -51,6 +57,109 @@ const fade: Step = {
   to: { opacity: 1 },
   durationMs: 500,
 }
+
+const moveX: Step = { ...fade, from: { xPx: 0 }, to: { xPx: 100 } }
+test('appearAfter keeps its root scroll clock and threshold while translation plays', async () => {
+  const owner = text('hero', 'Reed', {
+    style: { base: { appearAfter: 100 } },
+    motion: { trigger: 'load', steps: [moveX] },
+  })
+  const got = await read(
+    siteWith([owner, node('space', 'box')]),
+    `
+    get('space').style.height='3000px';const el=get('hero');
+    const timed=el.getAnimations().find(a=>a.timeline===document.timeline);
+    timed.pause();timed.currentTime=250;
+    const out=[];for(const y of [0,954,1100,0]){scrollTo(0,y);await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+      const s=getComputedStyle(el);out.push([s.visibility,+s.opacity,parseFloat(s.translate)])}return out`,
+  )
+  assert.deepEqual(got, [
+    ['hidden', 0, 50],
+    ['visible', 0.5, 50],
+    ['visible', 1, 50],
+    ['hidden', 0, 50],
+  ])
+  owner.motion = {
+    trigger: 'load',
+    steps: [{ ...fade, from: { opacity: 0.5 }, to: { opacity: 0.5 } }],
+  }
+  const opacity = await read(
+    siteWith([owner, node('space', 'box')]),
+    `
+    get('space').style.height='3000px';const out=[];
+    for(const y of [0,954,1100,0]){scrollTo(0,y);await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+      out.push(+getComputedStyle(get('hero')).opacity)}return out`,
+  )
+  assert.deepEqual(opacity, [0, 0.25, 0.5, 0])
+})
+test('separate horizontal and vertical owners compose on a child and deactivate independently', async () => {
+  const child = text('line', 'Reed', {
+    motion: {
+      trigger: 'load',
+      steps: [{ ...fade, from: { yPx: 0 }, to: { yPx: 200 } }],
+    },
+  })
+  const owner = node('hero', 'column', [child])
+  owner.state = [{ name: 'mode', values: 'on-off', initial: 'on' }]
+  owner.motion = {
+    trigger: { state: 'mode', is: 'on' },
+    steps: [{ ...moveX, target: 'children' }],
+  }
+  const got = await read(
+    siteWith([owner]),
+    `
+    const el=get('line'),parent=get('hero');const read=()=>{for(const a of el.getAnimations()){a.pause();a.currentTime=250}
+      const r=el.getBoundingClientRect(),p=parent.getBoundingClientRect();return [r.x-p.x,r.y-p.y]};
+    const on=read();parent.dataset.sMode='off';return [on,read()]`,
+  )
+  assert.deepEqual(got, [
+    [50, 100],
+    [0, 100],
+  ])
+})
+test('a transformed inline span inside a box actually moves and returns to its inline layout', async () => {
+  const child = text('line', 'Reed', {
+    props: { level: 'span', runs: [{ text: 'Reed' }] },
+    motion: { trigger: { state: 'mode', is: 'on' }, steps: [moveX] },
+  })
+  const owner = node('hero', 'box', [child])
+  owner.state = [{ name: 'mode', values: 'on-off', initial: 'off' }]
+  const got = await read(
+    siteWith([owner]),
+    `
+    const el=get('line'),parent=get('hero'),left=el.getBoundingClientRect().left;
+    const box=()=>[getComputedStyle(el).display,el.getBoundingClientRect().left-left];
+    const values=[box()];parent.dataset.sMode='on';const a=el.getAnimations()[0];a.pause();
+    for(const t of [0,250,500]){a.currentTime=t;values.push(box())}
+    parent.dataset.sMode='off';return [...values,box()]`,
+  )
+  assert.deepEqual(got, [
+    ['inline', 0],
+    ['inline-block', 0],
+    ['inline-block', 50],
+    ['inline-block', 100],
+    ['inline', 0],
+  ])
+  child.style = {
+    base: { hidden: true },
+    when: [{ state: 'mode', is: 'on', decl: { hidden: false } }],
+  }
+  owner.state[0].initial = 'on'
+  const visibility = `
+    const p=get('hero'),el=get('line'),s=()=>getComputedStyle(el).display;
+    const a=el.getAnimations()[0];if(a){a.pause();a.currentTime=250}const on=[s(),el.getBoundingClientRect().left-p.getBoundingClientRect().left];
+    p.dataset.sMode='off';return [on,s(),matchMedia('(prefers-reduced-motion:reduce)').matches]`
+  assert.deepEqual(await read(siteWith([owner]), visibility), [
+    ['inline-block', 50],
+    'none',
+    false,
+  ])
+  assert.deepEqual(await read(siteWith([owner]), visibility, 390, true), [
+    ['inline', 0],
+    'none',
+    true,
+  ])
+})
 
 test('independent owners can animate different properties of the same rendered child', async () => {
   const child = text('line', 'Reed', {
@@ -172,6 +281,7 @@ test('a native two-step descendant scroll animation seeks forward and back over 
           },
         }),
       ]),
+      style: { base: { overflow: 'scroll-x' } },
       motion: {
         trigger: 'scroll',
         steps: [
@@ -182,9 +292,11 @@ test('a native two-step descendant scroll animation seeks forward and back over 
     },
     node('after', 'box'),
   ])
-  const got = await read<number[]>(
-    doc,
-    `
+  doc.pages[0].root.style = { base: { overflow: 'clip' } }
+  for (const width of [1280, 390]) {
+    const got = await read<number[]>(
+      doc,
+      `
     for(const id of ['before','after'])get(id).style.height='1800px';
     const el=get('hero'),child=get('line');el.style.height='900px';
     const timed=child.getAnimations().find(a=>a.timeline===document.timeline);
@@ -197,7 +309,33 @@ test('a native two-step descendant scroll animation seeks forward and back over 
       if(Math.abs(parseFloat(css.translate)-50)>.01 || css.translate==='none') throw Error(css.translate)
     }
     return out`,
-  )
-  for (const [i, p] of [0, 0.25, 0.5, 0.75, 1, 0.25].entries())
-    assert.ok(Math.abs(got[i] - p) < 0.01, JSON.stringify(got))
+      width,
+    )
+    for (const [i, p] of [0, 0.25, 0.5, 0.75, 1, 0.25].entries())
+      assert.ok(Math.abs(got[i] - p) < 0.01, JSON.stringify(got))
+  }
+})
+
+test('native support alone never attaches a nested fallback scene to the wrong scrollport', async () => {
+  const motion: Motion = {
+    trigger: 'scroll',
+    scrollFallback: 'timeline',
+    steps: [fade],
+  }
+  const scroller = {
+    ...node('scroller', 'column', [text('inside', 'Inside', { motion })]),
+    style: { base: { overflow: 'scroll-x' as const } },
+  }
+  const doc = siteWith([scroller, text('outside', 'Outside', { motion })])
+  for (const width of [1280, 390])
+    assert.deepEqual(
+      await read(
+        doc,
+        `
+    return [CSS.supports('animation-timeline:view()'),...['outside','inside'].map(id=>
+      get(id).getAnimations().some(a=>a.timeline instanceof ViewTimeline))]`,
+        width,
+      ),
+      [true, true, false],
+    )
 })

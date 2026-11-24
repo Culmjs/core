@@ -77,9 +77,10 @@ export const OWN = (spec: KindSpec, v: Variant) =>
 /** More rules for a class, besides its own; `key` puts what they depend on in the dedup key. `base` follows the class's base rule, `when` sits after the state layers. */
 export type Extra = {
   key: string
+  restoresInline?: boolean
   base?: (cls: string) => string
   when?: (cls: string) => string
-  show?: (cls: string) => string
+  show?: (cls: string, motionInline?: boolean) => string
 }
 /** A text style sits under the block's own base: its declarations apply, and the block's own values win. A missing style is ignored. */
 export function withTextStyle(

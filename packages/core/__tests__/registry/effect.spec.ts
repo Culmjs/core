@@ -33,6 +33,59 @@ const plugin = (...effects: EffectDef[]) => ({
 })
 const doc = (motion: Motion) =>
   siteWith([{ ...node('hero', 'column', [text('title', 'Test')]), motion }])
+
+test('block look presets address exactly the same inserted parts as handwritten local targets', () => {
+  const reg = core.createRegistry()
+  const looks = ['written', 'named'].map(id => ({
+    id,
+    name: id,
+    tree: {
+      ...node('root', 'column', [text('title', 'Reed')]),
+      motion: (id === 'written'
+        ? { trigger: 'load', steps: [step({ id: 'title' })] }
+        : { trigger: 'load', effect: 'lift' }) as Motion,
+    },
+  }))
+  reg.use({
+    ...plugin(def({ steps: () => [step({ id: 'title' })] })),
+    blocks: [
+      {
+        id: 'reed',
+        version: 1,
+        name: 'Reed',
+        category: 'utility',
+        settings: [],
+        looks,
+      },
+    ],
+  })
+  const results = looks.map(({ id }) => {
+    const r = core.insertBlock(reg, 'reed', id, 'card')
+    assert.ok(r.ok)
+    const d = siteWith([r.root, text('title', 'Unrelated')])
+    const out = core.compilePage(d, 'home', { registry: reg, mode: 'measure' })
+    assert.ok(out.ok, JSON.stringify(out.problems))
+    assert.match(out.html, /<p[^>]*cm-t\d+[^>]*data-id="card\.title"/)
+    return out.html
+  })
+  assert.equal(results[0], results[1])
+  const r = core.insertBlock(reg, 'reed', 'named', 'card')
+  assert.ok(r.ok)
+  r.root.children = [
+    {
+      ...node('other', 'box', [text('other.title', 'No suffix lookup')]),
+      origin: { block: 'reed', look: 'named', version: 1 },
+    },
+  ]
+  const bad = core.validateSite(
+    siteWith([r.root, text('title', 'Sibling')]),
+    reg,
+  )
+  assert.ok(
+    bad.some(p => p.nodeId === 'card' && p.path === 'motion.steps.0.target'),
+    JSON.stringify(bad),
+  )
+})
 test('registry exposes rise and plug-in definitions; capability is distinct from the invocation', () => {
   const reg = core.createRegistry()
   reg.use(plugin(def()))
