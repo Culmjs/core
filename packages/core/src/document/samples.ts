@@ -1,4 +1,5 @@
-import type { Node } from './types.ts'
+import { templateIndex } from './tree.ts'
+import type { Node, Run } from './types.ts'
 
 /**
  * Untouched sample text, by provenance and never by wording.
@@ -72,43 +73,81 @@ const any = (v: L3) => v.some(Boolean)
  * content keeps a block when it shows on any layout (a line hidden on desktop and shown on phones still keeps its block).
  * A copy of a repeated row (its id has a `~`) is data and counts for its block; it is taken out only when it holds nothing but samples. A `details` or a form keeps its block and loses only the samples inside it.
  * Owner text that a state reveals (a `when` layer that unhides it) counts as shown, so a block holding it is never dropped.
+ * Before data expansion, keep what a binding or a row could publish. A conditional sample is not guaranteed to empty its parent.
  */
-export function dropSamples(root: Node): Node {
+export function dropSamples(
+  root: Node,
+  phase: 'expanded' | 'before-data' = 'expanded',
+): Node {
+  const pending = phase === 'before-data'
   // [the widget or null, where a sample shows in here, where a person's content shows in here]
-  const go = (w: Node, top: boolean, vis: L3): [Node | null, L3, L3] => {
+  const go = (
+    w: Node,
+    top: boolean,
+    vis: L3,
+    inRow = false,
+  ): [Node | null, L3, L3] => {
     const here = and(vis, shownOn(w))
     if (w.kind === 'text') {
+      const runs =
+        pending && Array.isArray(w.props?.runs)
+          ? (w.props.runs as Run[])
+          : undefined
+      if (w.props?.sample === true && runs?.some(r => r.bind || r.bindHref))
+        return [w, none, here] // expansion clears this mark, including for an empty bound value
       if (w.props?.sample === true) return [null, here, none]
       if (w.props?.sample === false) return [w, none, here]
-      return [w, none, w.props?.chrome !== true && !blank(w) ? here : none]
+      return [
+        w,
+        none,
+        w.props?.chrome !== true && (!blank(w) || runs?.some(r => r.bind))
+          ? here
+          : none,
+      ]
     }
     // A button still wearing its default label (a tab, a slider button) is a control: it counts as neither a sample nor the owner's, so it goes with its block while
     // everything else in the block is still sample, and stays once the owner has written anything in the block.
-    if (w.kind === 'button' && w.props?.sample === true) return [w, none, none]
+    if (
+      w.kind === 'button' &&
+      w.props?.sample === true &&
+      !(pending && w.bind?.label)
+    )
+      return [w, none, none]
     if (w.kind === 'image')
-      return [w, none, w.props?.assetId || w.props?.src ? here : none]
+      return [
+        w,
+        none,
+        w.props?.assetId || w.props?.src || (pending && w.bind?.src)
+          ? here
+          : none,
+      ]
     if (!STRUCTURE.has(w.kind) && !CONTROLS.has(w.kind)) return [w, none, here]
     let sample = none,
       own = none,
       changed = false
-    const kids = (w.children ?? []).flatMap(k => {
-      const [out, s, o] = go(k, false, here)
-      sample = or(sample, s)
+    const template = pending && w.repeat ? templateIndex(w) : -1
+    const kids = (w.children ?? []).flatMap((k, i) => {
+      const [out, s, o] = go(k, false, here, inRow || i === template)
+      if (!pending || !(i === template || k.showIf || k.showIfAny))
+        sample = or(sample, s)
       own = or(own, o)
       changed ||= out !== k
       return out ? [out] : []
     })
     // an expandable whose summary is a sample goes with its samples when nothing the owner wrote is inside it
-    if (w.kind === 'details' && w.props?.sample === true && !any(own))
-      return [null, or(sample, here), none]
+    const sampleSummary =
+      w.kind === 'details' &&
+      w.props?.sample === true &&
+      !(pending && w.bind?.summary)
+    if (sampleSummary && !any(own)) return [null, or(sample, here), none]
     if (CONTROLS.has(w.kind))
       return [
         changed ? { ...w, children: kids } : w,
         sample,
-        w.kind === 'details' && w.props?.sample === true ? own : or(own, here),
+        sampleSummary ? own : or(own, here),
       ]
     // A copy of a repeated row is data: it counts for its block. It is taken out when it holds nothing but samples (an empty row), and only its samples go otherwise.
-    const copy = w.id.includes('~')
+    const copy = inRow || w.id.includes('~')
     if (!top && any(sample) && !any(own))
       return [null, sample, copy ? here : none]
     if (copy) own = or(own, here)

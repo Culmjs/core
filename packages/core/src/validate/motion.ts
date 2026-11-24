@@ -11,6 +11,7 @@ import type {
 } from '../document/index.ts'
 import { ID_RE } from '../document/kinds.ts'
 import { isObj } from '../document/rules.ts'
+import { dropSamples } from '../document/samples.ts'
 import { templateIndex, walk } from '../document/tree.ts'
 import { shownOn } from '../layout/placement.ts'
 import { childLayoutDisplay, listDisplay } from '../layout/display.ts'
@@ -225,16 +226,20 @@ function canPin(
   owner: StateScope,
   lookup: Lookup,
   scheme: Look['dark'],
+  layoutOwner: Node,
 ): boolean | 'cut' {
   const w = owner.w
   if (specOf(c, w.kind)?.role !== 'container') return false
   let found = false
-  for (const [i, child] of (w.children ?? []).entries()) {
+  const many =
+    w.repeat && w.repeat.max !== 1
+      ? w.children?.[templateIndex(w)]?.id
+      : undefined
+  for (const child of layoutOwner.children ?? []) {
     const visual = visualChild({ w: child, parent: owner }, lookup, scheme)
     if (visual === 'cut') return 'cut'
     if (!visual) continue
-    if (found || (w.repeat && i === templateIndex(w) && w.repeat.max !== 1))
-      return false
+    if (found || child.id === many) return false
     found = true
   }
   return found
@@ -398,6 +403,7 @@ export function checkComposedMotions(
       return site ?? (h.over ? 'cut' : undefined)
     }
     const scopes: StateScope[] = []
+    let pinView: Map<string, Node> | undefined
     walk(tree, (w, _parent, depth) => {
       const scope = (scopes[depth] = { w, parent: scopes[depth - 1] ?? null })
       const m = w.motion
@@ -433,7 +439,14 @@ export function checkComposedMotions(
           say('This is not a value of the declared state.', 'motion.trigger.is')
       }
       if (m.pinPx !== undefined) {
-        const pin = canPin(c, scope, lookup, scheme)
+        // The live compiler infers order/wrapping after it drops samples. Keep the
+        // authored scopes and repeat indices, but read layout from the possible live nodes.
+        if (!pinView) {
+          const live = new Map<string, Node>()
+          walk(dropSamples(tree, 'before-data'), n => void live.set(n.id, n))
+          pinView = live
+        }
+        const pin = canPin(c, scope, lookup, scheme, pinView.get(w.id) ?? w)
         if (pin === 'cut') cutHeader('motion.pinPx')
         else if (!pin)
           say(

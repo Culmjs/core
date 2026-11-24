@@ -700,3 +700,68 @@ test('a page cannot depend on a header root declaration past the composition bud
   assert.ok(reachable.ok)
   assert.match(reachable.html, /data-s-contrast="off"/)
 })
+
+for (const sibling of [false, true]) {
+  test(`an unpublished ordered sample cannot reveal a pin child ${sibling ? 'beside a visible sibling' : 'on its own'}`, () => {
+    const ordered = text('draft', 'Placeholder', {
+      style: { tablet: { order: 1 } },
+    })
+    ordered.props!.sample = true
+    const box = node('box', 'box', [text('copy', 'Written'), ordered])
+    box.style = { base: { hidden: true } }
+    const owner = node(
+      'hero',
+      'column',
+      sibling ? [box, text('aside', 'Visible')] : [box],
+    )
+    const doc = siteWith([owner])
+    const plain = compilePage(doc, 'home', { registry: reg })
+    assert.ok(plain.ok)
+    assert.match(plain.html, /Written/)
+    assert.doesNotMatch(plain.html, /Placeholder/)
+    assert.doesNotMatch(
+      plain.css,
+      /@media \(max-width: 1024px\)\{[^@]*display:flex;flex-direction:column/,
+    )
+
+    owner.motion = { trigger: 'scroll', pinPx: 400, steps: [step()] }
+    const before = structuredClone(doc)
+    if (sibling) assert.deepEqual(validateSite(doc, reg), [])
+    else refused(doc, 'motion.pinPx')
+    assert.equal(compilePage(doc, 'home', { registry: reg }).ok, sibling)
+    assert.deepEqual(doc, before)
+
+    // Binding changes this sample into published content; its order now does reveal the box.
+    ordered.props!.runs = [{ text: '', bind: { from: 'site', field: 'title' } }]
+    if (sibling) refused(doc, 'motion.pinPx')
+    else {
+      assert.deepEqual(validateSite(doc, reg), [])
+      const bound = compilePage(doc, 'home', {
+        registry: reg,
+        data: { rows: {}, values: { title: 'From data' } },
+      })
+      assert.ok(bound.ok)
+      assert.match(bound.html, /From data/)
+      assert.match(
+        bound.css,
+        /@media \(max-width: 1024px\)\{[^@]*display:flex;flex-direction:column/,
+      )
+    }
+  })
+}
+
+test('an optional sample cannot prove that its enclosing pin child will be dropped', () => {
+  const draft = text('draft', 'Sample', {
+    showIf: { from: 'site', field: 'show' },
+  })
+  draft.props!.sample = true
+  const box = node('candidate', 'column', [draft])
+  const owner = node('hero', 'column', [box])
+  owner.motion = { trigger: 'scroll', pinPx: 400, steps: [step()] }
+  const doc = siteWith([owner])
+  assert.deepEqual(validateSite(doc, reg), [])
+  const empty = compilePage(doc, 'home', { registry: reg, mode: 'measure' })
+  assert.ok(empty.ok)
+  assert.match(empty.html, /data-id="candidate"/)
+  assert.doesNotMatch(empty.html, /data-id="draft"/)
+})
