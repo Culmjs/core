@@ -6,7 +6,7 @@ import {
   type SiteDocument,
   type Problem,
 } from '@culmjs/core'
-import { plan } from '@culmjs/core/ops'
+import { projectOps } from '@culmjs/core/internal/projection'
 import { isObj } from '../shared.ts'
 import { safeData, start, type Source } from './formats.ts'
 import { JsxError, MAX_JSX_CHARS } from './parse.ts'
@@ -123,7 +123,7 @@ export function buildRequest(
   }
   const project = (ops: Obj[], path: string, b?: Good) => {
     if (!ops.length) return
-    const r = plan(doc, registry, {
+    const r = projectOps(doc, registry, {
       site: 'x',
       key: 'x',
       baseRevision: 0,
@@ -140,7 +140,12 @@ export function buildRequest(
     }
     doc = r.doc
     out.ops.push(...ops)
-    out.plan.entries.push(...(b?.plan.entries ?? ops.map(op => ({ op }))))
+    out.plan.entries.push(
+      ...(b?.plan.entries ?? ops.map(op => ({ op }))).map(e => ({
+        ...e,
+        editPath: path,
+      })),
+    )
     b?.plan.byId.forEach((v, k) => out.plan.byId.set(k, v))
     b?.plan.kinds.forEach((v, k) => out.plan.kinds.set(k, v))
   }

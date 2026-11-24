@@ -777,7 +777,16 @@ export function locate(b: Extract<Built, { ok: true }>, p: Problem): Problem {
   if (/cannot hold other nodes/.test(p.message))
     x.fix =
       'A Text, Image, Icon, Divider, Menu or Field holds no elements; put them beside it.'
-  return entry?.editIndex === undefined ? x : { ...x, op: entry.editIndex }
+  // Core/veto paths remain canonical. Validation of the projected document
+  // belongs to the compact item that emitted the failing operation.
+  return {
+    ...x,
+    ...(entry?.editIndex !== undefined && { op: entry.editIndex }),
+    ...(entry?.editPath &&
+      p.code !== 'POLICY_VIOLATION' && {
+        path: entry.editPath + (p.path ? '.' + p.path : ''),
+      }),
+  }
 }
 
 /** Every problem of a write at once: what is wrong in the JSX itself, then what core refuses when the rest is checked as `apply` checks it. Sorted by place. */

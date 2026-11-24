@@ -14,7 +14,7 @@ import { isObj, SLUG_RE } from '../document/rules.ts'
 import { type Registry } from '../registry/index.ts'
 import { FONTS, checkLook, checkSiteStyles } from '../style/index.ts'
 import { isFontRef } from '../style/fonts.ts'
-import { fieldsOf, isStr, oneOf } from './common.ts'
+import { diagnosticId, fieldsOf, isStr, oneOf } from './common.ts'
 import { checkShown } from './required.ts'
 import { checkTrees } from './tree.ts'
 
@@ -296,7 +296,7 @@ export function checkDocument(
 const known = (p: Problem, rule: string): Problem => ({
   code: p.code,
   message: p.message.slice(0, 500),
-  ...(typeof p.nodeId === 'string' ? { nodeId: p.nodeId.slice(0, 40) } : {}),
+  ...(typeof p.nodeId === 'string' ? { nodeId: diagnosticId(p.nodeId) } : {}),
   ...(typeof p.path === 'string' ? { path: p.path.slice(0, 200) } : {}),
   ...(Array.isArray(p.allowed) &&
   p.allowed.length <= 50 &&

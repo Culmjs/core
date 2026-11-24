@@ -54,6 +54,11 @@
       "types": "./dist/ops/index.d.ts",
       "default": "./dist/ops/index.js"
     },
+    "./internal/projection": {
+      "source": "./src/ops/projection.ts",
+      "types": "./dist/ops/projection.d.ts",
+      "default": "./dist/ops/projection.js"
+    },
     "./measure": {
       "source": "./src/measure/index.ts",
       "types": "./dist/measure/index.d.ts",

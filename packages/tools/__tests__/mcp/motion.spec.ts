@@ -154,6 +154,62 @@ test('full plan, apply, replay, diff and restore for setMotion', async () => {
   assert.deepEqual(await files(dir), before)
 })
 
+test('compact write and full apply resolve motion against the same final moves', async () => {
+  const motion = { ...sequence, steps: [{ ...step, target: { id: 'intro' } }] }
+  for (const full of [true, false]) {
+    const dir = await copyFixture('site-basic')
+    const writer = await compact(dir),
+      call = (await serve(dir)).call
+    const head = await ok(writer, 'describe')
+    const { revision } = await ok(writer, 'write', {
+      baseRevision: head.revision,
+      ops: [{ op: 'insert', node: { id: 'owner', kind: 'box' } }],
+    })
+    const move = { op: 'move', id: 'intro', parent: 'owner', index: 0 }
+    const saved = full
+      ? await ok(call, 'apply', {
+          key: 'both',
+          baseRevision: revision,
+          ops: [
+            { op: 'setMotion', tree, id: 'owner', motion },
+            { ...move, tree },
+          ],
+        })
+      : await ok(writer, 'write', {
+          baseRevision: revision,
+          ops: [{ op: 'update', id: 'owner', motion }, move],
+        })
+    const read = await readNode(call, 'owner')
+    assert.deepEqual(read.motion, motion)
+    assert.equal(
+      find((await openProject(dir)).loaded.doc!.pages[0].root, 'owner')!
+        .children![0].id,
+      'intro',
+    )
+    const before = await files(dir)
+    const invalid = await writer('write', {
+      baseRevision: saved.revision,
+      ops: [
+        { op: 'update', id: 'intro', text: 'Not saved' },
+        {
+          op: 'update',
+          id: 'owner',
+          motion: { ...motion, steps: [{ ...step, target: { id: 'absent' } }] },
+        },
+        { op: 'update', id: 'owner', style: { opacity: 0.8 } },
+      ],
+    })
+    assert.equal(invalid.error, true)
+    const p = invalid.json.problems[0]
+    assert.deepEqual(
+      [p.op, p.nodeId, p.path],
+      [1, 'owner', 'ops[1].motion.steps.0.target'],
+    )
+    assert.deepEqual(await files(dir), before)
+    assert.equal((await ok(writer, 'describe')).revision, saved.revision)
+  }
+})
+
 for (const phase of ['diagnose', 'apply'] as const)
   test(`compact ${phase} veto identifies the source edit rather than its second core operation`, async () => {
     const dir = await copyFixture('site-basic')

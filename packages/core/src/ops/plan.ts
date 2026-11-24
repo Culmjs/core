@@ -101,7 +101,10 @@ export const OP_NAMES: readonly Op['op'][] = [
   'addPage', 'removePage', 'setPage', 'movePage', 'setSite', 'setLook', 'setSiteStyles', 'setFonts',
 ] // prettier-ignore
 
-const fail = (problems: Problem[], op?: number): PlanResult => ({
+const fail = (
+  problems: Problem[],
+  op?: number,
+): Extract<PlanResult, { ok: false }> => ({
   ok: false,
   problems: op === undefined ? problems : problems.map(p => ({ ...p, op })),
 })
@@ -159,16 +162,14 @@ function brokenLinks(before: SiteDocument, after: SiteDocument): Note[] {
     : []
 }
 
-/**
- * Runs the operations on a copy of `doc` and returns the new document, or the refusal. Touches no store and never throws.
- * Order: the shape of the request, the two size limits, then for each operation its shape, `allow`, its function; after the last, `validateSite` once.
- */
-export function plan(
+/** Project edits for id allocation and subsequent lookups. Intermediate references
+ * may still be unresolved. Only plan/apply check a publishable batch boundary. */
+function runOps(
   doc: SiteDocument,
   registry: Registry,
   request: ChangeRequest,
   allow?: Allow,
-): PlanResult {
+) {
   let i: number | undefined
   try {
     if (!isObj(request) || !Array.isArray(request.ops))
@@ -219,6 +220,7 @@ export function plan(
     let work = doc
     // The operations' own created and changed lists serve one purpose here: the index of the operation to blame for a validation problem.
     const last = new Map<string, number>() // node id -> index of the last operation that created or changed it
+    const motion = new Map<string, number>()
     const notes: Note[] = []
     for (i = 0; i < ops.length; i++) {
       const op: unknown = ops[i]
@@ -256,18 +258,50 @@ export function plan(
       if (!r.ok) return fail(r.problems, i)
       work = r.doc
       for (const c of [...r.created, ...r.changed]) last.set(c.id, i)
+      for (const c of r.created) motion.set(c.id, i)
+      if (op.op === 'setMotion') motion.set(op.id as string, i)
       if (r.notes) notes.push(...r.notes)
     }
-    i = undefined
+    return { ok: true as const, doc: work, last, motion, notes }
+  } catch (e) {
+    return fail(refuse('INVALID_OPERATION', why(e)).problems, i)
+  }
+}
 
-    work = aliasStyles(work)
+export function projectOps(
+  doc: SiteDocument,
+  registry: Registry,
+  request: ChangeRequest,
+): { ok: true; doc: SiteDocument } | Extract<PlanResult, { ok: false }> {
+  const r = runOps(doc, registry, request)
+  return r.ok ? { ok: true, doc: r.doc } : r
+}
+
+/** Validate the actual final projection, then diff it. Touches no store. */
+export function plan(
+  doc: SiteDocument,
+  registry: Registry,
+  request: ChangeRequest,
+  allow?: Allow,
+): PlanResult {
+  try {
+    const r = runOps(doc, registry, request, allow)
+    if (!r.ok) return r
+    const { last, motion, notes } = r
+    const work = aliasStyles(r.doc)
     const problems = validateSite(work, registry)
     if (problems.length)
       return {
         ok: false,
         problems: problems.map(p =>
           p.nodeId !== undefined && last.has(p.nodeId)
-            ? { ...p, op: last.get(p.nodeId) }
+            ? {
+                ...p,
+                op:
+                  (p.path?.startsWith('motion')
+                    ? motion.get(p.nodeId)
+                    : undefined) ?? last.get(p.nodeId),
+              }
             : p,
         ),
       }
@@ -294,6 +328,6 @@ export function plan(
       notes: [...notes, ...brokenLinks(doc, work)],
     }
   } catch (e) {
-    return fail(refuse('INVALID_OPERATION', why(e)).problems, i)
+    return fail(refuse('INVALID_OPERATION', why(e)).problems)
   }
 }

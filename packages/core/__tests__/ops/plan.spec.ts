@@ -715,6 +715,28 @@ test('a bad setMotion on a 41-character block descendant identifies its exact no
     [[id, 'motion.steps.0.durationMs', 1]],
   )
   const malformed = 'X'.repeat(41)
+  const custom = sampleRegistry()
+  custom.use({
+    name: 'policies',
+    version: 1,
+    api: [1],
+    runs: ['build'],
+    trust: 'declarative',
+    rules: [
+      {
+        name: 'caption',
+        check: () => [
+          { code: 'POLICY_VIOLATION', message: 'Caption locked.', nodeId: id },
+        ],
+      },
+    ],
+  })
+  assert.deepEqual(
+    refused(
+      plan(doc, custom, req([setText('other', 'First'), setText(id, 'Title')])),
+    ).map(p => [p.nodeId, p.op, p.rule]),
+    [[id, 1, 'caption']],
+  )
   assert.equal(
     validateSite(siteWith([text(malformed, 'Bad')]), reg).find(
       p => p.path === 'id',

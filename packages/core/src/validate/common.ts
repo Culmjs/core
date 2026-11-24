@@ -70,9 +70,7 @@ export type Checks = Pick<Ctx, 'kinds' | 'styles' | 'fonts'>
 
 export const only = (o: Obj, keys: readonly string[]) =>
   Object.keys(o).every(k => keys.includes(k))
-export const idOf = (w: unknown) => {
-  if (!isObj(w) || typeof w.id !== 'string') return undefined
-  const id = w.id
+export const diagnosticId = (id: string) => {
   // A full block id plus a full local id is 41 characters including the dot.
   if (
     id.length === 41 &&
@@ -83,6 +81,8 @@ export const idOf = (w: unknown) => {
     return id
   return id.slice(0, 40)
 }
+export const idOf = (w: unknown) =>
+  isObj(w) && typeof w.id === 'string' ? diagnosticId(w.id) : undefined
 
 export const specOf = (c: Checks, kind: unknown): KindSpec | undefined =>
   typeof kind === 'string' ? kindSpec(kind, c.kinds) : undefined
