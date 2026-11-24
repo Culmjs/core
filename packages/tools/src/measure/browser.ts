@@ -28,6 +28,8 @@ export type Page = {
   setTouch(enabled: boolean): Promise<void>
   /** Move focus with the browser's normal sequential keyboard navigation. */
   tab(): Promise<void>
+  /** Send one trusted activation-key transition, allowing observation while held. */
+  key(key: 'Enter' | ' ', down: boolean): Promise<void>
   /** Actual browser accessibility names, in tree order. */
   names(role: string): Promise<string[]>
   /** Every console error, uncaught exception and failed request the page logged, in order. */
@@ -628,6 +630,15 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
       const key = { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 }
       await s('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...key })
       await s('Input.dispatchKeyEvent', { type: 'keyUp', ...key })
+    },
+    key(key, down) {
+      return s('Input.dispatchKeyEvent', {
+        type: down ? 'keyDown' : 'keyUp',
+        ...(down && { text: key === 'Enter' ? '\r' : ' ' }),
+        key,
+        code: key === ' ' ? 'Space' : key,
+        windowsVirtualKeyCode: key === ' ' ? 32 : 13,
+      })
     },
     async answer(fn) {
       owner.fn = fn

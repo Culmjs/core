@@ -140,11 +140,9 @@ export function measureText(
         const at = line(original)
         if (here !== at) {
           visual.append(space)
-          space = ''
           fragment = 'lines' in plan ? member(visual, 'lines', at) : visual
           here = at
-        }
-        fragment.append(space)
+        } else fragment.append(space)
         space = ''
         const word = member(fragment, 'words', groups.words.length)
         if (chars) {

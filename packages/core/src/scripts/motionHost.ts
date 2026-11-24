@@ -69,8 +69,12 @@ export function hostMotion(
         el.addEventListener(name, f, { signal: scope, capture })
     }
   const on = listen(signal)
+  const disconnect = (o?: { disconnect(): void }) => {
+    if (o) o.disconnect()
+  }
   const clock = (name: string) => w.CSS.supports(`animation-timeline:${name}()`)
   const rect = (el: Element) => el.getBoundingClientRect()
+  const area = (r: DOMRect) => r.width * r.height
   const { max, min } = Math
   const clamp = (p: number) => min(1, max(0, p))
   const attr = 'data-culm-motion'
@@ -82,8 +86,7 @@ export function hostMotion(
     pending.clear()
   }
   const unschedule = (update: () => void) => {
-    pending.delete(update)
-    if (!pending.size) cancel()
+    if (pending.delete(update) && !pending.size) cancel()
   }
   const schedule = (update: () => void) => {
     if (doc.hidden) return
@@ -98,6 +101,7 @@ export function hostMotion(
   const each = (selector: string, f: (el: Element) => void) =>
     doc.querySelectorAll(selector).forEach(f)
   const layouts = new Set<() => void>()
+  let managed = false
   let unwatchFlow: () => void
   const watchFlow = () => {
     // Shared across mounted neutral clocks. Paint changes neither these
@@ -115,8 +119,8 @@ export function hostMotion(
         }),
       )
     return () => {
-      if (sizes) sizes.disconnect()
-      if (states) states.disconnect()
+      disconnect(sizes)
+      disconnect(states)
     }
   }
   each(`[${attr}]`, owner => {
@@ -128,6 +132,7 @@ export function hostMotion(
     const target = (id: number) => (id ? owner.querySelector(token(id)) : owner)
     const child = target(s.child || 0)
     if (!owner.animate || !owner.getBoundingClientRect || !child) return
+    managed = true
     const readInput = scrub || layout
     let entered = false
     const mount = (scope: AbortSignal) => {
@@ -164,7 +169,7 @@ export function hostMotion(
           if (!fixed.size || (a.effect as KeyframeEffect).target) a.cancel()
         animations.length = 0
         shifts.length = 0
-        if (sizes) sizes.disconnect()
+        disconnect(sizes)
         sizes = undefined
         if (text) text.restore()
         text = undefined
@@ -260,8 +265,7 @@ export function hostMotion(
       }
       const play = () => {
         if (animations.length || text) return
-        const box = rect(child)
-        if (!(box.width * box.height)) return
+        if (!area(rect(child))) return
         if (!pin) return start()
         // Capture every applicable extent before installing the padding.
         const pinBox = owner as HTMLElement,
@@ -334,7 +338,8 @@ export function hostMotion(
         play()
         return
       }
-      let intersecting = false
+      let intersecting = false,
+        active = entrance || tr === 'load'
       let wake: (e: Event) => boolean = () => false
       const syncView = () => {
         visible = intersecting && !doc.hidden
@@ -388,11 +393,7 @@ export function hostMotion(
                 axis('left', 'right', 'overflowX', w.innerWidth)
             }
             if (scrub) {
-              if (
-                !(r.width * r.height) ||
-                (pin && !child.getClientRects().length)
-              )
-                stop()
+              if (!area(r) || (pin && !child.getClientRects().length)) stop()
               else {
                 play()
                 const p = pointer
@@ -407,7 +408,7 @@ export function hostMotion(
           }
           if (scrub) return
         }
-        if (visible && (entrance || tr === 'load')) {
+        if (visible && active) {
           play()
           if (entrance && animations.length) entered = true
         }
@@ -426,7 +427,7 @@ export function hostMotion(
         layouts.add(syncView)
       }
       abort(scope, () => {
-        observer.disconnect()
+        disconnect(observer)
         if (layouts.delete(syncView) && !layouts.size) unwatchFlow()
         unschedule(syncView)
       })
@@ -497,11 +498,20 @@ export function hostMotion(
         const [id, attr, value] = tr
         const holder = owner.closest(token(id))
         if (!holder) return
-        const sync = () =>
-          holder.getAttribute(attr) === value ? play() : stop()
+        const sync = () => {
+          active = holder.getAttribute(attr) === value
+          if (active) play()
+          else stop()
+        }
         const observer = new MutationObserver(sync)
         observer.observe(holder, { attributeFilter: [attr] })
-        abort(scope, () => observer.disconnect())
+        // IO need not cross a threshold when an in-view zero-sized box grows.
+        const size = ResizeObserver && new ResizeObserver(sync)
+        if (size) size.observe(owner)
+        abort(scope, () => {
+          disconnect(observer)
+          disconnect(size)
+        })
         sync()
       }
     }
@@ -532,9 +542,12 @@ export function hostMotion(
     abort(signal, clear)
     configure()
   })
-  on(doc, 'visibilitychange', () => {
-    if (doc.hidden) cancel()
+  if (managed)
+    on(doc, 'visibilitychange', () => {
+      if (doc.hidden) cancel()
+    })
+  abort(signal, () => {
+    cancel()
+    delete doc._cm
   })
-  abort(signal, cancel)
-  abort(signal, () => delete doc._cm)
 }

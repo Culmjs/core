@@ -84,11 +84,15 @@ test('the published plain page matches the captured c11f84f fixture byte for byt
   )
   assert.equal(page(docFor()).html, plainBaselineHtml)
 })
-test('load, keyboard-equivalent hover and active press use finite gated CSS', () => {
+test('load and keyboard-equivalent hover use finite gated CSS; a generic press needs keys', () => {
   assert.match(cssOnly('load', rise()).css, /400ms/)
   assert.match(cssOnly('hover', rise()).css, /:focus-visible/)
   assert.match(cssOnly('hover', rise()).css, /:hover/)
-  assert.match(cssOnly('press', rise()).css, /:active/)
+  assert.ok(
+    page(docFor({ trigger: 'press', steps: [rise()] })).scripts.some(
+      s => s.name === 'timeline',
+    ),
+  )
 })
 test('two steps share the target and the second delay follows the first duration', () => {
   const m: Motion = {

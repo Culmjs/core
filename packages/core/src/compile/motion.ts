@@ -103,6 +103,19 @@ function keyboardOwner(owner: HtmlNode) {
     attrs.tabindex = 0
 }
 
+// A focusable div (or link) does not hold :active on keydown. Native push
+// buttons do, and keep their built-in activation without a keyboard listener.
+function cssPress(owner: HtmlNode) {
+  return (
+    owner.tag === 'button' ||
+    owner.tag === 'summary' ||
+    (owner.tag === 'input' &&
+      ['button', 'submit', 'reset', 'checkbox', 'radio', 'image'].includes(
+        String(owner.attrs?.type),
+      ))
+  )
+}
+
 type Binding = { holder: HtmlNode; attr: string; initial: string; is: string }
 function bindState(
   m: Motion,
@@ -284,9 +297,12 @@ function timelines(
           'rotate' in frames[0])
       ) {
         scene.layout = true
-        layoutOwners.add(owner)
         timing.id = 'cm-layout'
       }
+    // A stationary owner can also change position without crossing an IO
+    // threshold, when a sibling collapses. Native timelines already observe it.
+    if (trigger === 'scroll' && !m.pinPx) scene.layout = true
+    if (scene.layout) layoutOwners.add(owner)
     for (const part of scene.parts ?? [])
       part.tracks = drawTracks(part.tracks, compound)
     if (pinChild && m.pinPx) {
@@ -537,7 +553,8 @@ export function motionCss(
         registry,
       )
       const state = bindState(m, chain, depth, header, site, rendered)
-      if (tier === 2 || m.scrollFallback) {
+      const hostOnly = tier === 2 || (m.trigger === 'press' && !cssPress(owner))
+      if (hostOnly || m.scrollFallback) {
         let pinChild: Node | undefined
         if (m.pinPx) {
           for (const n of orderedChildren(w)) {
@@ -565,7 +582,7 @@ export function motionCss(
         }
         pending.push({ w, owner, steps, state, pinChild })
       }
-      if (tier === 2) return
+      if (hostOnly) return
       const t = steps[0].target
       const nodes =
         t === 'self'

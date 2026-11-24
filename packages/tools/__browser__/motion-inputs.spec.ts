@@ -87,8 +87,9 @@ const audit = `<script>
   // Count live, signal-bound DOM subscriptions (all input/visibility/media
   // listeners of the preview are installed this way). Exclude our own hooks.
   const listen=EventTarget.prototype.addEventListener;
-  window.subs=0;
+  window.subs=0;window.visibilityListeners=0;
   EventTarget.prototype.addEventListener=function(k,f,o){
+    if(this===document&&k==='visibilitychange')visibilityListeners++;
     if(o?.signal&&!o.signal.aborted){subs++;listen.call(o.signal,'abort',()=>subs--,{once:true})}
     return listen.call(this,k,f,o)
   };
@@ -479,6 +480,30 @@ test(
                 near(v, [0, 0.25, 0.5, 0.75, 1, 0.25][i]),
               )
               results.push(samples)
+              const reflow = await p.evaluate<number[]>(`(async()=>{
+                await at(0);get('owner').style.height='200px';
+                const rows=[];for(const h of [400,0,400]){get('before').style.height=h+'px';await tick();
+                rows.push(get('owner').getBoundingClientRect().top,+getComputedStyle(get('a')).opacity,scrollY)}
+                return rows})()`)
+              t.diagnostic(`${engine.version} sibling reflow: ${reflow}`)
+              ;[
+                400,
+                500 / 1100,
+                0,
+                0,
+                900 / 1100,
+                0,
+                400,
+                500 / 1100,
+                0,
+              ].forEach((v, i) => near(reflow[i], v, 0.005))
+              if (native)
+                assert.deepEqual(
+                  await p.evaluate(
+                    '[observers.size,calls,visibilityListeners]',
+                  ),
+                  [0, 0, 0],
+                )
             }
           },
           { engine: compat },
@@ -490,6 +515,173 @@ test(
     }
   },
 )
+
+test('an already-active state acquires tracks when a separate visibility state reveals it', async () => {
+  for (const host of [false, true]) {
+    const owner = node('owner', 'box', [text('a', 'A')])
+    owner.motion = {
+      trigger: { state: 'mode', is: 'on' },
+      steps: [
+        {
+          ...fade,
+          ...(host && { staggerMs: 1 }),
+          from: { opacity: 0.35 },
+          to: { opacity: 0.35 },
+        },
+      ],
+    }
+    owner.style = {
+      when: [{ state: 'shown', is: 'off', decl: { hidden: true } }],
+    }
+    const holder = node('holder', 'box', [owner])
+    holder.state = ['mode', 'shown'].map(name => ({
+      name,
+      initial: 'off',
+      values: 'on-off',
+    }))
+    await fixture(html([holder]), async p => {
+      const got = await p.evaluate(`(async()=>{
+        const a=get('a'), s=get('holder').dataset;
+        s.sMode='on';await tick();s.sShown='on';await tick();
+        const first=a.getAnimations()[0], values=[+getComputedStyle(a).opacity];
+        get('owner').style.width='200px';await tick();values.push(a.getAnimations().length,a.getAnimations()[0]===first);
+        s.sMode='off';await tick();return [...values,a.getAnimations().length,+getComputedStyle(a).opacity]})()`)
+      assert.deepEqual(got, [0.35, 1, true, 0, 1])
+      if (host) {
+        await p.setReducedMotion(true)
+        assert.deepEqual(
+          await p.evaluate(
+            `(async()=>{await tick();get('holder').dataset.sMode='on';await tick();return [observers.size,document.getAnimations().length]})()`,
+          ),
+          [0, 0],
+        )
+      }
+    })
+  }
+})
+
+test('Tab reaches a simple press owner; holding and releasing real keys operates one track', async () => {
+  const link = (id: string) => ({
+    ...node(id, 'button'),
+    props: { label: id, link: { url: '#' } },
+  })
+  for (const kind of ['plain', 'link', 'native']) {
+    const native = kind === 'native'
+    const owner = native
+      ? node('owner', 'button')
+      : kind === 'link'
+        ? link('owner')
+        : text('owner', 'Press')
+    if (native) {
+      owner.props = { label: 'Press' }
+      owner.state = [{ name: 'mode', initial: 'off', values: 'on-off' }]
+      owner.on = [{ on: 'click', do: { toggle: 'mode' } }]
+    }
+    owner.motion = {
+      trigger: 'press',
+      steps: [
+        {
+          ...fade,
+          target: 'self',
+          from: { opacity: 0.4 },
+          to: { opacity: 0.4 },
+        },
+      ],
+    }
+    await fixture(html([link('first'), owner, link('last')]), async p => {
+      assert.equal(
+        await p.evaluate(`!!get('owner').getAttribute('data-culm-motion')`),
+        !native,
+      )
+      await p.tab()
+      assert.equal(
+        await p.evaluate(`document.activeElement.dataset.id`),
+        'first',
+      )
+      await p.tab()
+      assert.equal(
+        await p.evaluate(`document.activeElement.dataset.id`),
+        'owner',
+      )
+      await p.evaluate(
+        `window.clicks=0;get('owner').addEventListener('click',()=>clicks++)`,
+      )
+      for (const key of native ? ([' '] as const) : ([' ', 'Enter'] as const)) {
+        await p.key(key, true)
+        assert.deepEqual(
+          await p.evaluate(
+            `get('owner').getAnimations().map(a=>[a instanceof CSSAnimation,+getComputedStyle(get('owner')).opacity])`,
+          ),
+          [[native, 0.4]],
+        )
+        await p.key(key, false)
+        assert.equal(await p.evaluate(`get('owner').getAnimations().length`), 0)
+      }
+      if (native)
+        assert.equal(await p.evaluate(`get('owner').dataset.sMode`), 'on')
+      assert.equal(await p.evaluate(`clicks`), kind === 'plain' ? 0 : 1)
+      await p.tab()
+      assert.equal(
+        await p.evaluate(`document.activeElement.dataset.id`),
+        'last',
+      )
+    })
+  }
+})
+
+test('group draw uses the painted direct geometry; mask parts cannot provide a visible stroke', async () => {
+  const stroke = { width: 3, color: 'ink' } as const
+  for (const combine of ['layer', 'union', 'subtract'] as const) {
+    for (const own of [true, false]) {
+      const line: Node = {
+        ...node('line', 'shape'),
+        slot: { x: 0, y: 0, w: 50, h: 50 },
+        props: {
+          geometry: { type: 'path', d: 'M0 0L30 40' },
+          ...(own && { stroke }),
+        },
+      }
+      const cut: Node = { ...line, id: 'cut', props: { ...line.props, stroke } }
+      const group: Node = {
+        ...node('group', 'shape', [line, cut]),
+        props: {
+          geometry: { type: 'group', combine },
+          ...(!own && { stroke }),
+        },
+      }
+      group.motion = {
+        trigger: 'load',
+        steps: [
+          {
+            ...fade,
+            target: { id: 'line', part: 'path' },
+            from: { draw: 0.5 },
+            to: { draw: 0.5 },
+          },
+        ],
+      }
+      const check = () =>
+        compilePage(siteWith([group]), 'home', { registry: sampleRegistry() })
+      if (combine === 'layer' || !own) {
+        await fixture(html([group]), async p => {
+          const got =
+            await p.evaluate(`(async()=>{await tick();const el=get('group').querySelector('path[class*="cm-e"]'),cs=getComputedStyle(el);
+            return [el.getTotalLength(),cs.stroke!=='none',parseFloat(cs.strokeWidth),parseFloat(cs.strokeDashoffset)]})()`)
+          assert.deepEqual(got, [50, true, 3, 25])
+        })
+      } else
+        assert.ok(
+          check().problems.some(p => p.path === 'motion.steps.0.target'),
+        )
+      if (combine === 'subtract') {
+        group.motion.steps[0].target = { id: 'cut', part: 'path' }
+        assert.ok(
+          check().problems.some(p => p.path === 'motion.steps.0.target'),
+        )
+      }
+    }
+  }
+})
 
 const pointerDoc = (extra: Node[] = []) => {
   const owner = node('owner', 'box', [text('a', 'A'), text('b', 'B')])
