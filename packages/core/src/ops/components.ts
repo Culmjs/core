@@ -1,8 +1,23 @@
 import { ID_RE } from '../document/kinds.ts'
 import { isObj } from '../document/rules.ts'
-import { replace, retarget, targetOf, walk } from '../document/tree.ts'
+import { stepsTier } from '../document/motionSteps.ts'
+import {
+  replace,
+  retarget,
+  targetOf,
+  walk,
+  walkBlocks,
+} from '../document/tree.ts'
 import { MAX_NODES } from '../document/index.ts'
-import type { Component, Node, SiteDocument } from '../document/index.ts'
+import type {
+  Component,
+  Motion,
+  Node,
+  SiteDocument,
+  Step,
+} from '../document/index.ts'
+import { resolveEffect } from '../registry/effect.ts'
+import { checkTargets, presetTarget } from '../validate/motionTargets.ts'
 import { unrollEnv, unrollInstances } from '../validate/unroll.ts'
 import { MAX_COMPONENTS, validateSite } from '../validate/validate.ts'
 import { nextIds } from './ids.ts'
@@ -244,6 +259,45 @@ export const setInstance: OpFn<'setInstance'> = (doc, _registry, op) => {
 
 // ---- detach
 
+type BoundPreset = Extract<Motion, { effect: string }> & {
+  steps: Step[]
+  localIds: (string | null)[]
+}
+
+/** Bind a factory once per authored master, not against the already-renamed
+ * copy. Keep its original target names to tell if the preset can survive detach. */
+function detachBindings(registry: Registry) {
+  const cache = new Map<Node, Node>()
+  const bind = (w: Node, ns?: string) => {
+    const m = w.motion
+    if (!m || !('effect' in m)) return
+    const fail = (message: string, path: string): never => {
+      throw new Error(`${w.id}.${path}: ${message}`)
+    }
+    const steps = resolveEffect(registry.effect(m.effect), m.settings, fail)!
+    const localIds = steps.map(s =>
+      typeof s.target === 'object' ? s.target.id : null,
+    )
+    if (!localIds.some(Boolean)) return
+    for (const s of steps) s.target = presetTarget(w, s.target, ns)
+    checkTargets(w, steps, fail)
+    const bound: BoundPreset = { ...m, steps, localIds }
+    return bound
+  }
+  const masterRoot = (root: Node) => {
+    const existing = cache.get(root)
+    if (existing) return existing
+    const copy = structuredClone(root)
+    walkBlocks(copy, (w, ns) => {
+      const bound = bind(w, ns)
+      if (bound) w.motion = bound
+    })
+    cache.set(root, copy)
+    return copy
+  }
+  return { bind, masterRoot }
+}
+
 export const detach: OpFn<'detach'> = (doc, registry, op) => {
   const t = at(doc, op as unknown as Fields)
   if (isRefusal(t)) return t
@@ -252,12 +306,19 @@ export const detach: OpFn<'detach'> = (doc, registry, op) => {
     return bad(`"${n.id}" is not a component use.`, { nodeId: n.id })
   // Only the component's own tree is unrolled: what a person put in the slot is theirs and goes back as it was.
   const { children: slotted, ...bare } = n
+  const { bind, masterRoot } = detachBindings(registry)
+  let inherited: string | undefined
+  walkBlocks(t.root, (w, ns) => {
+    if (w.children?.includes(n)) inherited = ns
+  })
+  const bound = bind(n, n.origin ? n.id : inherited)
+  if (bound) bare.motion = bound
   // The same unroll as compile's, with its budget in view: a copy cut at MAX_NODES would silently lose nested content.
   const budget = { n: 0, over: false }
   const unrolled = unrollInstances(
     bare as Node,
     doc.components,
-    unrollEnv(doc, registry.kinds()),
+    { ...unrollEnv(doc, registry.kinds()), masterRoot },
     budget,
   )
   if (budget.over)
@@ -311,6 +372,34 @@ export const detach: OpFn<'detach'> = (doc, registry, op) => {
         ]
     })
   }
+  // Compare the actual binding after *all* renames and slot insertions. An
+  // unchanged preset stays editable (and keeps its declared tier).
+  walkBlocks(
+    copy,
+    (w, ns) => {
+      if (!w.motion || !('localIds' in w.motion)) return
+      const { steps, localIds, effect, settings, ...playback } =
+        w.motion as BoundPreset
+      const changed = steps.some(({ target }, i) => {
+        if (typeof target !== 'object') return false
+        const resolved = presetTarget(w, { ...target, id: localIds[i]! }, ns)
+        return typeof resolved !== 'object' || target.id !== resolved.id
+      })
+      // A tier-2 scroll preset also worked on engines without a view timeline.
+      // Keep that capability if the materialized steps alone would buy only CSS.
+      w.motion = changed
+        ? {
+            ...playback,
+            steps,
+            ...(playback.trigger === 'scroll' &&
+              !playback.pinPx &&
+              registry.effect(effect)?.tier === 2 &&
+              stepsTier(steps) === 1 && { scrollFallback: 'timeline' }),
+          }
+        : { ...playback, effect, ...(settings && { settings }) }
+    },
+    inherited,
+  )
   const result = withRoot(doc, t.tree, replace(t.root, n.id, copy))
   const broken = stillValid(
     doc,

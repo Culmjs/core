@@ -37,6 +37,8 @@ type Env = {
   styles: SiteStyles
   /** Plug-in kinds; core kinds are always known. */
   kinds?: ReadonlyMap<string, KindSpec>
+  /** Detach needs checked local references before this master's ids change. */
+  masterRoot?: (root: Node) => Node
 }
 export { DEPTH_GUARD }
 /** How much has been added so far, against `MAX_NODES`. */
@@ -144,7 +146,7 @@ export function unrollInstances(
     if (deep) return ((state.over = true), null)
     if (state.n + size > MAX_NODES) return ((state.over = true), null)
     state.n += size
-    const tree = structuredClone(c.root)
+    const tree = structuredClone(env.masterRoot?.(c.root) ?? c.root)
     const parts = new Map<string, Node>()
     walk(tree, x => void parts.set(x.id, x))
     const props = Array.isArray(c.props) ? c.props : []

@@ -52,6 +52,20 @@ export function find(root: Node, id: string): Node | undefined {
   return hit
 }
 
+/** The closest block root supplies the local namespace of an inserted look. */
+export function walkBlocks(
+  root: Node,
+  fn: (w: Node, namespace?: string) => void,
+  inherited?: string,
+) {
+  const visit = (w: Node, ns?: string) => {
+    if (w.origin) ns = w.id
+    fn(w, ns)
+    w.children?.forEach(child => visit(child, ns))
+  }
+  visit(root, inherited)
+}
+
 export function parentOf(root: Node, id: string): Node | undefined {
   let hit: Node | undefined
   walk(root, (w, p) => {

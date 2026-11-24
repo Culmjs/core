@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import * as core from '../../src/index.ts'
+import { plan } from '../../src/ops/index.ts'
 import type { EffectDef, Motion, Step } from '../../src/index.ts'
 import {
   DEMO_PLUGIN,
@@ -33,6 +34,87 @@ const plugin = (...effects: EffectDef[]) => ({
 })
 const doc = (motion: Motion) =>
   siteWith([{ ...node('hero', 'column', [text('title', 'Test')]), motion }])
+
+for (const [target, nested] of [
+  ['n1', false],
+  ['title', true],
+  ['n2', false],
+] as const)
+  test(`detach keeps the preset on Title (${target}, nested=${nested})`, () => {
+    const reg = core.createRegistry()
+    reg.use(plugin(def({ steps: () => [step({ id: target })] })))
+    const preset = { trigger: 'load', effect: 'rise' } as const
+    const panel = node('panel', 'column', [
+      text('caption', 'Caption', { motion: preset }),
+      text(target, 'Title'),
+    ])
+    panel.motion = { trigger: 'load', effect: 'lift' }
+    const master = {
+      id: 'panel',
+      name: 'Panel',
+      props: [],
+      variants: [],
+      root: panel,
+    }
+    const outer = {
+      ...master,
+      id: 'outer',
+      root: node('wrap', 'box', [
+        { ...node('inner', 'instance'), component: 'panel' },
+      ]),
+    }
+    const d = siteWith(
+      [{ ...node('use', 'instance'), component: nested ? 'outer' : 'panel' }],
+      {
+        components: [master, outer],
+      },
+    )
+    const before = structuredClone(d)
+    const marked = (site: typeof d) => {
+      const p = core.compilePage(site, 'home', {
+        registry: reg,
+        mode: 'measure',
+      })
+      assert.ok(p.ok, JSON.stringify(p.problems))
+      assert.match(p.html, /<p[^>]*cm-t\d+[^>]*>Title<\/p>/)
+    }
+    marked(d)
+    const r = plan(d, reg, {
+      site: 's',
+      key: 'k',
+      baseRevision: 0,
+      ops: [{ op: 'detach', tree: { page: 'home' }, id: 'use' }],
+    })
+    assert.ok(r.ok, JSON.stringify(r))
+    marked(r.doc)
+    const use = r.doc.pages[0].root.children![0]
+    const detached = nested ? use.children![0] : use
+    assert.deepEqual(detached.children![0].motion, preset)
+    if (target === 'n2') assert.deepEqual(detached.motion, panel.motion)
+    assert.deepEqual(d, before)
+  })
+
+test('materializing an id-bearing tier-2 scroll preset keeps its old-engine scrub', () => {
+  const reg = core.createRegistry()
+  reg.use(plugin(def({ tier: 2, steps: () => [step({ id: 'title' })] })))
+  const root = node('panel', 'box', [text('title', 'Title')])
+  root.motion = { trigger: 'scroll', effect: 'lift' }
+  const d = siteWith([{ ...node('use', 'instance'), component: 'panel' }], {
+    components: [{ id: 'panel', name: 'Panel', props: [], variants: [], root }],
+  })
+  const r = plan(d, reg, {
+    site: 's',
+    key: 'k',
+    baseRevision: 0,
+    ops: [{ op: 'detach', tree: { page: 'home' }, id: 'use' }],
+  })
+  assert.ok(r.ok)
+  assert.deepEqual(r.doc.pages[0].root.children![0].motion, {
+    trigger: 'scroll',
+    steps: [step({ id: 'n1' })],
+    scrollFallback: 'timeline',
+  })
+})
 
 test('block look presets address exactly the same inserted parts as handwritten local targets', () => {
   const reg = core.createRegistry()

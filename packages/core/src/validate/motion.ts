@@ -3,17 +3,11 @@ import type {
   FontRef,
   Look,
   Motion,
-  MotionTarget,
   MotionTrigger,
   Node,
   Step,
 } from '../document/index.ts'
-import {
-  checkKeys,
-  checkSteps,
-  split,
-  type Say,
-} from '../document/motionSteps.ts'
+import { checkKeys, checkSteps, type Say } from '../document/motionSteps.ts'
 import { resolveEffect } from '../registry/effect.ts'
 import { isObj } from '../document/rules.ts'
 import { dropSamples } from '../document/samples.ts'
@@ -32,6 +26,7 @@ import {
 } from './common.ts'
 import { stateIn, type StateScope } from './states.ts'
 import { unrollInstances } from './unroll.ts'
+import { checkTargets, paintedStrokes, presetTarget } from './motionTargets.ts'
 
 type Lookup = (
   scope: StateScope,
@@ -51,47 +46,6 @@ const stateKeys = fieldsOf<Exclude<MotionTrigger, string>>({
   state: true,
   is: true,
 })
-
-/** Stay below the owner, without crossing into a template which will produce a different id per copy. */
-function descendant(owner: Node, id: string): Node | undefined {
-  const children = owner.children ?? []
-  const end =
-    owner.repeat === undefined ? children.length : templateIndex(owner)
-  for (let i = 0; i < end; i++) {
-    const child = children[i]
-    if (child.id === id) return child
-    const hit = descendant(child, id)
-    if (hit) return hit
-  }
-}
-
-function targetProblem(
-  owner: Node,
-  target: MotionTarget,
-  draw: boolean,
-): string | undefined {
-  const hit = typeof target === 'object' ? descendant(owner, target.id) : owner
-  if (!hit)
-    return 'The id must name a descendant in this tree and repeat template.'
-  const path =
-    target === 'path' || (typeof target === 'object' && target.part === 'path')
-  if (draw && !path) return 'Drawing a stroke needs an explicit path target.'
-  // Instance roots take their kind, effective settings and children from the composed tree.
-  if (hit.kind === 'instance') return
-  if (oneOf(target, split) && hit.kind !== 'text')
-    return 'Only text can be split into lines, words or letters.'
-  if (path) {
-    const geometry: unknown = hit.props?.geometry
-    const stroke: unknown = hit.props?.stroke
-    if (hit.kind !== 'shape' || !isObj(geometry) || geometry.type !== 'path')
-      return 'This target must be a path shape.'
-    if (
-      draw &&
-      !(isObj(stroke) && typeof stroke.width === 'number' && stroke.width > 0)
-    )
-      return 'Drawing needs a path with a stroke of positive width.'
-  }
-}
 
 function canPin(
   c: Ctx,
@@ -118,13 +72,6 @@ function canPin(
     found = true
   }
   return found
-}
-
-function checkTargets(owner: Node, steps: Step[], say: Say) {
-  steps.forEach((s, i) => {
-    const bad = targetProblem(owner, s.target, 'draw' in s.from)
-    if (bad) say(bad, `motion.steps.${i}.target`)
-  })
 }
 
 /** Check the stored program and its authored IDs. State scope and visual children require the composed tree. */
@@ -166,15 +113,8 @@ export function checkMotion(c: Ctx, _t: TCtx, e: Entry): void {
     if (steps) {
       // insertBlock has already applied blockIds to the stored look. Reconstruct
       // only that exact namespace mapping, then apply the ordinary owner/template check.
-      for (const { target } of steps)
-        if (
-          typeof target === 'object' &&
-          typeof e.ns === 'string' &&
-          !target.id.includes('.')
-        ) {
-          const qualified = `${e.ns}.${target.id}`
-          if (descendant(e.w, qualified)) target.id = qualified
-        }
+      for (const step of steps)
+        step.target = presetTarget(e.w, step.target, e.ns)
       checkTargets(e.w, steps, say)
       // Internal composition copy: retain the preset name (its declared tier is a floor)
       // alongside the exact checked steps, so the ordinary ID maps retarget them.
@@ -257,6 +197,7 @@ export function checkComposedMotions(
     }
     const scopes: StateScope[] = []
     let pinView: Map<string, Node> | undefined
+    let painted: Set<Node> | undefined
     walk(tree, (w, _parent, depth) => {
       const scope = (scopes[depth] = { w, parent: scopes[depth - 1] ?? null })
       const m = w.motion
@@ -312,7 +253,8 @@ export function checkComposedMotions(
             'motion.pinPx',
           )
       }
-      if (tree !== t.root && 'steps' in m) checkTargets(w, m.steps, say)
+      if ('steps' in m)
+        checkTargets(w, m.steps, say, () => (painted ??= paintedStrokes(tree)))
     })
   }
 }

@@ -3,6 +3,7 @@ import { checkColor, colorCss } from '../style/decl.ts'
 import { geometryBad } from '../validate/tree.ts'
 import { domId, el, type Attrs, type Build } from './elementsBase.ts'
 import { type HtmlNode } from './html.ts'
+import { partPaint, type PartPaint as How } from '../document/shapePaint.ts'
 
 const r2 = (x: number) => Math.round(x * 100) / 100
 const clamp = (x: number) => Math.min(100, Math.max(0, x))
@@ -136,8 +137,6 @@ function paint(id: string, p: Record<string, unknown>, line: boolean): Paint {
 export function shapeRefs(p: Record<string, unknown>): string {
   return paint('x', p, false).colors.join(' ')
 }
-
-type How = 'own' | 'bare' | 'cut'
 
 /** The immediate geometry of this shape, never a path inside its defs or a nested SVG. */
 export const directPath = (shape?: HtmlNode) =>
@@ -288,18 +287,13 @@ function groupKids(
   rendered?: Map<Node, HtmlNode>,
 ): HtmlNode[] {
   const kids = w.children ?? []
+  const child = (c: Node, i: number) =>
+    part(c, partPaint(g.combine, i, how), rendered)
   // inside a union or a subtract the outer paint rules: an inner group writes none of its own, and its parts take the outer mode
   const fill = how === 'own' ? { style: pt.fill } : {}
   // ponytail: a gradient on a union or subtract is per part (objectBoundingBox); one ramp across the group needs userSpaceOnUse bounds in the group's view
   const [vw, vh] = g.view ?? [100, 100]
-  if (g.combine === 'union')
-    return [
-      el(
-        'g',
-        fill,
-        kids.map(c => part(c, how === 'own' ? 'bare' : how, rendered)),
-      ),
-    ]
+  if (g.combine === 'union') return [el('g', fill, kids.map(child))]
   if (g.combine === 'subtract' && kids.length) {
     const id = safeId(w.id, 'm')
     return [
@@ -322,16 +316,14 @@ function groupKids(
               height: vh,
               style: 'fill:#fff',
             }),
-            ...kids.slice(1).map(c => part(c, 'cut', rendered)),
+            ...kids.slice(1).map((c, i) => child(c, i + 1)),
           ],
         ),
       ]),
-      el('g', { mask: `url(#${id})`, ...fill }, [
-        part(kids[0]!, how === 'own' ? 'bare' : how, rendered),
-      ]),
+      el('g', { mask: `url(#${id})`, ...fill }, [child(kids[0]!, 0)]),
     ]
   }
-  return kids.map(c => part(c, how, rendered))
+  return kids.map(child)
 }
 
 export function shapeElement(b: Build): HtmlNode {
