@@ -14,6 +14,7 @@ import {
   text,
 } from '../../core/__tests__/kit.ts'
 import { openBrowser, type Browser, type Page } from '../src/measure/browser.ts'
+import { decodePng } from '../src/measure/png.ts'
 
 let browser: Browser
 before(async () => {
@@ -112,6 +113,213 @@ async function fixture(
 }
 const near = (a: number, b: number, tolerance: number) =>
   assert.ok(Math.abs(a - b) <= tolerance, `${a} vs ${b} (±${tolerance})`)
+
+const byState = (words: string, steps: Step[]) => {
+  const h = heading(words, steps)
+  h.motion!.trigger = { state: 'mode', is: 'on' }
+  h.state = [{ name: 'mode', values: 'on-off', initial: 'off' }]
+  return h
+}
+const neutral: Step = {
+  ...fade,
+  target: 'letters',
+  from: { opacity: 1 },
+  to: { opacity: 1 },
+}
+
+test('bidi paint positions survive splitting or static fallback in pure and mixed directional runs', async t => {
+  for (const [s, dir] of [
+    ['שלום עולם', 'ltr'],
+    ['Reed (אבג) 42', 'ltr'],
+    ['שלום A12 • עולם', 'rtl'],
+  ]) {
+    await fixture(
+      [byState(s, [neutral])],
+      async p => {
+        const read = () =>
+          p.evaluate<number[]>(`(()=>{
+        const r=document.createRange(),w=document.createTreeWalker(h(),4),xs=[];
+        for(let n;n=w.nextNode();)for(const {index,segment} of new Intl.Segmenter().segment(n.data)){
+          if(!segment.trim())continue;r.setStart(n,index);r.setEnd(n,index+segment.length);xs.push(r.getBoundingClientRect().left)
+        }return xs})()`)
+        const before = await read()
+        await p.evaluate(
+          `window.original=h().firstChild;h().dataset.sMode='on';tick()`,
+        )
+        const after = await read()
+        t.diagnostic(JSON.stringify({ s, dir, before, after }))
+        assert.equal(after.length, before.length)
+        after.forEach((x, i) => near(x, before[i], 1))
+        assert.deepEqual(await p.names('heading'), [s])
+        await p.evaluate(`h().dataset.sMode='off';tick()`)
+        assert.equal(await p.evaluate('h().firstChild===original'), true)
+      },
+      { css: `h2{direction:${dir}}` },
+    )
+  }
+})
+
+test('decoration paint and focused link identity survive direct and propagated underlines', async t => {
+  for (const [sel, mask] of [
+    ['h2 a', false],
+    ['h2', false],
+    ['h2 a', true],
+  ] as const) {
+    const h = byState('', [{ ...neutral, mask }])
+    h.props = {
+      level: 'h2',
+      runs: [{ text: 'Reed Ledger', link: { url: '#reed' } }],
+    }
+    await fixture(
+      [h],
+      async p => {
+        await p.tab()
+        await p.evaluate('window.link=h().querySelector("a")')
+        const ink = async () => {
+          const img = decodePng(
+            await p.screenshot({ x: 0, y: 0, w: 390, h: 60 }),
+          )
+          let n = 0
+          for (let i = 0; i < img.rgba.length; i += 4)
+            if (
+              img.rgba[i] > 180 &&
+              img.rgba[i + 1] < 70 &&
+              img.rgba[i + 2] < 70
+            )
+              n++
+          return n
+        }
+        const counts = []
+        for (const mode of ['off', 'on', 'off']) {
+          await p.evaluate(`h().dataset.sMode='${mode}';tick()`)
+          assert.deepEqual(
+            await p.evaluate(
+              `[document.activeElement===link,h().querySelector('a')===link,link.hash]`,
+            ),
+            [true, true, '#w-reed'],
+          )
+          assert.deepEqual(await p.names('link'), ['Reed Ledger'])
+          counts.push(await ink())
+        }
+        t.diagnostic(JSON.stringify({ sel, mask, counts }))
+        assert.ok(counts[0] > 300)
+        near(counts[1], counts[0], counts[0] * 0.05)
+        assert.equal(counts[2], counts[0])
+      },
+      {
+        css: `h2 a{color:black;text-decoration:none;outline:none}${sel}{text-decoration:underline solid red 3px;text-underline-offset:2px}`,
+      },
+    )
+  }
+})
+
+test('reflow retains fixed effect order and retimes its onset after changing line count', async t => {
+  for (const settled of [false, true]) {
+    const child = byState('Reed ledger for the waterline', [
+      { ...fade, target: settled ? 'letters' : 'lines', staggerMs: 80 },
+      {
+        ...fade,
+        target: 'self',
+        from: { opacity: 0.4 },
+        to: { opacity: 0.4 },
+        durationMs: 1000,
+      },
+    ])
+    child.motion!.trigger = 'load'
+    const box = node('box', 'box', [child])
+    box.state = child.state
+    delete child.state
+    box.motion = {
+      trigger: { state: 'mode', is: 'on' },
+      steps: [
+        {
+          ...fade,
+          target: { id: 'reed' },
+          from: { opacity: 0.8 },
+          to: { opacity: 0.8 },
+        },
+        { ...fade, target: 'self' },
+      ],
+    }
+    await fixture([box], async p => {
+      await p.evaluate(`(async()=>{await tick();window.fixed=h().getAnimations()[0];
+      tracks().forEach(a=>${settled ? 'a.finish()' : 'a.currentTime=650'});window.box=h().parentElement;box.dataset.sMode='on';await tick()})()`)
+      const read = () =>
+        p.evaluate<
+          number[]
+        >(`[+getComputedStyle(h()).opacity,+h().getAnimations().includes(fixed),
+      fixed.effect.getTiming().delay,Number(fixed.currentTime),tracks().filter(a=>a.effect.target!==h()).length]`)
+      const before = await read()
+      await p.setViewport(settled ? 300 : 220, 900)
+      await p.evaluate('tick()')
+      const during = await read()
+      await p.evaluate(`box.dataset.sMode='off';tick()`)
+      const after = await read()
+      t.diagnostic(JSON.stringify({ before, during, after }))
+      near(before[0], 0.8, 0.001)
+      near(during[0], 0.8, 0.001)
+      near(after[0], 0.4, 0.001)
+      assert.equal(during[1], 1)
+      assert.ok(during[3] >= before[3])
+      if (settled) assert.equal(await p.evaluate('fixed.playState'), 'finished')
+      else {
+        assert.ok(during[2] > before[2])
+        assert.ok(during[4] > before[4])
+      }
+    })
+  }
+})
+
+test('wrap fallback retries on metric changes only and releases watches on reduce and abort', async t => {
+  const h = byState('waterlogged reeds', [fade])
+  await fixture(
+    [h],
+    async p => {
+      await p.evaluate(
+        `window.original=h().firstChild;h().dataset.sMode='on';tick()`,
+      )
+      const snap = () =>
+        p.evaluate<number[]>(
+          `[tracks().length,h().childElementCount,+(h().firstChild===original),watches.size,attempts]`,
+        )
+      const samples = [await snap()]
+      for (const w of [68, 390, 68]) {
+        await p.setViewport(w, 900)
+        await p.evaluate('tick()')
+        samples.push(await snap())
+        const work = await p.evaluate('attempts')
+        await p.evaluate(`tick().then(tick)`)
+        assert.equal(await p.evaluate('attempts'), work)
+      }
+      t.diagnostic(JSON.stringify(samples))
+      assert.deepEqual(
+        samples.map(r => r[0]),
+        [1, 0, 1, 0],
+      )
+      assert.deepEqual(samples[1].slice(1, 3), [0, 1])
+      await p.setReducedMotion(true)
+      await p.evaluate('tick()')
+      assert.equal((await snap())[3], 0)
+      await p.setReducedMotion(false)
+      await p.evaluate('tick()')
+      await p.evaluate('controller.abort()')
+      const last = await snap()
+      await p.setViewport(390, 900)
+      await p.evaluate(
+        `document.fonts.dispatchEvent(new Event('loadingdone'));tick()`,
+      )
+      assert.deepEqual(last.slice(0, 4), [0, 0, 1, 0])
+      assert.deepEqual(await snap(), last)
+    },
+    {
+      preview: true,
+      css: 'h2{overflow-wrap:anywhere}',
+      setup: `window.watches=new Set;window.attempts=0;
+    const walk=document.createTreeWalker.bind(document);document.createTreeWalker=(...args)=>{attempts++;return walk(...args)};
+    window.ResizeObserver=class extends ResizeObserver{observe(e){watches.add(this);super.observe(e)}disconnect(){watches.delete(this);super.disconnect()}}`,
+    },
+  )
+})
 
 for (const width of [1280, 390])
   test(`actual masked effect11 trajectory at ${width}×900`, async t => {

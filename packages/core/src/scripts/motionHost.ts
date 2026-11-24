@@ -5,7 +5,7 @@ import { measureText, type TextPlan } from './motionText.ts'
 export type PackedTrack = [
   instances: [token: number, startMs: number][],
   frames: Keyframe[],
-  options: KeyframeAnimationOptions,
+  options: KeyframeAnimationOptions & { duration: number },
   revealFrames?: Keyframe[],
 ]
 export type Scene = {
@@ -50,11 +50,13 @@ export function hostMotion(
   signal?: AbortSignal,
 ): void {
   const w = win as Window & typeof globalThis
+  const { ResizeObserver, IntersectionObserver, MutationObserver } = w
+  const fonts = doc.fonts
   if (
     doc._cm ||
     (signal && signal.aborted) ||
     !w.matchMedia ||
-    !w.IntersectionObserver
+    !IntersectionObserver
   )
     return
   doc._cm = true
@@ -79,6 +81,10 @@ export function hostMotion(
     frame = 0
     pending.clear()
   }
+  const unschedule = (update: () => void) => {
+    pending.delete(update)
+    if (!pending.size) cancel()
+  }
   const schedule = (update: () => void) => {
     if (doc.hidden) return
     pending.add(update)
@@ -97,8 +103,8 @@ export function hostMotion(
     // Shared across mounted neutral clocks. Paint changes neither these
     // border-box sizes nor the compiler's allowlist of state attributes.
     const reflow = () => layouts.forEach(schedule)
-    const sizes = w.ResizeObserver && new w.ResizeObserver(reflow)
-    const states = w.MutationObserver && new w.MutationObserver(reflow)
+    const sizes = ResizeObserver && new ResizeObserver(reflow)
+    const states = MutationObserver && new MutationObserver(reflow)
     if (sizes)
       each('.cm-flow>*', el => sizes.observe(el, { box: 'border-box' }))
     const attr = 'data-cm-watch'
@@ -116,7 +122,7 @@ export function hostMotion(
   each(`[${attr}]`, owner => {
     const s: Scene = JSON.parse(owner.getAttribute(attr)!)
     if (s.native && clock('view')) return
-    const { trigger: tr, pin, layout } = s
+    const { trigger: tr, pin, layout, parts } = s
     const pointer = tr === 'pointer-x',
       scrub = pointer || tr === 'scroll'
     const target = (id: number) => (id ? owner.querySelector(token(id)) : owner)
@@ -146,19 +152,29 @@ export function hostMotion(
       let duration = s.duration
       let text: ReturnType<typeof measureText> | undefined
       let sizes: ResizeObserver | undefined
-      let refused = false,
+      // Parsed instance tuples have stable identities. A reflow may retime a
+      // real target, but must not reorder its effect above another owner's.
+      const fixed = new Map<number[], Animation>()
+      let resume = 0,
         dirty = false
-      const stop = () => {
-        animations.forEach(a => a.cancel())
+      const reset = () => {
+        for (const a of animations)
+          if (!fixed.size || (a.effect as KeyframeEffect).target) a.cancel()
         animations.length = 0
         shifts.length = 0
         if (sizes) sizes.disconnect()
         sizes = undefined
         if (text) text.restore()
         text = undefined
-        refused = dirty = false
-        pending.delete(rebuild)
+        dirty = false
+        unschedule(rebuild)
         marked(false)
+      }
+      const stop = () => {
+        fixed.forEach(a => a.cancel())
+        fixed.clear()
+        resume = 0
+        reset()
       }
       const start = () => {
         marked(true)
@@ -169,7 +185,8 @@ export function hostMotion(
           member?: Element,
         ) => {
           for (const [refs, frames, timing, reveal] of tracks)
-            for (const [id, delay] of refs) {
+            for (const ref of refs) {
+              const [id, delay] = ref
               const el = member || target(id)
               if (!el) continue
               timing.delay = delay + offset
@@ -182,7 +199,15 @@ export function hostMotion(
                 if (!length) continue
                 for (const f of keys) f['--cm-length'] = length + 'px'
               }
-              const a = el.animate(keys, timing)
+              let a = fixed.get(ref)
+              if (a) {
+                const fx = a.effect as KeyframeEffect
+                fx.target = el
+                fx.updateTiming(timing)
+              } else {
+                a = el.animate(keys, timing)
+                if (parts && !member) fixed.set(ref, a)
+              }
               if (!id && timing.id) shifts.push(a.effect as KeyframeEffect)
               // No per-target callbacks/timers: every delay is on the same clock.
               if (origin !== null) a.startTime = origin
@@ -190,15 +215,26 @@ export function hostMotion(
               keep(a)
             }
         }
-        if (s.parts) {
+        if (parts) {
           text = measureText(owner as HTMLElement, s.text!)
-          if (!text.probes.length) {
-            stop()
-            refused = true
+          const words = text.groups.words
+          // A refused split still watches the unmodified box. Register the
+          // batch together and ignore its initial delivery unless width moved
+          // since the read; later genuine metric changes share the frame queue.
+          let initial = true
+          const width = owner.clientWidth
+          sizes = new ResizeObserver(() => {
+            if (!initial || width !== owner.clientWidth) invalidate()
+            initial = false
+          })
+          for (const el of [owner, owner.parentElement!, ...words.flat()])
+            sizes.observe(el)
+          if (!words.length) {
+            marked(false)
             return false
           }
           duration = 0
-          for (const p of s.parts) {
+          for (const p of parts) {
             duration += p.delay
             if (p.clip) apply(p.clip, duration)
             let tail = 0
@@ -213,26 +249,12 @@ export function hostMotion(
           }
           // Pin geometry covers the whole measured timeline.
           for (const track of s.tracks) track[2].duration = duration
-          const seen = new Set<Element>()
-          const width = owner.clientWidth
-          sizes = new w.ResizeObserver(entries => {
-            // Initial deliveries only establish the baseline. Subsequent
-            // notifications include fractional font/box metric changes.
-            if (
-              width !== owner.clientWidth ||
-              entries.some(e => seen.has(e.target))
-            )
-              invalidate()
-            for (const e of entries) seen.add(e.target)
-          })
-          for (const el of [owner, owner.parentElement!, ...text.probes])
-            sizes.observe(el)
         }
         apply(s.tracks, 0)
         return true
       }
       const play = () => {
-        if (animations.length || refused) return
+        if (animations.length || text) return
         const box = rect(child)
         if (!(box.width * box.height)) return
         if (!pin) return start()
@@ -277,14 +299,19 @@ export function hostMotion(
       }
       abort(scope, stop)
       const rebuild = () => {
-        if (!text || !animations.length) return
-        const time = max(...animations.map(a => Number(a.currentTime)))
-        const done = animations.every(a => a.playState === 'finished')
-        stop()
-        play()
+        if (!text) return
+        if (animations.length)
+          resume = animations.every(a => a.playState === 'finished')
+            ? Infinity
+            : animations.reduce((t, a) => max(t, Number(a.currentTime)), 0)
+        fixed.forEach(a => {
+          ;(a.effect as KeyframeEffect).target = null
+        })
+        reset()
+        start()
         for (const a of animations) {
-          if (done) a.finish()
-          else a.currentTime = time
+          if (resume === Infinity) a.finish()
+          else a.currentTime = resume
         }
         if (scrub) syncView()
       }
@@ -294,9 +321,9 @@ export function hostMotion(
           schedule(rebuild)
         }
       }
-      if (s.parts) {
-        if (!w.ResizeObserver) return
-        if (doc.fonts) on(doc.fonts, 'loadingdone', invalidate)
+      if (parts) {
+        if (!ResizeObserver) return
+        if (fonts) on(fonts, 'loadingdone', invalidate)
         on(doc, 'visibilitychange', () => {
           if (dirty) schedule(rebuild)
         })
@@ -388,7 +415,7 @@ export function hostMotion(
           if (a.playState === (visible ? 'paused' : 'running'))
             a[visible ? 'play' : 'pause']()
       }
-      const observer = new w.IntersectionObserver(entries => {
+      const observer = new IntersectionObserver(entries => {
         if (scope.aborted) return
         intersecting = entries[entries.length - 1].isIntersecting
         syncView()
@@ -401,8 +428,7 @@ export function hostMotion(
       abort(scope, () => {
         observer.disconnect()
         if (layouts.delete(syncView) && !layouts.size) unwatchFlow()
-        pending.delete(syncView)
-        if (!pending.size) cancel()
+        unschedule(syncView)
       })
       on(doc, 'visibilitychange', syncView)
       if (readInput)
@@ -467,13 +493,13 @@ export function hostMotion(
         on(w, 'pointerup pointercancel', up)
         on(owner, 'blur', blur, true)
         on(w, 'blur', blur)
-      } else if (Array.isArray(tr) && w.MutationObserver) {
+      } else if (Array.isArray(tr) && MutationObserver) {
         const [id, attr, value] = tr
         const holder = owner.closest(token(id))
         if (!holder) return
         const sync = () =>
           holder.getAttribute(attr) === value ? play() : stop()
-        const observer = new w.MutationObserver(sync)
+        const observer = new MutationObserver(sync)
         observer.observe(holder, { attributeFilter: [attr] })
         abort(scope, () => observer.disconnect())
         sync()
@@ -494,9 +520,9 @@ export function hostMotion(
         const scope = run.signal
         // Force layout before consulting ready: a used face can start loading
         // only on first layout. Never mount a late font callback after abort.
-        if (s.parts && doc.fonts) {
+        if (parts && fonts) {
           rect(owner)
-          doc.fonts.ready.then(() => {
+          fonts.ready.then(() => {
             if (!scope.aborted) mount(scope)
           })
         } else mount(scope)

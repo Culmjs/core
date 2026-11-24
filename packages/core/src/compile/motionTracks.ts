@@ -37,9 +37,11 @@ export function prepareTracks(
     const text: TextPlan = {}
     for (const { part, step } of bound)
       if (part && part !== 'path')
-        text[part] ||=
-          !!step.mask &&
-          (bound.every(b => b.part === part && b.step.mask) || 'switch')
+        text[part] ||= !step.mask
+          ? ''
+          : bound.every(b => b.part === part && b.step.mask)
+            ? 'cm-clip'
+            : 'cm-' + part
     const endpoints = new Map<string, string>()
     let clipped: Part | undefined
     return {
@@ -54,7 +56,7 @@ export function prepareTracks(
         const scales = histories.get(unit) ?? new Map<number, number>()
         histories.set(unit, scales)
         const next =
-          unit && text[unit] === 'switch' && s.mask ? unit : undefined
+          unit && text[unit] !== 'cm-clip' && s.mask ? unit : undefined
         let clip: PackedTrack[] | undefined
         if (clipped !== next) {
           const f: Keyframe = {}
@@ -154,7 +156,7 @@ function fixedTracks(
         push(s.from, s.start)
         push(s.to, s.end)
       }
-      const options: KeyframeAnimationOptions = {
+      const options: PackedTrack[2] = {
         duration: span,
         fill: c.both ? 'both' : 'forwards',
         ...(c.add && { composite: 'add' }),
