@@ -92,11 +92,12 @@ const audit = `<script>
     if(o?.signal&&!o.signal.aborted){subs++;listen.call(o.signal,'abort',()=>subs--,{once:true})}
     return listen.call(this,k,f,o)
   };
-  const IO=IntersectionObserver;
-  window.IntersectionObserver=class extends IO{
-    observe(el){observers.add(this);super.observe(el)}
-    disconnect(){observers.delete(this);super.disconnect()}
-  };
+  for(const name of ['IntersectionObserver','ResizeObserver','MutationObserver']){
+    window[name]=class extends window[name]{
+      observe(...args){observers.add(this);super.observe(...args)}
+      disconnect(){observers.delete(this);super.disconnect()}
+    };
+  }
 </script>`
 async function fixture(
   source: string,
@@ -606,6 +607,161 @@ test('self-moving entrance finishes against its layout box and leaves the real l
       assert.deepEqual(values, ['finished', 0, true, '#reed'])
     },
   )
+})
+
+function reflowScene(hostOnly = false, spacing = false) {
+  const owner = node('owner', 'box')
+  owner.motion = {
+    trigger: 'scroll',
+    scrollFallback: 'timeline',
+    steps: [
+      {
+        ...fade,
+        target: 'self',
+        ...(hostOnly && { staggerMs: 1 }),
+        from: { yPx: 600, opacity: 0 },
+        to: { yPx: 0, opacity: 1 },
+      },
+    ],
+  }
+  const toggle = node('toggle', 'button')
+  toggle.props = { label: 'Collapse' }
+  toggle.on = [{ on: 'click', do: { toggle: 'collapsed' } }]
+  const block = node('block', 'box')
+  block.style = {
+    when: [
+      {
+        state: 'collapsed',
+        is: 'on',
+        decl: spacing ? { margin: 0 } : { hidden: true },
+      },
+    ],
+  }
+  if (spacing) block.style.base = { margin: [0, 0, 400, 0] }
+  const stage = node('stage', 'box', [toggle, block, node('gap', 'box'), owner])
+  if (spacing) stage.children!.push({ ...owner, id: 'second' })
+  stage.state = [{ name: 'collapsed', values: 'on-off', initial: 'off' }]
+  // The owner moves but neither it nor any containing box changes size.
+  return html(
+    [stage],
+    `[data-id=stage]{height:4000px}[data-id=toggle]{position:absolute}
+    [data-id=block]{height:${spacing ? 0 : 1100}px}[data-id=gap]{height:700px}[data-id=owner],[data-id=second]{height:300px}`,
+  )
+}
+
+for (const lane of ['host', 'auto', 'compat'] as const)
+  test(
+    `preceding state collapse invalidates neutral scrub geometry (${lane})`,
+    {
+      skip:
+        lane === 'compat' &&
+        !process.env.CULM_COMPAT_CHROME &&
+        'set CULM_COMPAT_CHROME',
+    },
+    async t => {
+      const engine =
+        lane === 'compat'
+          ? await launch(process.env.CULM_COMPAT_CHROME)
+          : browser
+      try {
+        await fixture(
+          reflowScene(lane === 'host'),
+          async p => {
+            const css = await p.evaluate<boolean>(
+              `CSS.supports('animation-timeline:view()')`,
+            )
+            if (lane === 'compat') assert.equal(css, false)
+            if (lane === 'auto' && process.env.CULM_COMPAT_CHROME)
+              assert.equal(css, true)
+            const rows = await p.evaluate<
+              [number, number, boolean][]
+            >(`(async()=>{
+              const el=get('owner'),click=()=>get('toggle').click(),read=()=>[
+                +getComputedStyle(el).opacity,el.getBoundingClientRect().top,
+                el.contains(document.elementFromPoint(10,760))];
+              await tick();const rows=[read()];click();await tick();rows.push(read());
+              await at(300);rows.push(read());click();await tick();rows.push(read());
+              click();await tick();rows.push(read());return rows})()`)
+            const native = await p.evaluate<boolean>(
+              `get('owner').getAnimations()[0] instanceof CSSAnimation`,
+            )
+            assert.equal(native, css && lane !== 'host')
+            if (native) assert.equal(await p.evaluate('observers.size'), 0)
+            t.diagnostic(
+              `${engine.version} ${native ? 'CSS' : 'WAAPI'}: ${JSON.stringify(rows)}`,
+            )
+            const expected = [
+              [0, 2400, false],
+              [1 / 6, 1200, false],
+              [5 / 12, 750, true],
+              [0, 2100, false],
+              [5 / 12, 750, true],
+            ] as const
+            rows.forEach(([opacity, top, hit], i) => {
+              near(opacity, expected[i][0], 0.001)
+              near(top, expected[i][1], 1)
+              assert.equal(hit, expected[i][2])
+            })
+          },
+          { engine },
+        )
+      } finally {
+        if (lane === 'compat') await engine.close()
+      }
+    },
+  )
+
+test('position-only state and sibling resize share a quiet, cancellable reflow wake', async () => {
+  const source = reflowScene(true, true).replace(TIMELINE_SCRIPT, () => preview)
+  await fixture(source, async p => {
+    const sample = () =>
+      p.evaluate<number>(`+getComputedStyle(get('owner')).opacity`)
+    await p.evaluate(`at(300).then(tick)`)
+    near(await sample(), 1 / 12, 0.001)
+    // Only the preceding margin changes; no border box anywhere resizes.
+    await p.evaluate(`get('toggle').click();tick()`)
+    near(await sample(), 5 / 12, 0.001)
+    near(
+      await p.evaluate<number>(`+getComputedStyle(get('second')).opacity`),
+      1 / 6,
+      0.001,
+    )
+    assert.deepEqual(
+      await p.evaluate(`[ResizeObserver,MutationObserver].map(
+      ctor=>Array.from(observers).filter(o=>o instanceof ctor).length)`),
+      [1, 1],
+    )
+    // Now the change is purely geometric, without a declared-state write.
+    await p.evaluate(`get('gap').style.height='1800px';tick()`)
+    near(await sample(), 0)
+    await p.evaluate(`get('gap').style.height='700px';tick()`)
+    near(await sample(), 5 / 12, 0.001)
+    assert.deepEqual(
+      await p.evaluate(`(async()=>{
+      await tick();const n=calls;get('owner').style.color='red';await tick();await tick();
+      return [peak,frames.size,calls-n]})()`),
+      [1, 0, 0],
+    )
+    assert.deepEqual(
+      await p.evaluate(`(async()=>{
+      Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'));
+      const n=calls;get('toggle').click();await tick();return [frames.size,calls-n]})()`),
+      [0, 0],
+    )
+    await p.evaluate(
+      `delete document.hidden;document.dispatchEvent(new Event('visibilitychange'));tick()`,
+    )
+    near(await sample(), 1 / 12, 0.001)
+    await p.setReducedMotion(true)
+    const idle = `(async()=>{await tick();const n=calls;get('toggle').click();await tick();
+      return [calls-n,frames.size,observers.size,document.getAnimations().length]})()`
+    assert.deepEqual(await p.evaluate(idle), [0, 0, 0, 0])
+    await p.setReducedMotion(false)
+    await p.evaluate(`tick()`)
+    near(await sample(), 5 / 12, 0.001)
+    await p.evaluate(`get('gap').style.height='1800px';controller.abort()`)
+    assert.deepEqual(await p.evaluate(idle), [0, 0, 0, 0])
+  })
 })
 
 test('an unpainted canonical crossing wakes scrub before the translated box enters', async () => {

@@ -85,7 +85,31 @@ export function hostMotion(
         pending.clear()
       })
   }
-  doc.querySelectorAll(`[${attr}]`).forEach(owner => {
+  const each = (selector: string, f: (el: Element) => void) =>
+    doc.querySelectorAll(selector).forEach(f)
+  const layouts = new Set<() => void>()
+  let unwatchFlow: () => void
+  const watchFlow = () => {
+    // Shared across mounted neutral clocks. Paint changes neither these
+    // border-box sizes nor the compiler's allowlist of state attributes.
+    const reflow = () => layouts.forEach(schedule)
+    const sizes = w.ResizeObserver && new w.ResizeObserver(reflow)
+    const states = w.MutationObserver && new w.MutationObserver(reflow)
+    if (sizes)
+      each('.cm-flow>*', el => sizes.observe(el, { box: 'border-box' }))
+    const attr = 'data-cm-watch'
+    if (states)
+      each(`[${attr}]`, el =>
+        states.observe(el, {
+          attributeFilter: el.getAttribute(attr)!.split(' '),
+        }),
+      )
+    return () => {
+      if (sizes) sizes.disconnect()
+      if (states) states.disconnect()
+    }
+  }
+  each(`[${attr}]`, owner => {
     const s: Scene = JSON.parse(owner.getAttribute(attr)!)
     if (s.native && clock('view')) return
     const { trigger: tr, pin, layout } = s
@@ -285,8 +309,13 @@ export function hostMotion(
         syncView()
       })
       observer.observe(owner)
+      if (layout) {
+        if (!layouts.size) unwatchFlow = watchFlow()
+        layouts.add(syncView)
+      }
       abort(scope, () => {
         observer.disconnect()
+        if (layouts.delete(syncView) && !layouts.size) unwatchFlow()
         pending.delete(syncView)
         if (!pending.size) cancel()
       })

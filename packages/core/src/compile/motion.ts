@@ -150,6 +150,21 @@ type Pending = {
   state?: Binding
   pinChild?: Node
 }
+
+/** A neutral clock can move when a sibling resizes or a declared state changes
+ * spacing without resizing any box. Mark real layout branches once per page. */
+function markFlowInputs(el: HtmlNode, owners: ReadonlySet<HtmlNode>): boolean {
+  const states = Object.keys(el.attrs ?? {}).filter(
+    k => k.startsWith('data-s-') && k !== 'data-s-on' && k !== 'data-s-pattern',
+  )
+  if (states.length) el.attrs!['data-cm-watch'] = states.join(' ')
+  let branch = false
+  for (const c of el.children ?? [])
+    if (typeof c !== 'string' && markFlowInputs(c, owners)) branch = true
+  if (branch) classOn(el, 'cm-flow')
+  return branch || owners.has(el)
+}
+
 function timelines(
   programs: Pending[],
   site: HtmlNode,
@@ -176,6 +191,7 @@ function timelines(
     restores = new Set<string>()
   const compound = new Set<number>()
   const geometry = new Map<HtmlNode, HtmlNode>()
+  const layoutOwners = new Set<HtmlNode>()
   let timeline = false
   let alpha = false
   for (const { w, owner, steps, state, pinChild } of programs) {
@@ -261,6 +277,7 @@ function timelines(
           'rotate' in frames[0])
       ) {
         scene.layout = true
+        layoutOwners.add(owner)
         timing.id = 'cm-layout'
       }
     for (const part of scene.parts ?? [])
@@ -276,6 +293,7 @@ function timelines(
     alpha ||=
       usesReveal(scene.tracks) || !!scene.parts?.some(p => usesReveal(p.tracks))
   }
+  if (layoutOwners.size) markFlowInputs(site, layoutOwners)
   const css =
     (natural.size ? `:where(${[...natural]}){display:inline-block}` : '') +
     (restores.size
