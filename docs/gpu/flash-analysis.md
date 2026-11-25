@@ -1,6 +1,6 @@
 # Task 7: offline flash-analysis handoff
 
-**Exit gate: OPEN — no PEAT result.** Use the **fix-1** inputs below for the corrected candidate. It still exceeds both approved byte limits and is isolated; the release renders only framework `contours`. The [supplemental EA IRIS analysis](iris-analysis.md) on the prior pair found a luminance-flash failure for the control and a pass for the prior limited clip. That is not a result for the new limited hash. No final rate is approved.
+**Exit gate: OPEN — no PEAT result.** Use the **fix-1** inputs below for the corrected candidate. It still exceeds both approved byte limits and is isolated; the release renders only framework `contours`. On the corrected pair the [supplemental EA IRIS analysis](iris-analysis.md) flagged the control (159 luminance-failure frames) and passed all 180 limited frames without luminance warnings. Both greyscale clips had no red-flash findings. No final rate is approved.
 
 | PEAT 1.6 result       | Positive control | Limited      |
 | --------------------- | ---------------- | ------------ |

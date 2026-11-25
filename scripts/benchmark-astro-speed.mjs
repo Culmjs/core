@@ -389,6 +389,7 @@ try {
               acks: [],
               raf: [],
               sizes: [],
+              presentationSizes: [],
               longMs: 0,
               cls: 0,
               hostStarts: 0,
@@ -420,9 +421,9 @@ try {
               attributes: true,
               attributeFilter: ['data-gpu-painted'],
             })
-            const sizeSeen = (w, h) => {
+            const sizeSeen = (w, h, sizes = m.sizes) => {
               const d = `${w}x${h}`
-              if (d !== m.sizes.at(-1)) m.sizes.push(d)
+              if (d !== sizes.at(-1)) sizes.push(d)
             }
             window.Worker = class extends Worker {
               constructor(...args) {
@@ -433,8 +434,14 @@ try {
                 })
               }
               postMessage(msg, ...rest) {
-                if (Array.isArray(msg) && typeof msg[0] === 'number')
+                if (Array.isArray(msg) && typeof msg[0] === 'number') {
                   sizeSeen(msg[0], msg[1])
+                  sizeSeen(
+                    msg[9] ?? msg[0],
+                    msg[10] ?? msg[1],
+                    m.presentationSizes,
+                  )
+                }
                 return super.postMessage(msg, ...rest)
               }
             }
@@ -444,6 +451,11 @@ try {
                 const ret = finish.call(this)
                 m.acks.push(performance.now())
                 sizeSeen(this.drawingBufferWidth, this.drawingBufferHeight)
+                sizeSeen(
+                  this.drawingBufferWidth,
+                  this.drawingBufferHeight,
+                  m.presentationSizes,
+                )
                 return ret
               }
             }
@@ -560,6 +572,7 @@ try {
               raf: stats(b.raf),
               ack: stats(b.acks),
               sizes: b.sizes,
+              presentationSizes: b.presentationSizes,
               viewport: [innerWidth, innerHeight, devicePixelRatio],
               visible: document.visibilityState,
               hostStarts: b.hostStarts,

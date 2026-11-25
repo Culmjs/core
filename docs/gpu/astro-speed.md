@@ -1,8 +1,10 @@
 # Astro and Culm: visitor speed for the Stage 4 decision
 
-**Recommendation, 2026-11-25:** Keep the trusted renderer in production and the existing ceilings in force while the limiter is corrected. There was little speed penalty for the candidate's extra bytes on the tested solid-background page. The material regression was on a hero with a poster image: the candidate took **9.63 s** to activate the effect vs **0.41 s** for the release. The page content itself appeared promptly in both.
+**[After the first correction (`e96e87e`): timings, actual poster contrast and review findings](astro-speed-fix1.md).** The candidate's median poster readiness went from 9.63 s to 0.43 s on the mobile-shaped Mac. The gradual dissolve showed both contrasting contour bands by the 2.23 s sample.
 
-## Results
+**Original decision point:** The first candidate took **9.63 s** to activate over a patterned poster vs **0.41 s** for the release. Both painted the main content in **212 ms**. This led to the corrected transition in `e96e87e`; its measured results are reported separately from this baseline.
+
+## Historical baseline (`258ea14`, before correction)
 
 Medians of nine cold visits per variant per profile, **162 measured navigations** before the separate poster test. Times are milliseconds from navigation start. “Brotli bytes” includes the HTML and the external JS actually fetched. Dash means there is no effect to activate.
 
@@ -31,15 +33,15 @@ Three more cold visits per Culm variant on the mobile-shaped profile, each obser
 | Culm release, trusted contour   |             0.412 s |     0.410–0.428 s |
 | Culm candidate, checked contour |         **9.628 s** | **9.625–9.648 s** |
 
-The poster was visible while the candidate waited. The difference matches its provisional **9.2-second transition** from a nonuniform background before the first custom frame is revealed. The additional wait does not come from downloading 1.6 kB more. Independent code review also identified unresolved brightness changes when resolution decreases, under translucent foregrounds, and when the fallback changes during startup. [Independent flash analysis](flash-analysis.md) has not yet run.
+The poster was visible while the original candidate waited. The difference matched its provisional **9.2-second transition** from a nonuniform background before the first custom frame was revealed. The additional wait did not come from downloading 1.6 kB more. Code review also identified brightness changes when resolution decreased, under translucent foregrounds, and when the fallback changed during startup; see the [corrective work and flash-analysis evidence](flash-analysis.md).
 
-**Next decision point:** Fix those display transitions, obtain independent flash analysis and repeat the poster and solid-hero runs on a physical lower-end phone. Then revisit a GPU-specific allowance against the corrected artifact, instead of changing the site-wide cap on the strength of one desktop-GPU lab result.
+**Decision at that point:** Correct the display transitions and repeat the poster and solid-hero runs before revisiting the ceilings.
 
 [Raw cold-load and frame samples](evidence/astro-speed/cold.csv) · [raw poster samples](evidence/astro-speed/poster.csv)
 
 ## What was compared
 
-The benchmark uses local production output from **Astro 7.4.13** and Culm at `258ea14`. It serves a nonflashing, slowly moving contour behind a heading and text. It does not run the flash-analysis clips. The checked renderer is the isolated **candidate**, not a feature enabled in the release.
+The benchmark uses local production output from **Astro 7.4.13** and Culm at `258ea14` (before correction) or `e96e87e` (after). It serves a nonflashing, slowly moving contour behind a heading and text. It does not run the flash-analysis clips. The checked renderer is the isolated **candidate**, not a feature enabled in the release.
 
 | Case                          | What the browser actually runs                                                                                                                                                                                                                    |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

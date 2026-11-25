@@ -1,6 +1,15 @@
 # Supplemental luminance and red-flash analysis
 
-[EA IRIS](https://github.com/electronicarts/IRIS/tree/d96978ac1107f3463b77f69a9c1b1ec5d45291a0) analyzed the two offline, achromatic 30 fps clips. This is evidence about these captured pixels; it does not establish saturated-red safety or replace the selected [PEAT 1.6 exit check](flash-analysis.md).
+[EA IRIS](https://github.com/electronicarts/IRIS/tree/d96978ac1107f3463b77f69a9c1b1ec5d45291a0) analyzed both generations of the offline, achromatic 30 fps clips. This is evidence about these captured pixels; it does not establish saturated-red safety or replace the selected [PEAT 1.6 exit check](flash-analysis.md).
+
+## Corrected candidate `e96e87e`
+
+Each corrected input was hashed and analyzed again with the same executable and settings. IRIS flagged the positive control (**159 failure frames**, 9 warning, 12 pass) and **passed all 180 frames** of the corrected limited clip with no luminance warnings. All 180 frames of both clips passed the red-flash check; the source contains no saturated red. The regenerated control and its analysis were byte-identical to the prior control. There is still no PEAT result.
+
+| Variant | Input AVI SHA-256                                                  | Original uncompressed IRIS CSV SHA-256                             | Raw frame report                                            |
+| ------- | ------------------------------------------------------------------ | ------------------------------------------------------------------ | ----------------------------------------------------------- |
+| Control | `a132dfcbb8b292ab5f550a40a96695f2c5408b03cc3a4e6b3b0af855baf7b699` | `feafba726bc6e75bd5dd108afa3ebb688ed65bcff93a7adaa981229b8bfcdec7` | [control CSV, gzip](evidence/iris/corrected-control.csv.gz) |
+| Limited | `f872ca2cba925b72649f58e36a9b3fb2c40919c0f4d45878e742abc26f39f4a7` | `a18ad70422d081fb2d3c2ca0b2fd3519cd3b7990253ad4e75150b523845048f4` | [limited CSV, gzip](evidence/iris/corrected-limited.csv.gz) |
 
 ## Original candidate, before the poster correction
 

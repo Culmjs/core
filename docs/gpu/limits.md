@@ -114,7 +114,7 @@ The [WebGL 2.0 specification](https://registry.khronos.org/webgl/specs/2.0.0/) (
 
 For the observed grey 123 → 125 in 33 ms, `ΔY=0.0070094` or **0.21241/s**. A separate white-to-black target reversal at 30 Hz gave displayed grey codes `114,117,119,116,113,110,107,104`; peak `|ΔY|=0.0098276`, or **0.29483/s**. The latter exceeds the nominal rate: the pre-quantization per-frame cap is `0.25 × .033 = .00825`, with up to `.001669` half-code rounding error over this sample range. These are composited PNG measurements using sRGB decoding (R=G=B), not a claim about every pixel or saturated red.
 
-**Independent gate: open; PEAT is not installed on this macOS machine. No general-flash or red-flash result.** Select Trace Center [PEAT 1.6, 2017-02-15 release](https://trace.umd.edu/peat/) on a compatible Windows machine; use its **Open video clip** and **Analyze** functions. [Input requirements](https://trace.umd.edu/photosensitive-epilepsy-analysis-tool-peat-user-guide/): full-screen 1024 × 768, AVI, 25 or 30 fps, <2 GB.
+**Selected PEAT gate: open. No PEAT general-flash or red-flash result.** [Supplemental IRIS results](iris-analysis.md) are recorded separately. The selected tool remains Trace Center [PEAT 1.6, 2017-02-15 release](https://trace.umd.edu/peat/) on a compatible Windows machine; use its **Open video clip** and **Analyze** functions. [Input requirements](https://trace.umd.edu/photosensitive-epilepsy-analysis-tool-peat-user-guide/): full-screen 1024 × 768, AVI, 25 or 30 fps, <2 GB.
 
 Frozen **Task 7 capture specification** (the spike PNGs above are not analyzer inputs):
 
