@@ -13,7 +13,7 @@ import { fieldsOf, isNum, isRecord } from '../document/rules.ts'
 import { dropSamples } from '../document/samples.ts'
 import { templateIndex } from '../document/tree.ts'
 import { customKeys, gpuName, shaderSnapshot } from '../registry/gpu.ts'
-import type { Registry } from '../registry/index.ts'
+import type { GpuEffectDef, Registry } from '../registry/index.ts'
 import { layoutDisplays } from '../layout/display.ts'
 import { add, type Ctx } from './common.ts'
 import { visibleText } from './required.ts'
@@ -39,14 +39,16 @@ function shaderOk(
   return false
 }
 
-/** Recheck registration snapshots once per build. Attachments only need their checked settings. */
-export function checkedRegisteredSettings(registry: Registry, out: Problem[]) {
-  const byName = new Map<string, ShaderSettings>()
+export type CheckedEffect = CustomEffect & Pick<GpuEffectDef, 'wasm'>
+
+/** A build consumes the same source that it checked, including for registered effects. */
+export function checkedRegistrations(registry: Registry, out: Problem[]) {
+  const byName = new Map<string, CheckedEffect>()
   for (const d of registry.effects()) {
     if (d.tier !== 3) continue
-    const { name, source, settings } = d
+    const { name, source, settings, wasm } = d
     if (shaderOk(source, settings, `registry.effects.${name}`, out))
-      byName.set(name, settings)
+      byName.set(name, { name, source, settings, ...(wasm && { wasm }) })
   }
   return byName
 }

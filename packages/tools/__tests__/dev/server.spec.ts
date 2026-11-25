@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import { createHash } from 'node:crypto'
 import { networkInterfaces, tmpdir } from 'node:os'
 import {
   mkdir,
@@ -13,7 +14,12 @@ import {
 } from 'node:fs/promises'
 import { join } from 'node:path'
 import { copyFixture } from '../fixtures.ts'
-import { gpuFolder, invalid, mist } from '../fixtures/shader.ts'
+import {
+  attachedGpuFolder,
+  gpuFolder,
+  invalid,
+  mist,
+} from '../fixtures/shader.ts'
 import { openProject } from '../../src/folder/project.ts'
 import { buildSite } from '../../src/build/bundle.ts'
 import { CLIENT_MARKER, CLIENT_SCRIPT } from '../../src/dev/client.ts'
@@ -98,6 +104,30 @@ const get = async (dev: Dev, path: string) => {
   return { status: r.status, body: await r.text() }
 }
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+test('dev serves exact built host bytes as JavaScript, keeps _headers private and authorizes only its extra client', async () => {
+  await withDev(async ({ dev, dir }) => {
+    const built = await buildSite(await openProject(dir))
+    assert.ok(built.ok)
+    const js = await fetch(dev.url + '/_culm/gpu.js')
+    assert.equal(js.status, 200)
+    assert.match(js.headers.get('content-type')!, /javascript/)
+    assert.equal(
+      await js.text(),
+      await readFile(join(built.out, '_culm/gpu.js'), 'utf8'),
+    )
+    assert.equal((await get(dev, '/_headers')).status, 404)
+    const html = await fetch(dev.url + '/')
+    const devPolicy = html.headers.get('content-security-policy')!
+    const production = (await readFile(join(built.out, '_headers'), 'utf8'))
+      .split('Content-Security-Policy: ')[1]
+      .trim()
+    const hash = `'sha256-${createHash('sha256').update(CLIENT_SCRIPT).digest('base64')}'`
+    assert.ok(!production.includes(hash))
+    assert.equal(devPolicy.replace(hash + ' ', ''), production)
+    assert.ok((await html.text()).includes(devPolicy.replaceAll("'", '&#39;')))
+  }, attachedGpuFolder)
+})
 
 test('serves each page at its slug with the client script before </body>', async () => {
   await withDev(async ({ dev }) => {

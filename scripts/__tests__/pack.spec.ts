@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import {
   mkdtempSync,
+  cpSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -11,6 +12,8 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { attachedGpuFolder } from '../../packages/tools/__tests__/fixtures/shader.ts'
 
 const core = join(import.meta.dirname, '../../packages/core')
 const run = (cmd: string, args: string[], cwd: string) =>
@@ -54,7 +57,7 @@ test('packed core installs offline and every sub-path imports', () => {
   }
 })
 
-test('pack:all packs core, starter and tools into .pack/; packed tools runs `culm --help` and `culm init --from .pack` from a temp install', () => {
+test('pack:all installs core, starter and tools; packed CLI initializes a project and builds the GPU delivery files', async () => {
   const root = join(import.meta.dirname, '../..')
   const tmp = mkdtempSync(join(tmpdir(), 'culm-packall-'))
   try {
@@ -106,6 +109,30 @@ test('pack:all packs core, starter and tools into .pack/; packed tools runs `cul
       '.gitignore',
     ])
       readFileSync(join(tmp, 'my-site', f))
+    const fixture = join(tmp, 'gpu')
+    cpSync(
+      join(root, 'packages/tools/__tests__/fixtures/site-basic'),
+      fixture,
+      { recursive: true },
+    )
+    await attachedGpuFolder(fixture)
+    run(
+      'node',
+      [join(tmp, 'node_modules/@culmjs/tools/bin/culm.js'), 'build'],
+      fixture,
+    )
+    const dist = join(fixture, 'dist')
+    const host = readFileSync(join(dist, '_culm/gpu.js'))
+    const hash = `sha256-${createHash('sha256').update(host).digest('base64')}`
+    assert.ok(readFileSync(join(dist, 'index.html'), 'utf8').includes(hash))
+    assert.ok(
+      readFileSync(join(dist, '_headers'), 'utf8').includes(`'${hash}'`),
+    )
+    const m = JSON.parse(readFileSync(join(dist, 'culm-manifest.json'), 'utf8'))
+    assert.deepEqual(
+      m.scripts.find((s: { name: string }) => s.name === 'gpuHost'),
+      { name: 'gpuHost', bytes: host.length, pages: ['home'] },
+    )
   } finally {
     rmSync(tmp, { recursive: true, force: true })
     rmSync(join(root, '.pack'), { recursive: true, force: true })

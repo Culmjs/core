@@ -1,5 +1,6 @@
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
+import { rmSync } from 'node:fs'
 import {
   lstat,
   mkdir,
@@ -15,6 +16,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildIdentity } from '@culmjs/core'
 import { copyFixture } from '../fixtures.ts'
+import { attachedGpuFolder, invalid, mist } from '../fixtures/shader.ts'
 import { CLIENT_MARKER } from '../../src/dev/client.ts'
 import { startFake } from '../fakeSources.ts'
 import { fetchFor } from '../../src/folder/fetch.ts'
@@ -120,6 +122,29 @@ test('a site with no page at "/" writes nothing', async () => {
   assert.equal(await exists(join(dir, 'dist')), false)
 })
 
+test('a file removed between compile and copy cannot partially replace a published bundle', async () => {
+  const dir = await site()
+  const project = await openProject(dir)
+  const original = await buildSite(project)
+  assert.ok(original.ok)
+  const artifact = async () =>
+    Promise.all(original.files.map(f => readFile(join(original.out, f))))
+  const before = await artifact()
+  const r = await buildSite({
+    ...project,
+    links: {
+      ...project.links,
+      file: id => {
+        if (id === 'loaf.svg')
+          rmSync(join(dir, 'assets/loaf.svg'), { force: true })
+        return project.links.file(id)
+      },
+    },
+  })
+  assert.ok(!r.ok)
+  assert.deepEqual(await artifact(), before)
+})
+
 test('any problem writes nothing and comes back with file and line', async () => {
   const dir = await site()
   const about = join(dir, 'pages/about.json')
@@ -139,7 +164,13 @@ test('any problem writes nothing and comes back with file and line', async () =>
 })
 
 test('a page whose slug collides with what build writes is a problem with file and line', async () => {
-  for (const slug of ['/assets', '/_fonts', `/${MANIFEST_FILE}`]) {
+  for (const slug of [
+    '/assets',
+    '/_fonts',
+    '/_culm/gpu',
+    '/_headers',
+    `/${MANIFEST_FILE}`,
+  ]) {
     const dir = await site()
     const about = join(dir, 'pages/about.json')
     await writeFile(
@@ -152,6 +183,34 @@ test('a page whose slug collides with what build writes is a problem with file a
     assert.ok(hit?.line, slug)
     assert.equal(await exists(join(dir, 'dist')), false)
   }
+})
+
+test('build publishes the priced host and policy; shader comments are not font requests and a refusal retains the previous files', async () => {
+  const dir = await site()
+  await attachedGpuFolder(dir)
+  const shader = join(dir, 'effects/mist.frag')
+  await writeFile(
+    shader,
+    '// @font-face{src:url(/_fonts/unused.woff2)}\n' + mist.source,
+  )
+  const built = await buildSite(await openProject(dir))
+  assert.ok(built.ok, JSON.stringify(built))
+  const delivered = async () =>
+    Promise.all(
+      ['index.html', '_culm/gpu.js', '_headers', MANIFEST_FILE].map(f =>
+        readFile(join(built.out, f), 'utf8'),
+      ),
+    )
+  const good = await delivered()
+  assert.equal(
+    built.manifest.scripts.find(s => s.name === 'gpuHost')?.bytes,
+    Buffer.byteLength(good[1]),
+  )
+  assert.match(good[0], /data-culm-gpu=/)
+  assert.match(good[2], /Content-Security-Policy: script-src 'sha256-/)
+  await writeFile(shader, invalid)
+  assert.equal((await buildSite(await openProject(dir))).ok, false)
+  assert.deepEqual(await delivered(), good)
 })
 
 test('an image address in a built page resolves to a file in the output', async () => {

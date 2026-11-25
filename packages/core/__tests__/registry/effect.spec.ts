@@ -419,8 +419,9 @@ test('a site build uses one private snapshot, even if the plug-in later mutates 
   assert.deepEqual(site.problems, [])
   assert.equal(calls, 1)
   assert.equal(shared[0].to.xPx, 777)
-  assert.equal(site.files.length, 2)
-  for (const f of site.files) {
+  assert.equal(site.manifest.pages.length, 2)
+  for (const { path } of site.manifest.pages) {
+    const f = site.files.find(f => f.path === path)!
     assert.match(f.content, /translate:17px 0px/)
     assert.doesNotMatch(f.content, /translate:777px/)
   }

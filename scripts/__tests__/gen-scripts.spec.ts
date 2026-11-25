@@ -1,17 +1,24 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { transformSync } from 'esbuild'
 import { render, renderProbe } from '../gen-scripts.ts'
 import { byteLength } from '../../packages/core/src/compile/budgets.ts'
 import { PROBE_SCRIPT } from '../../packages/core/src/measure/probeMin.ts'
 import {
   BASE_SCRIPT,
+  GPU_LOADER_SCRIPT,
+  GPU_HOST_SCRIPT,
   EMAIL_SCRIPT,
   OPEN_SCRIPT,
   STATES_SCRIPT,
   TIMELINE_SCRIPT,
 } from '../../packages/core/src/scripts/scriptsMin.ts'
+import {
+  pageScriptPolicy,
+  type PageScript,
+} from '../../packages/core/src/compile/gpuPolicy.ts'
 
 test('scriptsMin.ts is up to date', () => {
   assert.equal(
@@ -29,6 +36,32 @@ test('each script is within its ceiling, all appendices included', () => {
   assert.ok(byteLength(base) <= 10_000)
   assert.ok(byteLength(STATES_SCRIPT) <= 6_193)
   assert.ok(byteLength(base + STATES_SCRIPT) <= 20_000)
+})
+
+test('all 32 joined inline selections authorize exactly the executable bytes they deliver', () => {
+  const hash = (s: string) =>
+    `sha256-${createHash('sha256').update(s).digest('base64')}`
+  for (const open of ['', OPEN_SCRIPT])
+    for (const email of ['', EMAIL_SCRIPT])
+      for (const states of [false, true])
+        for (const timeline of [false, true])
+          for (const gpu of [false, true]) {
+            const scripts: PageScript[] = [
+              { name: 'base', code: BASE_SCRIPT + open + email },
+            ]
+            if (states) scripts.push({ name: 'states', code: STATES_SCRIPT })
+            if (timeline)
+              scripts.push({ name: 'timeline', code: TIMELINE_SCRIPT })
+            if (gpu)
+              scripts.push({ name: 'gpuLoader', code: GPU_LOADER_SCRIPT })
+            assert.deepEqual(
+              pageScriptPolicy(scripts).match(/sha256-[A-Za-z0-9+/=]+/g),
+              [
+                hash(scripts.map(s => s.code).join(';')),
+                ...(gpu ? [hash(GPU_HOST_SCRIPT)] : []),
+              ],
+            )
+          }
 })
 
 test('the shipped scripts use no syntax newer than ES2017 and make no request and touch no storage', () => {

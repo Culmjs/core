@@ -46,3 +46,16 @@ export async function gpuFolder(dir: string, declared = false) {
       ),
   )
 }
+
+export async function attachedGpuFolder(dir: string) {
+  await gpuFolder(dir, true)
+  const path = join(dir, 'pages/home.json')
+  const html = await readFile(path, 'utf8')
+  await writeFile(
+    path,
+    html.replace(
+      '"id": "hero"',
+      `"id": "hero", "motion": ${JSON.stringify(motion)}`,
+    ),
+  )
+}

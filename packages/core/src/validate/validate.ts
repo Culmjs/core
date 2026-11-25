@@ -17,7 +17,7 @@ import { isFontRef } from '../style/fonts.ts'
 import { diagnosticId, fieldsOf, isStr, oneOf } from './common.ts'
 import { checkShown } from './required.ts'
 import { checkTrees } from './tree.ts'
-import { checkCustomEffects, checkedRegisteredSettings } from './gpu.ts'
+import { checkCustomEffects, checkedRegistrations } from './gpu.ts'
 
 export const TOP_KEYS = fieldsOf<SiteDocument>({
   schemaVersion: true,
@@ -116,7 +116,7 @@ export function validateSite(doc: unknown, registry: Registry): Problem[] {
 export function checkedSite(doc: unknown, registry: Registry) {
   const out: Problem[] = []
   try {
-    return { doc: checkDocument(doc, registry, out), problems: out }
+    return { ...checkDocument(doc, registry, out), problems: out }
   } catch {
     out.push({
       code: 'INVALID_DOCUMENT',
@@ -131,7 +131,7 @@ export function checkDocument(
   registry: Registry,
   out: Problem[],
 ) {
-  const gpuSettings = checkedRegisteredSettings(registry, out)
+  const effects = checkedRegistrations(registry, out)
   const beforeDocument = out.length
   const bad = (message: string, path?: string) =>
     void out.push({
@@ -288,13 +288,13 @@ export function checkDocument(
   const hasSiteShape = out.length === beforeDocument
   const custom = checkCustomEffects(doc.customEffects, registry, out)
   if (!hasSiteShape) return
-  for (const [name, d] of custom) gpuSettings.set(name, d.settings)
+  for (const [name, d] of custom) effects.set(name, d)
   const definitionsOk = !out.length
   const projected = checkTrees(
     doc as unknown as SiteDocument,
     registry,
     out,
-    gpuSettings,
+    new Map([...effects].map(([name, d]) => [name, d.settings])),
   )
   // Even when a definition was refused, the attachment reports on its authored owner.
   if (!definitionsOk) return
@@ -303,9 +303,14 @@ export function checkDocument(
     out.push(...checkShown(doc as unknown as SiteDocument, registry))
   }
   runRules(doc as unknown as SiteDocument, registry, out)
-  return projected && doc.customEffects !== undefined
-    ? { ...projected, customEffects: [...custom.values()] }
-    : projected
+  if (projected)
+    return {
+      doc:
+        doc.customEffects !== undefined
+          ? { ...projected, customEffects: [...custom.values()] }
+          : projected,
+      effects,
+    }
 }
 
 /** A rule's problem, copied field by field: a rule is outside code, so only the known fields, short and of the right type, reach the result. */

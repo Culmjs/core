@@ -1,5 +1,6 @@
 import type { Problem, SiteDocument } from '../document/index.ts'
-import { byteLength } from './budgets.ts'
+import { byteLength, type PageStats } from './budgets.ts'
+import { scriptPolicy, withPolicy } from './gpuPolicy.ts'
 import {
   build,
   failed,
@@ -16,6 +17,8 @@ export type Manifest = {
   scripts: { name: string; bytes: number; pages: string[] }[]
   /** Each page's inline style, named by the page. */
   styles: { name: string; bytes: number; pages: string[] }[]
+  /** Inert definition bytes delivered in each page that uses them, never JS prices. */
+  gpuData?: ({ page: string } & NonNullable<PageStats['gpuData']>)[]
   /** The build identity; the caller that writes a bundle sets it. `compileSite` leaves it unset. */
   build?: string
 }
@@ -43,9 +46,11 @@ export function compileSite(
   }
   // All pages use the same checked factory results.
   let invalid: Problem[]
+  let effects: ReturnType<typeof checkedInput>['effects']
   try {
     const checked = checkedInput(doc, options)
     doc = checked.doc
+    effects = checked.effects
     invalid = checked.problems
   } catch (e) {
     invalid = failed('site', e)
@@ -53,11 +58,20 @@ export function compileSite(
   if (invalid.length) return { files, manifest, problems: invalid }
   const problems: Problem[] = []
   const live = { ...options, mode: 'live' as const }
+  const hashes = new Set<string>()
+  const assets = new Map<string, string>()
+  function price(name: string, bytes: number, page: string) {
+    const known = manifest.scripts.find(s => s.name === name)
+    if (known) {
+      known.bytes = Math.max(known.bytes, bytes)
+      known.pages.push(page)
+    } else manifest.scripts.push({ name, bytes, pages: [page] })
+  }
   for (const page of doc.pages) {
     if (!page.on) continue
     let r: CompiledPage
     try {
-      r = build(doc, page, live)
+      r = build(doc, page, live, effects, hashes)
     } catch (e) {
       r = { ok: false, problems: failed(page.id, e) }
     }
@@ -75,19 +89,27 @@ export function compileSite(
       page.slug === '/' ? 'index.html' : `${page.slug.slice(1)}/index.html`
     files.push({ path, content: r.html })
     manifest.pages.push({ id: page.id, path })
+    if (r.stats.gpuData)
+      (manifest.gpuData ??= []).push({ page: page.id, ...r.stats.gpuData })
     manifest.styles.push({
       name: page.id,
       bytes: r.stats.styleBytes,
       pages: [page.id],
     })
-    for (const s of r.scripts) {
-      const bytes = byteLength(s.code)
-      const known = manifest.scripts.find(x => x.name === s.name)
-      if (known) {
-        known.bytes = Math.max(known.bytes, bytes)
-        known.pages.push(page.id)
-      } else manifest.scripts.push({ name: s.name, bytes, pages: [page.id] })
+    for (const s of r.scripts) price(s.name, byteLength(s.code), page.id)
+    for (const asset of r.assets ?? []) {
+      assets.set(asset.path, asset.content)
+      price('gpuHost', byteLength(asset.content), page.id)
     }
+  }
+  if (files.length) {
+    const policy = scriptPolicy(hashes)
+    for (const page of files) page.content = withPolicy(page.content, policy)
+    for (const [path, content] of assets) files.push({ path, content })
+    files.push({
+      path: '_headers',
+      content: `/*\n  Content-Security-Policy: ${policy}\n`,
+    })
   }
   if (!doc.pages.some(p => p.on && p.slug === '/'))
     problems.push({

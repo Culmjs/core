@@ -2,6 +2,8 @@ import { extname } from 'node:path'
 import {
   buildIdentity,
   compilePage,
+  pageScriptPolicy,
+  type CompiledPage,
   walk,
   type Data,
   type Problem,
@@ -97,13 +99,15 @@ export function skippedStates(doc: SiteDocument, pageId: string): string[] {
   return out
 }
 
-/** Answers the page's own requests: the compiled page at its address, and the project's assets and fonts. Everything else is undefined (blocked). */
-function answers(
-  html: string,
+/** Answer the compiled page, its generated assets, and project media and fonts. Other requests are blocked. */
+export function measureAnswers(
+  page: Extract<CompiledPage, { ok: true }>,
   slug: string,
   assets: MeasureInput['assets'],
   missing: { n: number },
 ) {
+  const policy = pageScriptPolicy(page.scripts)
+  const generated = new Map(page.assets?.map(f => ['/' + f.path, f.content]))
   return async (url: string): Promise<Answer | undefined> => {
     let u: URL
     try {
@@ -113,7 +117,9 @@ function answers(
     }
     if (u.origin !== ORIGIN) return undefined
     if (u.pathname === slug)
-      return { type: 'text/html; charset=utf-8', body: html }
+      return { type: 'text/html; charset=utf-8', body: page.html, policy }
+    const js = generated.get(u.pathname)
+    if (js !== undefined) return { type: MIME['.js']!, body: js }
     const m = /^\/(assets|_fonts)\/(.+)$/.exec(u.pathname)
     if (!m || !assets) return undefined
     let rest: string
@@ -215,7 +221,7 @@ async function measurePage(
   let page: Page | undefined
   try {
     page = await browser.newPage()
-    await page.answer(answers(compiled.html, slug, i.assets, missing))
+    await page.answer(measureAnswers(compiled, slug, i.assets, missing))
     const went = await page.goto(ORIGIN + slug, LOAD_MS)
     if (!went.ok)
       throw new Error(

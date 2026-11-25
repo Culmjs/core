@@ -36,7 +36,7 @@ const at = (d: SiteDocument, path: string, id?: string) => {
   )
 }
 
-test('GPU references are per site, gated by the registry, and render exactly the plain block', () => {
+test('GPU references are per site, gated by the registry, and preserve the static block', () => {
   const d = site(owner(), {
     ...attachment,
     settings: { speed: 1, tint: '#AA0033' },
@@ -66,15 +66,23 @@ test('GPU references are per site, gated by the registry, and render exactly the
     const opts = { mode, registry: reg }
     const result = compilePage(d, 'home', opts)
     assert.ok(result.ok, JSON.stringify(result.problems))
-    assert.deepEqual(result, compilePage(plain, 'home', opts))
+    const fallback = compilePage(plain, 'home', opts)
+    assert.ok(fallback.ok)
+    if (mode === 'edit') assert.deepEqual(result, fallback)
+    else {
+      assert.equal(result.css, fallback.css)
+      assert.equal(
+        result.html
+          .split('<body>')[1]
+          .split('<script')[0]
+          .replace(/ data-culm-gpu="\d+"/, ''),
+        fallback.html.split('<body>')[1].split('<script')[0],
+      )
+    }
   }
   assert.deepEqual(
     compileSubtree(d, 'home', 'hero', { registry: reg }),
     compileSubtree(plain, 'home', 'hero', { registry: reg }),
-  )
-  assert.deepEqual(
-    compileSite(d, { registry: reg }),
-    compileSite(plain, { registry: reg }),
   )
   // With a CSS or timeline program present the renderer actually enters motionCss.
   for (const trigger of ['load', 'enter-view'] as const) {
@@ -85,7 +93,13 @@ test('GPU references are per site, gated by the registry, and render exactly the
       }
     const compiled = compilePage(d, 'home', { registry: reg })
     assert.ok(compiled.ok, JSON.stringify(compiled.problems))
-    assert.deepEqual(compiled, compilePage(plain, 'home', { registry: reg }))
+    const fallback = compilePage(plain, 'home', { registry: reg })
+    assert.ok(fallback.ok)
+    assert.equal(compiled.css, fallback.css)
+    assert.deepEqual(
+      compiled.scripts.filter(s => s.name !== 'gpuLoader'),
+      fallback.scripts,
+    )
   }
 })
 
@@ -129,7 +143,7 @@ test('registered shader source is checked once per build, whether used twice or 
                 reads.push(d.name)
                 return d.name === 'spare' && overBudget
                   ? 'vec4 shade(vec2 uv){\nfor(int i=0;i<65;i++){}\nreturn vec4(1.0);}'
-                  : d.source
+                  : '// checked build view\n' + d.source
               },
             }
           : {
@@ -145,7 +159,13 @@ test('registered shader source is checked once per build, whether used twice or 
   const build = () => compileSite(doc, { registry })
   const good = build()
   assert.deepEqual(good.problems, [])
-  assert.equal(good.files.length, 2)
+  assert.equal(good.manifest.pages.length, 2)
+  for (const page of good.manifest.pages)
+    assert.ok(
+      good.files
+        .find(f => f.path === page.path)!
+        .content.includes('// checked build view\\n'),
+    )
   assert.deepEqual(reads, ['mist', 'spare'])
   reads.length = 0
   overBudget = true

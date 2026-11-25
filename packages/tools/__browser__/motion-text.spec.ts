@@ -15,6 +15,7 @@ import {
 } from '../../core/__tests__/kit.ts'
 import { openBrowser, type Browser, type Page } from '../src/measure/browser.ts'
 import { decodePng } from '../src/measure/png.ts'
+import { instrumentedPolicy } from '../__tests__/fixtures/instrumentedPolicy.ts'
 
 let browser: Browser
 before(async () => {
@@ -95,7 +96,7 @@ async function fixture(
   try {
     await p.answer(async u =>
       u === url
-        ? { type: 'text/html', body: html }
+        ? { type: 'text/html', body: instrumentedPolicy(html) }
         : u === url + 'favicon.ico'
           ? { type: 'image/x-icon', body: '' }
           : undefined,

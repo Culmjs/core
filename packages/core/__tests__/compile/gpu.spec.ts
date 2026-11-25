@@ -1,0 +1,264 @@
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import test from 'node:test'
+import {
+  BUDGETS,
+  checkBudgets,
+  compilePage,
+  compileSite,
+  compileSubtree,
+  createRegistry,
+  type CompileOptions,
+  type CustomEffect,
+  type Node,
+  type SiteDocument,
+} from '../../src/index.ts'
+import { DEMO_PLUGIN, node, siteWith, text, twoPages } from '../kit.ts'
+
+const def: CustomEffect = {
+  name: 'mist',
+  source:
+    '// </script> <heading> &\nvec4 shade(vec2 uv){return vec4(u_set_speed);}',
+  settings: { speed: { type: 'number', min: 0, max: 1, default: 0.5 } },
+}
+const registry = createRegistry({
+  gpu: { enabled: true, approvedWasmPlugins: [{ name: 'demo', version: 1 }] },
+})
+registry.use({
+  ...DEMO_PLUGIN,
+  effects: [
+    {
+      ...def,
+      name: 'field',
+      tier: 3,
+      wasm: { abi: 'field-v1', bytesBase64: 'AAE=' },
+    },
+  ],
+})
+const owner = (id = 'hero', gpu = 'mist'): Node => ({
+  ...node(id, 'box', [text(`${id}title`, 'Real heading')]),
+  motion: { trigger: 'enter-view', gpu, poster: 'static.png' },
+})
+const repeated = () =>
+  siteWith(
+    [{ ...node('list', 'list', [owner()]), repeat: { source: 'projects' } }],
+    { customEffects: [def] },
+  )
+const data = {
+  rows: {
+    projects: [
+      { title: 'one', kind: 'book' },
+      { title: 'two', kind: 'book' },
+    ],
+  },
+}
+function page(doc: SiteDocument, options: Partial<CompileOptions> = {}) {
+  const p = compilePage(doc, 'home', { registry, data, ...options })
+  assert.ok(p.ok, JSON.stringify(p.problems))
+  assert.deepEqual(p.problems, [])
+  return p
+}
+const hash = (s: string) =>
+  `sha256-${createHash('sha256').update(s).digest('base64')}`
+const policy = (html: string) =>
+  html
+    .match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/)![1]
+    .replaceAll('&#39;', "'")
+const payload = (html: string) =>
+  JSON.parse(
+    html.match(
+      /<script type="application\/json" id="culm-gpu">([^<]*)<\/script>/,
+    )![1],
+  )
+
+test('two rendered copies share one checked definition and fixed lazy asset; JSON round trips', () => {
+  const p = page(repeated())
+  const tokens = [...p.html.matchAll(/data-culm-gpu="([^"]+)"/g)].map(m => m[1])
+  assert.equal(new Set(tokens).size, 2)
+  const { definitions, regions } = payload(p.html)
+  assert.deepEqual(definitions, [def])
+  assert.deepEqual(
+    regions,
+    tokens.map(owner => ({
+      owner,
+      definition: 0,
+      settings: { speed: 0.5 },
+      poster: 'static.png',
+    })),
+  )
+  assert.deepEqual(
+    p.scripts.map(s => s.name),
+    ['base', 'gpuLoader'],
+  )
+  assert.equal(p.assets?.length, 1)
+  const [host] = p.assets!
+  assert.equal(host.path, '_culm/gpu.js')
+  assert.ok(p.scripts[1].code.includes(hash(host.content)))
+  assert.deepEqual(p.gpu, { usesWasm: false })
+  assert.equal(p.stats.scriptBytes.gpuHost, Buffer.byteLength(host.content))
+  assert.equal(
+    p.stats.scriptBytes.gpuLoader,
+    Buffer.byteLength(p.scripts[1].code) + 1,
+  )
+  assert.equal(
+    Object.values(p.stats.scriptBytes).reduce((a, b) => a + b, 0),
+    Buffer.byteLength(p.scripts.map(s => s.code).join(';') + host.content),
+  )
+  assert.deepEqual(p.stats.gpuData, {
+    shaderBytes: Buffer.byteLength(def.source),
+    wasmBytes: 0,
+    wasmTransportBytes: 0,
+  })
+  const measure = page(repeated(), { mode: 'measure' })
+  assert.deepEqual(payload(measure.html), payload(p.html))
+  assert.match(measure.html, /data-id="hero~\d+"/)
+})
+
+test('plain, zero rows, dropped samples, edit, subtree and unpublished pages keep only fallback', () => {
+  const sample = owner()
+  // The conditional sample can drop its wrapper (the heading is unedited block chrome).
+  sample.children![0].props!.chrome = true
+  sample.children!.push({
+    ...text('sample', ''),
+    props: { sample: true, runs: [{ text: 'Example' }] },
+    showIf: { from: 'item', field: 'title' },
+  })
+  const dropped = repeated()
+  dropped.pages[0].root.children![0].children = [sample]
+  for (const p of [
+    page(siteWith()),
+    page(repeated(), { data: { rows: { projects: [] } } }),
+    page(dropped),
+  ]) {
+    assert.deepEqual(
+      p.scripts.map(s => s.name),
+      ['base'],
+    )
+    assert.equal(p.assets?.length ?? 0, 0)
+    assert.equal(p.stats.gpuData, undefined)
+    assert.doesNotMatch(
+      p.html,
+      /data-culm-gpu|_culm\/gpu\.js|application\/json/,
+    )
+  }
+  assert.deepEqual(page(repeated(), { mode: 'edit' }).scripts, [])
+  const sub = compileSubtree(repeated(), 'home', 'hero', { registry, data })
+  assert.ok(sub.ok)
+  assert.match(sub.html, /Real heading/)
+  assert.doesNotMatch(sub.html, /culm-gpu|<script/)
+  const doc = twoPages([], [owner()], { customEffects: [def] })
+  doc.pages[1].on = false
+  const off = compilePage(doc, 'about', { registry })
+  assert.ok(off.ok)
+  assert.equal(off.assets, undefined)
+  const site = compileSite(doc, { registry })
+  assert.deepEqual(site.problems, [])
+  assert.deepEqual(
+    site.files.map(f => f.path),
+    ['index.html', '_headers'],
+  )
+  assert.match(policy(site.files[0].content), /worker-src 'none'/)
+})
+
+test('one host manifest entry across using pages; site policy is the union of actual executable bytes', () => {
+  const doc = twoPages([owner('hero', 'field')], [owner('other')], {
+    customEffects: [def],
+  })
+  doc.pages.push({
+    ...doc.pages[1],
+    id: 'plain',
+    slug: '/plain',
+    root: node('plainroot', 'box'),
+  })
+  const p = page(doc)
+  assert.deepEqual(p.gpu, { usesWasm: true })
+  assert.deepEqual(payload(p.html).definitions[0].wasm, {
+    abi: 'field-v1',
+    bytesBase64: 'AAE=',
+  })
+  assert.deepEqual(p.stats.gpuData, {
+    shaderBytes: Buffer.byteLength(def.source),
+    wasmBytes: 2,
+    wasmTransportBytes: 4,
+  })
+  const site = compileSite(doc, { registry })
+  assert.deepEqual(site.problems, [])
+  assert.deepEqual(
+    site.files.map(f => f.path),
+    [
+      'index.html',
+      'about/index.html',
+      'plain/index.html',
+      '_culm/gpu.js',
+      '_headers',
+    ],
+  )
+  const host = site.files[3]
+  assert.deepEqual(
+    site.manifest.scripts.find(s => s.name === 'gpuHost'),
+    {
+      name: 'gpuHost',
+      bytes: Buffer.byteLength(host.content),
+      pages: ['home', 'about'],
+    },
+  )
+  assert.deepEqual(site.manifest.gpuData, [
+    { page: 'home', ...p.stats.gpuData },
+    {
+      page: 'about',
+      shaderBytes: Buffer.byteLength(def.source),
+      wasmBytes: 0,
+      wasmTransportBytes: 0,
+    },
+  ])
+  const pages = site.files.slice(0, 3)
+  const csp = policy(pages[0].content)
+  assert.deepEqual(
+    new Set(csp.match(/sha256-[A-Za-z0-9+/=]+/g)),
+    new Set([
+      hash(host.content),
+      ...pages.map(f => hash(f.content.match(/<script>(.*?)<\/script>/s)![1])),
+    ]),
+  )
+  for (const f of pages) assert.equal(policy(f.content), csp)
+  assert.equal(site.files[4].content, `/*\n  Content-Security-Policy: ${csp}\n`)
+  assert.doesNotMatch(csp, /unsafe-|'self'/)
+  assert.notEqual(policy(p.html), csp)
+})
+
+test('a rendered owner can lose its last visible descendant during data/sample and file resolution', () => {
+  const doc = repeated()
+  const hero = doc.pages[0].root.children![0].children![0]
+  hero.children![0].props!.chrome = true
+  hero.children = [
+    node('wrapper', 'box', [
+      ...hero.children!,
+      {
+        ...text('sample', ''),
+        props: { sample: true, runs: [{ text: 'Example' }] },
+        showIf: { from: 'item', field: 'title' },
+      },
+    ]),
+    { ...node('image', 'image'), props: { assetId: 'unresolved' } },
+  ]
+  const p = page(doc, { mode: 'measure' })
+  assert.match(p.html, /data-id="hero~\d+"/)
+  assert.doesNotMatch(p.html, /Real heading|data-culm-gpu|application\/json/)
+  assert.equal(p.assets, undefined)
+})
+
+test('host and joined shared limits are inclusive; shader and module bytes are not JS', () => {
+  assert.deepEqual(
+    [BUDGETS.gpuHostScript, BUDGETS.wasmBytes, BUDGETS.wasmTransportBytes],
+    [6144, 512, 684],
+  )
+  const p = page(siteWith())
+  const findings = (gpuHost: number, gpuLoader: number) =>
+    checkBudgets({
+      ...p.stats,
+      scriptBytes: { base: 10000, states: 3850, gpuLoader, gpuHost },
+    }).map(p => p.path)
+  assert.deepEqual(findings(6144, 6), [])
+  assert.deepEqual(findings(6145, 5), ['gpuHostScript'])
+  assert.deepEqual(findings(6144, 7), ['sharedScripts'])
+})

@@ -14,6 +14,8 @@ export type Browser = {
   close(): Promise<void>
 }
 export type Answer = {
+  /** Additional deployment policy; the measurement sandbox always applies independently. */
+  policy?: string
   status?: number
   type: string
   body: Uint8Array | string
@@ -493,7 +495,12 @@ async function hook(cdp: Cdp, owner: Owner, session: string) {
               ? [
                   {
                     name: 'Content-Security-Policy',
-                    value: scriptPolicy(Buffer.from(r.body).toString('utf8')),
+                    value: [
+                      scriptPolicy(Buffer.from(r.body).toString('utf8')),
+                      r.policy,
+                    ]
+                      .filter(Boolean)
+                      .join(', '),
                   },
                 ]
               : []),

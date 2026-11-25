@@ -15,6 +15,7 @@ import {
 } from '../../core/__tests__/kit.ts'
 import { openBrowser, type Browser, type Page } from '../src/measure/browser.ts'
 import { decodePng } from '../src/measure/png.ts'
+import { instrumentedPolicy } from '../__tests__/fixtures/instrumentedPolicy.ts'
 
 let browser: Browser
 async function launch(executable?: string) {
@@ -118,7 +119,9 @@ async function fixture(
       u === url
         ? {
             type: 'text/html',
-            body: source.replace('</head>', `${audit}${setup}</head>`),
+            body: instrumentedPolicy(
+              source.replace('</head>', `${audit}${setup}</head>`),
+            ),
           }
         : undefined,
     )

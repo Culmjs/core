@@ -142,8 +142,10 @@ export function compileSubtree(
   options: CompileOptions,
 ): CompiledSubtree {
   try {
-    const { problems } = checkedInput(doc, options)
+    const checked = checkedInput(doc, options)
+    const { problems } = checked
     if (problems.length) return refused(problems)
+    doc = checked.doc
     const page = doc.pages.find(p => p.id === pageId)
     if (!page)
       return refused([

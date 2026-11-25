@@ -82,7 +82,15 @@ test('the published plain page matches the captured c11f84f fixture byte for byt
     new URL('./motion-plain.html.txt', import.meta.url),
     'utf8',
   )
-  assert.equal(page(docFor()).html, plainBaselineHtml)
+  const meta =
+    '<meta http-equiv="Content-Security-Policy" content="script-src &#39;sha256-iUY5Wv1bdMwf9jcnQARgZ1CVyfibEcYvjp28w14MH8A=&#39;; worker-src &#39;none&#39;">'
+  assert.equal(
+    page(docFor()).html,
+    plainBaselineHtml.replace(
+      '<meta charset="utf-8">',
+      `<meta charset="utf-8">${meta}`,
+    ),
+  )
 })
 test('load and keyboard-equivalent hover use finite gated CSS; a generic press needs keys', () => {
   assert.match(cssOnly('load', rise()).css, /400ms/)

@@ -94,7 +94,11 @@ export async function observe(pages: Pages) {
     const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(
       m => `'sha256-${createHash('sha256').update(m[1]).digest('base64')}'`,
     )
-    const csp = `default-src 'none'; script-src 'self' ${scripts.join(' ')} ${page.wasm.length ? "'wasm-unsafe-eval'" : ''}; worker-src blob:; style-src 'unsafe-inline'; img-src data:`
+    if (page.lazyJs)
+      scripts.push(
+        `'sha256-${createHash('sha256').update(page.lazyJs).digest('base64')}'`,
+      )
+    const csp = `default-src 'none'; script-src ${scripts.join(' ')} ${page.wasm.length ? "'wasm-unsafe-eval'" : ''}; worker-src ${page.lazyJs ? 'blob:' : "'none'"}; style-src 'unsafe-inline'; img-src data:`
     res
       .writeHead(200, {
         'content-security-policy': csp,

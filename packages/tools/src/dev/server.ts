@@ -1,10 +1,11 @@
 import { createServer } from 'node:http'
+import { createHash } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 import { watch } from 'node:fs'
 import type { FSWatcher } from 'node:fs'
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { extname, join, resolve } from 'node:path'
-import { compileSite } from '@culmjs/core'
+import { compileSite, policyMeta } from '@culmjs/core'
 import { fontProblems, slugProblems } from '../build/bundle.ts'
 import { inside, media, refusal, resolveFile } from '../folder/files.ts'
 import { openProject } from '../folder/project.ts'
@@ -14,6 +15,7 @@ import { MIME } from '../shared.ts'
 import { CLIENT_SCRIPT } from './client.ts'
 
 const PAUSE_MS = 50
+const clientHash = `'sha256-${createHash('sha256').update(CLIENT_SCRIPT).digest('base64')}'`
 
 /**
  * Serves the project on 127.0.0.1 (no other address, no option). Pages come from the last good compile held in memory; a save that
@@ -30,6 +32,8 @@ export async function startDev(
 }> {
   const root = resolve(dir)
   let pages = new Map<string, string>() // `/` or `/slug` -> html
+  let assets = new Map<string, string>()
+  let policy = `script-src ${clientHash}; worker-src 'none'`
   let problems: Located[] = []
   let outDir = resolve(root, 'dist')
   const clients = new Set<ServerResponse>()
@@ -85,15 +89,34 @@ export async function startDev(
           ...[...files.refused].map(([rel, why]) => refusal(rel, why)),
           ...fontProblems(site.files, files.hashes, loaded),
         ]
-        if (!found.length)
-          next = new Map(
-            site.files.map(f => [
-              f.path === 'index.html'
-                ? '/'
-                : `/${f.path.slice(0, -'/index.html'.length)}`,
-              f.content,
-            ]),
+        if (!found.length) {
+          const content = new Map(site.files.map(f => [f.path, f.content]))
+          const headers = content.get('_headers')!
+          const production = headers
+            .slice('/*\n  Content-Security-Policy: '.length)
+            .trimEnd()
+          const devPolicy = production.replace(
+            'script-src ',
+            `script-src ${clientHash} `,
           )
+          content.delete('_headers')
+          next = new Map(
+            site.manifest.pages.map(({ path }) => {
+              const html = content
+                .get(path)!
+                .replace(policyMeta(production), policyMeta(devPolicy))
+              content.delete(path)
+              return [
+                path === 'index.html'
+                  ? '/'
+                  : `/${path.slice(0, -'/index.html'.length)}`,
+                html,
+              ]
+            }),
+          )
+          policy = devPolicy
+          assets = content
+        }
       }
       if (!found.length && !loaded.doc)
         found = [
@@ -199,6 +222,18 @@ export async function startDev(
       return end(res, 404)
     }
     if (path.includes('\0')) return end(res, 404)
+    if (path === '/_headers') return end(res, 404)
+    if (path.startsWith('/_culm/')) {
+      const js = assets.get(path.slice(1))
+      if (js === undefined) return end(res, 404)
+      return void res
+        .writeHead(200, {
+          'content-type': MIME['.js']!,
+          'cache-control': 'no-cache',
+          'x-content-type-options': 'nosniff',
+        })
+        .end(js)
+    }
     for (const [prefix, base] of [
       ['/assets/', 'assets'],
       ['/_fonts/', 'fonts'],
@@ -211,15 +246,19 @@ export async function startDev(
       return void res
         .writeHead(200, {
           'content-type': MIME['.html']!,
+          'content-security-policy': policy,
           'cache-control': 'no-cache',
         })
         .end(page(html))
     if (pages.size === 0)
       return void res
-        .writeHead(503, { 'content-type': MIME['.html']! })
+        .writeHead(503, {
+          'content-type': MIME['.html']!,
+          'content-security-policy': policy,
+        })
         .end(
           page(
-            '<!doctype html><title>Culm</title><body>The project has problems.</body>',
+            `<!doctype html>${policyMeta(policy)}<title>Culm</title><body>The project has problems.</body>`,
           ),
         )
     end(res, 404)

@@ -67,11 +67,13 @@ test('a plain page is one HTML document with its content, and ships the base scr
   assert.ok(r.stats.bytes <= 100_000 && r.stats.styleBytes <= BUDGETS.css)
 })
 
-test('the head holds the charset, the viewport, the title and one style, and nothing else', () => {
+test('the head holds the charset, the script policy, the viewport, the title and one style', () => {
   const r = page(siteWith([text('t', 'Hi')], { name: 'Ada', title: 'Home' }))
   const head = r.html.slice(r.html.indexOf('<head>'), r.html.indexOf('</head>'))
   assert.ok(
-    head.startsWith('<head><meta charset="utf-8"><meta name="viewport"'),
+    /^<head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="[^"]+"><meta name="viewport"/.test(
+      head,
+    ),
   )
   assert.ok(head.includes('<title>Home · Ada</title>'))
   assert.equal(head.match(/<style>/g)?.length, 1)

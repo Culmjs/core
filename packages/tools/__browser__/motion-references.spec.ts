@@ -293,14 +293,33 @@ for (const width of [1280, 390])
 test('pre-stage control bytes, script-free editor and the shipped feature mixes', async t => {
   const plain = await scenes.control()
   const sha = (s: string) => createHash('sha256').update(s).digest('hex')
-  // Compiled from this control's canonical JSON by pre-motion commit a1ca779.
+  // Preserve the original goldens (pre-motion commit a1ca779). Removing only
+  // the two delivery policy artifacts must recover the *entire* previous result.
+  const meta = /<meta http-equiv="Content-Security-Policy" content="[^"]+">/
+  const control = compiled(plain)
+  const site = compileSite(plain, { registry })
   assert.equal(
-    sha(compiled(plain).html),
+    sha(control.html.replace(meta, '')),
     '4ff9ed130a08642ffa6aa1f1432c1800b46a3cf0399f399d0f5d504a4039280f',
   )
   assert.equal(
-    sha(JSON.stringify(compileSite(plain, { registry }))),
+    sha(
+      JSON.stringify({
+        ...site,
+        files: site.files
+          .filter(f => f.path !== '_headers')
+          .map(f => ({ ...f, content: f.content.replace(meta, '') })),
+      }),
+    ),
     '660831b70bae58b111b4d5aa97e005547e07d6f38fe9361d4c8de9e16d784109',
+  )
+  assert.equal(
+    sha(control.html),
+    'b39ca828d10fb1cf164dbff24e9681e9d5e3ad28349be717532385b92201979a',
+  )
+  assert.equal(
+    sha(JSON.stringify(site)),
+    '29b2058b5a78dcbe5d1877f8c27d78a53f53b347784df9c3f92b3e738c90edeb',
   )
   for (const scene of [
     'box',

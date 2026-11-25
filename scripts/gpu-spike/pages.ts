@@ -10,6 +10,8 @@ import {
   compilePage,
   createRegistry,
   insertBlock,
+  pageScriptPolicy,
+  policyMeta,
 } from '@culmjs/core'
 import starter, { STYLES } from '@culmjs/starter'
 import { scenes } from '../../packages/tools/__tests__/fixtures/motion-scenes.ts'
@@ -89,7 +91,12 @@ export async function makePage(name: Variant) {
     sources: Object.fromEntries(names.map(n => [n, sources[n]])),
     ...(module.length && { module: module.toString('base64') }),
   }
-  let html = c.html
+  // This isolated loopback experiment appends different executable bytes after compilation.
+  // observe.ts supplies a fixture-owned HTTP policy for the final bytes, including instrumentation.
+  const meta = policyMeta(pageScriptPolicy(c.scripts))
+  assert.ok(c.html.includes(meta))
+  const baseline = c.html.replace(meta, '')
+  let html = baseline
   const data = names.length ? dataScript(payload) : ''
   if (names.length) {
     inline.push(loader)
@@ -145,6 +152,6 @@ export async function makePage(name: Variant) {
       data.replace(/^<script[^>]*>|<\/script>$/g, ''),
     ),
     compiledBytes: Buffer.byteLength(compiled),
-    addedHtmlBytes: Buffer.byteLength(html) - Buffer.byteLength(c.html),
+    addedHtmlBytes: Buffer.byteLength(html) - Buffer.byteLength(baseline),
   }
 }

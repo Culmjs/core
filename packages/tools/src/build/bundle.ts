@@ -2,8 +2,10 @@ import {
   copyFile,
   lstat,
   mkdir,
+  mkdtemp,
   readdir,
   realpath,
+  rename,
   rm,
   writeFile,
 } from 'node:fs/promises'
@@ -67,7 +69,10 @@ export function slugProblems(doc: SiteDocument, loaded: Loaded): Located[] {
   const problems: Located[] = []
   for (const p of doc.pages) {
     const top = p.slug.split('/')[1]
-    if (p.on && (top === 'assets' || top === '_fonts' || top === MANIFEST_FILE))
+    if (
+      p.on &&
+      ['assets', '_fonts', '_culm', '_headers', MANIFEST_FILE].includes(top)
+    )
       problems.push(
         loaded.map.locateProblem(
           bad(`The slug "${p.slug}" is a path the build writes ("${top}").`, {
@@ -81,7 +86,7 @@ export function slugProblems(doc: SiteDocument, loaded: Loaded): Located[] {
 
 /** The font files the compiled pages ask for (the @font-face rules of the fonts actually used) must be in fonts/. Shared with the dev server. */
 export function fontProblems(
-  files: { content: string }[],
+  files: { path: string; content: string }[],
   hashes: { path: string }[],
   loaded: Loaded,
 ): Located[] {
@@ -95,11 +100,15 @@ export function fontProblems(
   }
   const have = new Set(hashes.map(h => h.path))
   const wanted = new Set(
-    files.flatMap(f =>
-      [...f.content.matchAll(/@font-face\{[^}]*\/_fonts\/([^)"']+)\)/g)].map(
-        m => m[1]!,
+    files
+      .filter(f => f.path.endsWith('index.html'))
+      .flatMap(f =>
+        [
+          ...(
+            f.content.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? ''
+          ).matchAll(/@font-face\{[^}]*\/_fonts\/([^)"']+)\)/g),
+        ].map(m => m[1]!),
       ),
-    ),
   )
   for (const file of [...wanted].sort())
     if (!have.has(`fonts/${file}`)) {
@@ -117,8 +126,8 @@ export function fontProblems(
 }
 
 /**
- * Compiles the site and writes it to `out` (default: the project's `out`). Any problem: nothing is written. `out` is cleared first,
- * but only when it is empty or holds `culm-manifest.json`; any other non-empty folder is refused and left alone.
+ * Stages a complete bundle before replacing `out` (default: the project's `out`). Only a missing,
+ * empty or previously built destination can be replaced.
  */
 export async function buildSite(
   project: Project,
@@ -177,39 +186,56 @@ export async function buildSite(
     ...site.manifest,
     build: await buildIdentity(doc, loaded.data, registry, hashes),
   }
-  let cleared = false
+  let staging: string | undefined
+  let backup: string | undefined
   try {
-    if (await exists(target))
-      // the old manifest goes last, so a failed clear leaves a folder a later build may still clear
-      for (const n of (await readdir(target)).sort(
-        (x, y) => +(x === MANIFEST_FILE) - +(y === MANIFEST_FILE),
-      ))
-        await rm(join(target, n), { recursive: true, force: true })
-    cleared = true
-    await mkdir(target, { recursive: true })
+    await mkdir(dirname(target), { recursive: true })
+    staging = await mkdtemp(
+      join(dirname(target), `.${basename(target)}-build-`),
+    )
+    const next = join(staging, 'next')
+    await mkdir(next)
     for (const f of site.files) {
-      await mkdir(dirname(join(target, f.path)), { recursive: true })
-      await writeFile(join(target, f.path), f.content)
+      await mkdir(dirname(join(next, f.path)), { recursive: true })
+      await writeFile(join(next, f.path), f.content)
     }
     // regular files only: a link in the project is copied as the file it names, never written as a link
     for (const [rel, real] of media_) {
-      const to = join(target, rel.startsWith('fonts/') ? `_${rel}` : rel)
+      const to = join(next, rel.startsWith('fonts/') ? `_${rel}` : rel)
       await mkdir(dirname(to), { recursive: true })
       await copyFile(real, to)
     }
     await writeFile(
-      join(target, MANIFEST_FILE),
+      join(next, MANIFEST_FILE),
       JSON.stringify(manifest, null, 2) + '\n',
     )
+    if (await exists(target)) {
+      const previous = join(staging, 'previous')
+      await rename(target, previous)
+      backup = previous
+    }
+    await rename(next, target)
+    backup = undefined
   } catch (e) {
+    if (backup) {
+      try {
+        await rename(backup, target)
+        backup = undefined
+      } catch {
+        /* Preserve the previous bundle at the named backup. */
+      }
+    }
     return {
       ok: false,
       problems: [
         bad(
-          `The build could not write "${target}": ${e instanceof Error ? e.message : String(e)}${cleared ? ` The output folder has no ${MANIFEST_FILE} now; delete it by hand before the next build.` : ''}`,
+          `The build could not write "${target}": ${e instanceof Error ? e.message : String(e)}${backup ? ` The previous output is at "${backup}".` : ''}`,
         ),
       ],
     }
+  } finally {
+    if (staging && !backup)
+      await rm(staging, { recursive: true, force: true }).catch(() => {})
   }
   return {
     ok: true,

@@ -20,6 +20,9 @@ import {
   OPEN_SCRIPT,
   STATES_SCRIPT,
   TIMELINE_SCRIPT,
+  GPU_HOST_SCRIPT,
+  GPU_LOADER_SCRIPT,
+  GPU_HOST_PATH,
 } from '../scripts/index.ts'
 import { checkedSite } from '../validate/validate.ts'
 import { BUDGETS, byteLength, checkBudgets, type PageStats } from './budgets.ts'
@@ -34,6 +37,14 @@ import { writeHtml, type HtmlNode } from './html.ts'
 import { type Links } from './links.ts'
 import { prepareStyles } from './styles.ts'
 import { motionCss } from './motion.ts'
+import { lowerGpu } from './gpu.ts'
+import type { CheckedEffect } from '../validate/gpu.ts'
+import {
+  executableHashes,
+  scriptPolicy,
+  withPolicy,
+  type PageScript,
+} from './gpuPolicy.ts'
 
 export type CompileOptions = {
   registry: Registry
@@ -49,13 +60,15 @@ export type CompileOptions = {
   icons?: SiteIcons
 }
 
-type PageScript = { name: 'base' | 'states' | 'timeline'; code: string }
+export type CompiledAsset = { path: string; content: string }
 export type CompiledPage =
   | {
       ok: true
       html: string
       css: string
       scripts: PageScript[]
+      assets?: CompiledAsset[]
+      gpu?: { usesWasm: boolean }
       stats: PageStats
       problems: Problem[]
     }
@@ -82,6 +95,7 @@ export function checkedInput(doc: SiteDocument, options: CompileOptions) {
       : {}
   return {
     doc: checked.doc,
+    effects: checked.effects,
     problems: registry
       .sources()
       .flatMap(s =>
@@ -294,7 +308,7 @@ export function compilePage(
   options: CompileOptions,
 ): CompiledPage {
   try {
-    const { doc: projected, problems } = checkedInput(doc, options)
+    const { doc: projected, effects, problems } = checkedInput(doc, options)
     if (problems.length) return { ok: false, problems }
     const page = projected.pages.find(p => p.id === pageId)
     if (!page)
@@ -308,7 +322,7 @@ export function compilePage(
           },
         ],
       }
-    return build(projected, page, options)
+    return build(projected, page, options, effects)
   } catch (e) {
     return { ok: false, problems: failed(pageId, e) }
   }
@@ -318,19 +332,32 @@ export function build(
   doc: SiteDocument,
   page: SiteDocument['pages'][number],
   options: CompileOptions,
+  effects: ReadonlyMap<string, CheckedEffect> | undefined,
+  siteHashes?: Set<string>,
 ): CompiledPage {
   const p = prepare(doc, [page.root, doc.header, doc.footer], options)
   const { mode } = p
   const mail = { used: false }
-  const hasMotion = (w: Node): boolean =>
-    (!!w.motion && !('gpu' in w.motion)) || !!w.children?.some(hasMotion)
-  const rendered =
-    mode === 'live' && p.trees.some(hasMotion)
-      ? new Map<Node, HtmlNode>()
-      : undefined
+  let hasGpu = false,
+    hasSteps = false
+  if (mode === 'live')
+    for (const tree of p.trees)
+      walk(tree, w => {
+        if (w.motion) {
+          if ('gpu' in w.motion) hasGpu = page.on
+          else hasSteps = true
+        }
+      })
+  const rendered = hasGpu || hasSteps ? new Map<Node, HtmlNode>() : undefined
   const site = siteElement(doc, page, p, mail, rendered)
+  const gpu =
+    hasGpu && rendered && effects
+      ? lowerGpu(site, rendered, doc.look.dark, effects)
+      : undefined
   const motion =
-    rendered && motionCss(p.trees, site, rendered, options.registry, p)
+    hasSteps && rendered
+      ? motionCss(p.trees, site, rendered, options.registry, p)
+      : undefined
   if (motion?.problems.length) return { ok: false, problems: motion.problems }
 
   const scripts: PageScript[] = []
@@ -358,6 +385,7 @@ export function build(
     if (states) scripts.push({ name: 'states', code: STATES_SCRIPT })
     if (motion?.timeline)
       scripts.push({ name: 'timeline', code: TIMELINE_SCRIPT })
+    if (gpu) scripts.push({ name: 'gpuLoader', code: GPU_LOADER_SCRIPT })
   }
 
   const css =
@@ -366,10 +394,11 @@ export function build(
     p.sheet(motion?.inlineClasses, motion?.hostAlpha).css +
     (motion?.css ?? '')
   const body: HtmlNode[] = [site]
+  if (gpu) body.push(gpu.element)
   const written = scripts.map(s => s.code).join(';')
   if (scripts.length)
     body.push({ tag: 'script', raw: { kind: 'script', content: written } })
-  const html = `<!doctype html>${writeHtml({
+  let html = `<!doctype html>${writeHtml({
     tag: 'html',
     attrs: { lang: p.lang, dir: p.rtl ? 'rtl' : undefined },
     children: [
@@ -391,26 +420,40 @@ export function build(
       { tag: 'body', children: body },
     ],
   })}`
+  if (mode === 'live') {
+    const hashes = executableHashes(scripts)
+    if (siteHashes) hashes.forEach(h => siteHashes.add(h))
+    else html = withPolicy(html, scriptPolicy(hashes))
+  }
 
   const stats: PageStats = {
     bytes: byteLength(html),
     styleBytes: byteLength(css),
-    // Charge each raw code string once. Every separator belongs to base.
+    // Preserve the original base joins. The GPU loader pays for its own separator.
     scriptBytes: {
       base: scripts.length
-        ? byteLength(scripts[0].code) + scripts.length - 1
+        ? byteLength(scripts[0].code) + scripts.length - 1 - Number(!!gpu)
         : 0,
       states: byteLength(scripts.find(s => s.name === 'states')?.code ?? ''),
       ...(motion?.timeline && { timeline: byteLength(TIMELINE_SCRIPT) }),
+      ...(gpu && {
+        gpuLoader: byteLength(GPU_LOADER_SCRIPT) + 1,
+        gpuHost: byteLength(GPU_HOST_SCRIPT),
+      }),
     },
     elements: body.reduce((n, e) => n + countElements(e), 0),
     depth: p.depth,
+    ...(gpu && { gpuData: gpu.stats }),
   }
   return {
     ok: true,
     html,
     css,
     scripts,
+    ...(gpu && {
+      gpu: { usesWasm: gpu.usesWasm },
+      assets: [{ path: GPU_HOST_PATH, content: GPU_HOST_SCRIPT }],
+    }),
     stats,
     problems: [
       ...cutProblems(p.over),

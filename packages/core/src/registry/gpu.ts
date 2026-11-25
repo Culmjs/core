@@ -72,8 +72,9 @@ function sameSettings(a: ShaderSettings, b: ShaderSettings) {
 }
 
 // These price transfer of a single module; ABI and executable validation precede any future runtime.
-const WASM_BYTES = 512,
-  WASM_ENCODED = 4 * Math.ceil(WASM_BYTES / 3)
+export const WASM_LIMITS = { wasmBytes: 512, wasmTransportBytes: 684 } as const
+export const moduleBytes = (b: string) =>
+  (b.length / 4) * 3 - (b.endsWith('==') ? 2 : b.endsWith('=') ? 1 : 0)
 function moduleSnapshot(wasm: NonNullable<GpuEffectDef['wasm']>) {
   if (
     !isRecord(wasm) ||
@@ -87,12 +88,11 @@ function moduleSnapshot(wasm: NonNullable<GpuEffectDef['wasm']>) {
     abi !== 'field-v1' ||
     typeof b !== 'string' ||
     !b.length ||
-    b.length > WASM_ENCODED ||
+    b.length > WASM_LIMITS.wasmTransportBytes ||
     !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
       b,
     ) ||
-    (b.length / 4) * 3 - (b.endsWith('==') ? 2 : b.endsWith('=') ? 1 : 0) >
-      WASM_BYTES
+    moduleBytes(b) > WASM_LIMITS.wasmBytes
   )
     throw new Error('Invalid GPU module ABI, base64 or byte length.')
   return Object.freeze({ abi, bytesBase64: b })
