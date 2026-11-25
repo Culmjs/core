@@ -13,7 +13,6 @@ import { node, siteWith, text } from '../packages/core/__tests__/kit.ts'
 import { openBrowser } from '../packages/tools/src/measure/browser.ts'
 import { renderGpuWorker } from './gen-scripts.ts'
 
-const root = '.superpowers/gpu-flash/size-1'
 const sha = (data: string | Uint8Array) =>
   createHash('sha256').update(data).digest('hex')
 const run = (cmd: string, args: string[]) => {
@@ -46,6 +45,12 @@ const compiled = compilePage(
   },
 )
 assert.ok(compiled.ok, JSON.stringify(compiled.problems))
+// Keep prior captures when a size pass changes the host but renders identical
+// AVI bytes. summary.json records the full host, worker and clip hashes.
+const root = join(
+  '.superpowers/gpu-flash',
+  'host-' + sha(compiled.assets![0].content).slice(0, 16),
+)
 const payload = JSON.parse(
   compiled.html.match(/id="culm-gpu">([^<]+)<\/script>/)![1],
 )

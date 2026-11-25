@@ -19,9 +19,13 @@ The timeline and checked GPU build also share repeated literal DOM property name
 
 ## Checked renderer
 
-At GPU checkpoint `dddaa47`, the host and embedded worker measure **8,963** and **2,972** bytes, down from **11,570** and **3,858**. The normal unreviewed mixed fixture measures **17,960 / 20,000**. Adding a pointer-controlled clock selects the full timeline; that fixture measures **20,607 / 20,000** at this checkpoint. Neither page can ship the checked host: the host by itself is still **2,819 bytes over**.
+At GPU checkpoint `dddaa47`, the host and worker measured **8,963** and **2,972** bytes, down from **11,570** and **3,858**. The normal unreviewed mixed fixture measured **17,960 / 20,000**. Adding a pointer-controlled clock selected the full timeline; that fixture measured **20,607 / 20,000** at this checkpoint.
+
+Review found a real wakeup regression: merely touching an intersection edge can count as intersecting, so moving into view need not trigger another observer callback. `396f76e` restored coalesced scroll and viewport resize wakeups (including nested scroll capture) at a cost of **49 bytes**. The host is now **9,012 bytes**: **2,979** for the quoted worker including delimiters and escaping, **6,033** for the rest. It still exceeds the **6,144** host ceiling by **2,868** and remains isolated.
 
 The runtime now inspects eligible geometry and background in one pass, keeps one acknowledgment per owner, and accounts for slow frames using completed draws. Compilation normalizes scalar and colour settings once; the worker uses fixed texture units and a common draw path for the raw shader and the display pass. The checked host and worker still execute in their original realms. The integrated GPU browser run passed **57/57**, including real SRI activation, timed fallback, packed consumers and composited pixels. Both regenerated 180-frame [offline clips](flash-analysis.md) were byte-identical to their independently analyzed predecessors.
+
+In a separate [Metal GPU smoke test](evidence/size-work/metal-poster-pixels.csv), both checked poster visits remained active at 392×800 presentation resolution. Each showed the same 10th/90th percentile contour codes as the previous checked build at the corresponding samples (149/157 near 1.28 s and 145/161 near 2.23 s). Both trusted controls also remained active. These four screenshot visits verify hardware output, not phone performance.
 
 ## Why the background-layer shortcut was rejected
 

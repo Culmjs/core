@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { transformSync } from 'esbuild'
+import ts from 'typescript'
 import * as shipped from '@culmjs/core'
 import { candidateCompiler } from './gpu-flash/compiler.ts'
 import { renderGpuWorker, RELEASE_CHECKED } from './gen-scripts.ts'
@@ -12,6 +13,31 @@ import { BUDGETS } from '../packages/core/src/compile/budgets.ts'
 const strict = process.argv.includes('--require-fit')
 const unreviewed = process.argv.includes('--unreviewed')
 const interactive = process.argv.includes('--interactive')
+
+// Include delimiters and escapes: the standalone worker size isn't in general
+// the number of bytes its literal occupies in the shipped lazy host.
+function embeddedBytes(host: string, worker: string) {
+  const js = ts.createSourceFile(
+    'host.js',
+    host,
+    ts.ScriptTarget.ES2017,
+    true,
+    ts.ScriptKind.JS,
+  )
+  const occurrences: number[] = []
+  function visit(n: ts.Node) {
+    if (ts.isStringLiteralLike(n) && n.text === worker)
+      occurrences.push(Buffer.byteLength(n.getText(js)))
+    ts.forEachChild(n, visit)
+  }
+  visit(js)
+  assert.equal(
+    occurrences.length,
+    1,
+    'expected the complete worker exactly once',
+  )
+  return occurrences[0]
+}
 
 for (const [profile, core, checked] of [
   ['release', shipped, RELEASE_CHECKED],
@@ -88,6 +114,7 @@ for (const [profile, core, checked] of [
     inline = Buffer.byteLength(c.scripts.map(s => s.code).join(';'))
   assert.equal(host, c.stats.scriptBytes.gpuHost)
   const worker = renderGpuWorker(checked)
+  const embeddedWorker = embeddedBytes(code, worker)
   for (const js of [code, worker]) {
     assert.equal(
       transformSync(js, { target: 'es2017' }).code,
@@ -121,6 +148,8 @@ for (const [profile, core, checked] of [
       interactive,
       unreviewed,
       worker: Buffer.byteLength(worker),
+      embeddedWorker,
+      hostExcludingWorker: host - embeddedWorker,
       host,
       inline,
       shared: host + inline,
