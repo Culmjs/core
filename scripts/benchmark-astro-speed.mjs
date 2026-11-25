@@ -23,6 +23,7 @@ import { node, siteWith, text } from '../packages/core/__tests__/kit.ts'
 import { scenes } from '../packages/tools/__tests__/fixtures/motion-scenes.ts'
 import { contours } from '../packages/core/src/registry/gpuBuiltins.ts'
 import { candidateCompiler } from './gpu-flash/compiler.ts'
+import { RELEASE_CHECKED } from './gen-scripts.ts'
 import { physicalAndroid } from './benchmark-android.mjs'
 
 const root = resolve('.superpowers/astro-speed')
@@ -61,19 +62,17 @@ const output =
         ? 'handset.json'
         : 'results.json',
   )
-const candidate = await candidateCompiler()
-// Same-run controls for the last reviewed candidate before the size pass.
-// Build a temporary copy, with the same installed build tools as the current tree.
-const baselineCommit = '68506610fb11fd8aae08a85f37eef215e3f67c52'
-let baseline
-if (process.env.BENCH_BEFORE === '1') {
+const candidate = RELEASE_CHECKED ? release : await candidateCompiler()
+// Historical controls must keep using their original generated module, even
+// when release selects the checked renderer. No runtime selector in the site.
+async function historicalCore(commit, checked) {
   const dir = await mkdtemp(join(root, 'before-'))
   try {
     const archive = execFileSync(
       'git',
       [
         'archive',
-        baselineCommit,
+        commit,
         'package.json',
         'packages/core/src',
         'scripts/gen-scripts.ts',
@@ -83,14 +82,28 @@ if (process.env.BENCH_BEFORE === '1') {
     )
     execFileSync('tar', ['-xf', '-', '-C', dir], { input: archive })
     await symlink(resolve('node_modules'), join(dir, 'node_modules'), 'dir')
+    if (!checked)
+      return await import(
+        pathToFileURL(join(dir, 'packages/core/src/index.ts')).href
+      )
     const { candidateCompiler: previous } = await import(
       pathToFileURL(join(dir, 'scripts/gpu-flash/compiler.ts')).href
     )
-    baseline = await previous()
+    return await previous()
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
 }
+const baselineCommit = '68506610fb11fd8aae08a85f37eef215e3f67c52'
+const baseline =
+  process.env.BENCH_BEFORE === '1'
+    ? await historicalCore(baselineCommit, true)
+    : null
+const trustedCommit = '01b2e047c05a6c754211b2479cb3bf6167d78ad1'
+const useTrustedSnapshot = RELEASE_CHECKED || baseline !== null
+const trusted = useTrustedSnapshot
+  ? await historicalCore(trustedCommit, false)
+  : release
 const custom = {
   name: 'survey_contours',
   source: contours.source,
@@ -150,11 +163,11 @@ fullDoc.pages[0].root.children.splice(
 )
 for (const [name, core, fixture, effect] of [
   ['culm-static', release, plainDoc, null],
-  ['culm-trusted', release, plainDoc, 'contours'],
+  ['culm-trusted', trusted, plainDoc, 'contours'],
   ['culm-checked', candidate, plainDoc, custom.name],
-  ['culm-mixed-trusted', release, mixedDoc, 'contours'],
+  ['culm-mixed-trusted', trusted, mixedDoc, 'contours'],
   ['culm-mixed-checked', candidate, mixedDoc, custom.name],
-  ['culm-full-trusted', release, fullDoc, 'contours'],
+  ['culm-full-trusted', trusted, fullDoc, 'contours'],
   ['culm-full-checked', candidate, fullDoc, custom.name],
   ...(baseline
     ? [
@@ -162,7 +175,7 @@ for (const [name, core, fixture, effect] of [
         ['before-full-checked', baseline, fullDoc, custom.name],
       ]
     : []),
-  ['culm-trusted-poster', release, plainDoc, 'contours'],
+  ['culm-trusted-poster', trusted, plainDoc, 'contours'],
   ['culm-checked-poster', candidate, plainDoc, custom.name],
 ]) {
   const doc = structuredClone(fixture)
@@ -449,6 +462,7 @@ try {
     cpu: phone ? phone.info.soc || phone.info.model : cpus()[0].model,
     renderer,
     ...(baseline && { baselineCommit }),
+    ...(useTrustedSnapshot && { trustedCommit }),
     ...(phone && { physicalAndroid: phone.info }),
     profiles,
     bytes,

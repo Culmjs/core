@@ -43,6 +43,7 @@ Over the patterned poster, uninstrumented median readiness was **422 ms checked 
 ## Method and evidence
 
 - Culm `01b2e04`, optimized host `2844a4b873444f705f173749aa722da0d6a0cb1c9e653a7f38ae58e6d8d8e597`. The pre-optimization control was compiled from Git `6850661` and measured in the **same rotating run**, with the same fixtures, Chrome process and installed build tools. Its host hash matched `859a937afe74f61dca59cf53f851db1df94fe5f99f6ddbe227d1b3a032dd4b24`. The fully interactive fixture exposes its pointer meter and runs the exact 19,997 raw executable bytes of the budget case.
+- To reproduce the trusted comparison when the release selector changes, the harness loads the original trusted compiler from Git `01b2e04`. This also applies when `BENCH_BEFORE=1`. Each fixture records its actual host hash; the current checked renderer and the two older controls remain distinguishable.
 - Production Astro 7.4.13, Playwright 1.65.1, Chrome 156.0.8078.4, Apple M4 Max ANGLE Metal. Local: 1280×800, DPR 1, unthrottled. Mobile-shaped: 392×800, DPR 1, 4× CPU slowdown, 150 ms network latency, 1.6 Mbps down / 750 kbps up; still the Mac GPU and a fine pointer. **No physical handset was attached.**
 - 14 fixtures × 2 profiles × 9 measured cold visits = **252**. Plus three cold poster visits per renderer and three separate screenshot visits per renderer = **264** recorded navigations, excluding warm-ups. Same loopback server, Brotli quality 5, fresh context per visit and disabled HTTP cache. See [definitions and caveats](astro-speed.md#method-and-interpretation).
 
