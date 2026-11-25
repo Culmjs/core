@@ -18,6 +18,21 @@ import { attachedGpuFolder } from '../../packages/tools/__tests__/fixtures/shade
 const core = join(import.meta.dirname, '../../packages/core')
 const run = (cmd: string, args: string[], cwd: string) =>
   execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: 'pipe' })
+const callPublic = `import * as root from '@culmjs/core';import * as scripts from '@culmjs/core/scripts';import {publicCall} from './gpu-public-call.mjs';publicCall(root,scripts)`
+test('public source GPU entry follows the fixed release loader', () => {
+  run(
+    'node',
+    [
+      '--conditions=source',
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '-e',
+      callPublic,
+    ],
+    import.meta.dirname,
+  )
+})
 
 test('packed core installs offline and every sub-path imports', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'culm-pack-'))
@@ -42,6 +57,11 @@ test('packed core installs offline and every sub-path imports', () => {
       const spec = '@culmjs/core' + key.slice(1)
       run('node', ['-e', `await import(${JSON.stringify(spec)})`], app)
     }
+    cpSync(
+      join(import.meta.dirname, 'gpu-public-call.mjs'),
+      join(app, 'gpu-public-call.mjs'),
+    )
+    run('node', ['--input-type=module', '-e', callPublic], app)
 
     const files = run('tar', ['-tzf', tarball], tmp).split('\n').filter(Boolean)
     assert.deepEqual(

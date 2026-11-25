@@ -11,5 +11,15 @@ export {
 } from './scriptsMin.ts'
 export { hostStates } from './statesHost.ts'
 export { hostMotion } from './motionHost.ts'
-export { hostGpu } from './gpuHost.ts'
+import { loadGpu } from './gpuLoader.ts'
+import { GPU_HOST_PATH, GPU_HOST_INTEGRITY } from './scriptsMin.ts'
+/** Public boot uses the same idempotent, preference-aware SRI loader as compiled pages. */
+export function hostGpu(doc: Document, win: Window): void {
+  loadGpu(
+    doc,
+    win as Window & typeof globalThis,
+    '/' + GPU_HOST_PATH,
+    GPU_HOST_INTEGRITY,
+  )
+}
 export type { StatesDoc, StatesWin } from './statesHost.ts'
