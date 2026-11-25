@@ -11,7 +11,12 @@ import { inside, media, refusal, resolveFile } from '../folder/files.ts'
 import { openProject } from '../folder/project.ts'
 import type { Located } from '../folder/plugins.ts'
 import { authoringSchema } from '../schema/authoring.ts'
-import { MIME } from '../shared.ts'
+import {
+  MIME,
+  deploymentPolicy,
+  mediaAddresses,
+  NO_SCRIPTS,
+} from '../shared.ts'
 import { CLIENT_SCRIPT } from './client.ts'
 
 const PAUSE_MS = 50
@@ -34,6 +39,7 @@ export async function startDev(
   let pages = new Map<string, string>() // `/` or `/slug` -> html
   let assets = new Map<string, string>()
   let policy = `script-src ${clientHash}; worker-src 'none'`
+  let assetPolicy = NO_SCRIPTS
   let problems: Located[] = []
   let outDir = resolve(root, 'dist')
   const clients = new Set<ServerResponse>()
@@ -75,14 +81,15 @@ export async function startDev(
       let next: Map<string, string> | undefined
       let found: Located[] = [...loaded.problems]
       if (loaded.doc && !found.length) {
+        const files = await media(root)
         const site = compileSite(loaded.doc, {
           registry: project.registry,
           data: loaded.data,
           links: project.links,
+          availableMedia: mediaAddresses(files.hashes),
           fonts: project.held.fonts,
           icons: project.held.icons,
         })
-        const files = await media(root)
         found = [
           ...slugProblems(loaded.doc, loaded),
           ...site.problems.map(p => loaded.map.locateProblem(p)),
@@ -91,10 +98,7 @@ export async function startDev(
         ]
         if (!found.length) {
           const content = new Map(site.files.map(f => [f.path, f.content]))
-          const headers = content.get('_headers')!
-          const production = headers
-            .slice('/*\n  Content-Security-Policy: '.length)
-            .trimEnd()
+          const production = deploymentPolicy(site)
           const devPolicy = production.replace(
             'script-src ',
             `script-src ${clientHash} `,
@@ -115,6 +119,7 @@ export async function startDev(
             }),
           )
           policy = devPolicy
+          assetPolicy = production
           assets = content
         }
       }
@@ -187,6 +192,7 @@ export async function startDev(
         .writeHead(200, {
           'content-type':
             MIME[extname(real).toLowerCase()] ?? 'application/octet-stream',
+          'content-security-policy': assetPolicy,
           'x-content-type-options': 'nosniff',
           'cache-control': 'no-cache',
         })
@@ -229,6 +235,7 @@ export async function startDev(
       return void res
         .writeHead(200, {
           'content-type': MIME['.js']!,
+          'content-security-policy': assetPolicy,
           'cache-control': 'no-cache',
           'x-content-type-options': 'nosniff',
         })

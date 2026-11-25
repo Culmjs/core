@@ -485,22 +485,23 @@ async function hook(cdp: Cdp, owner: Owner, session: string) {
             errorReason: 'BlockedByClient',
           }))
         }
+        const policies = [
+          ...(/^(?:text\/html|image\/svg\+xml)/i.test(r.type)
+            ? [scriptPolicy(Buffer.from(r.body).toString('utf8'))]
+            : []),
+          ...(r.policy ? [r.policy] : []),
+        ]
         await s('Fetch.fulfillRequest', {
           requestId,
           responseCode: r.status ?? 200,
           responseHeaders: [
             { name: 'Content-Type', value: r.type },
             { name: 'Access-Control-Allow-Origin', value: '*' },
-            ...(/^text\/html/i.test(r.type)
+            ...(policies.length
               ? [
                   {
                     name: 'Content-Security-Policy',
-                    value: [
-                      scriptPolicy(Buffer.from(r.body).toString('utf8')),
-                      r.policy,
-                    ]
-                      .filter(Boolean)
-                      .join(', '),
+                    value: policies.join(', '),
                   },
                 ]
               : []),

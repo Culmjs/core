@@ -1,6 +1,6 @@
 import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
-import { rmSync } from 'node:fs'
+import { rmSync, writeFileSync } from 'node:fs'
 import {
   lstat,
   mkdir,
@@ -143,6 +143,33 @@ test('a file removed between compile and copy cannot partially replace a publish
   })
   assert.ok(!r.ok)
   assert.deepEqual(await artifact(), before)
+})
+
+test('a generator refreshing a readable image between hashing and staging keeps the prior bundle', async () => {
+  const dir = await site(),
+    project = await openProject(dir)
+  const first = await buildSite(project)
+  assert.ok(first.ok)
+  const snapshot = () =>
+    Promise.all(first.files.map(f => readFile(join(first.out, f))))
+  const before = await snapshot()
+  const next = await buildSite({
+    ...project,
+    links: {
+      ...project.links,
+      file: id => {
+        if (id === 'loaf.svg')
+          writeFileSync(
+            join(dir, 'assets/loaf.svg'),
+            SVG.replace('width="4"', 'width="8"'),
+          )
+        return project.links.file(id)
+      },
+    },
+  })
+  assert.ok(!next.ok)
+  assert.ok(next.problems.some(p => p.file === 'assets/loaf.svg'))
+  assert.deepEqual(await snapshot(), before)
 })
 
 test('any problem writes nothing and comes back with file and line', async () => {

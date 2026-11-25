@@ -1,20 +1,29 @@
 import type { GpuMotion, Look, Node } from '../document/index.ts'
-import { layoutDisplays } from '../layout/display.ts'
+import { renderedFacts } from './scrollScene.ts'
+import { NO, StateAnalysisLimit, StateConditions } from './stateConditions.ts'
 import { moduleBytes } from '../registry/gpu.ts'
 import type { CheckedEffect } from '../validate/gpu.ts'
 import { visibleText } from '../validate/required.ts'
 import { byteLength } from './budgets.ts'
 import type { HtmlNode } from './html.ts'
 
-/** Six visibility bits: a leaf can witness its owner only in the same scheme and layout. */
-function coverage(w: Node, scheme: Look['dark']) {
-  const mask = (dark: boolean) => {
-    const { desktop, tablet, phone } = layoutDisplays(w, dark)
-    return +desktop | (+tablet << 1) | (+phone << 2)
-  }
+/** Text is counted on the actual emitted element. For non-text media require
+ * a confirmed file, labelled drawing, or both the icon link and its rendered glyph. */
+function mediaWitness(
+  el: HtmlNode,
+  w: Node | undefined,
+  available: ReadonlySet<string> | undefined,
+) {
+  if (el.tag === 'img' || el.tag === 'video')
+    return typeof el.attrs?.src === 'string' && available?.has(el.attrs.src)
+  if (el.tag === 'svg') return visibleText(el.attrs?.['aria-label'])
   return (
-    (scheme === 'dark' ? 0 : mask(false)) |
-    (scheme === 'light' ? 0 : mask(true) << 3)
+    w?.kind === 'icon' &&
+    el.tag === 'a' &&
+    visibleText(el.attrs?.['aria-label']) &&
+    el.children?.some(
+      c => typeof c !== 'string' && c.tag === 'svg' && c.raw?.kind === 'icon',
+    )
   )
 }
 
@@ -23,28 +32,59 @@ function coverage(w: Node, scheme: Look['dark']) {
 export function lowerGpu(
   site: HtmlNode,
   rendered: Map<Node, HtmlNode>,
-  scheme: Look['dark'],
+  view: {
+    trees: Node[]
+    classOf: ReadonlyMap<string, string>
+    scheme: Look['dark']
+  },
   effects: ReadonlyMap<string, CheckedEffect>,
+  availableMedia?: ReadonlySet<string>,
 ) {
+  const { trees, classOf, scheme } = view
+  const { facts } = renderedFacts(
+    trees,
+    trees[1],
+    site,
+    rendered,
+    classOf,
+    scheme,
+    new StateConditions(),
+  )
   const source = new Map([...rendered].map(([w, e]) => [e, w]))
   const owners = new Map<HtmlNode, GpuMotion>()
-  function visit(el: HtmlNode | string, parent: number): number {
+  function visit(
+    el: HtmlNode | string,
+    parent: number,
+    inside: boolean,
+  ): number {
     if (typeof el === 'string') return visibleText(el) ? parent : 0
     const w = source.get(el)
-    const mask = w ? parent & coverage(w, scheme) : parent
-    if (!mask) return 0
     const motion = w?.motion
+    inside ||= !!motion && 'gpu' in motion
+    // facts intersect the CSS predicates of all actual holders along this path
+    // before reducing each layout/scheme to "has a reachable assignment".
+    const mask =
+      w && inside
+        ? parent &
+          facts(w).reduce(
+            (bits, f, i) => (f.visible === NO ? bits : bits | (1 << i)),
+            0,
+          )
+        : parent
+    if (!mask) return 0
     if (motion && 'gpu' in motion) owners.set(el, motion)
-    let found =
-      ((el.tag === 'img' || el.tag === 'video') && el.attrs?.src) ||
-      (el.tag === 'svg' && el.attrs?.['aria-label'])
-        ? mask
-        : 0
-    for (const child of el.children ?? []) found |= visit(child, mask)
+    let found = inside && mediaWitness(el, w, availableMedia) ? mask : 0
+    for (const child of el.children ?? []) found |= visit(child, mask, inside)
     if (found !== mask) owners.delete(el)
     return found
   }
-  visit(site, 63)
+  try {
+    visit(site, 63, false)
+  } catch (e) {
+    // No region has been marked yet. Over-complex display conditions keep the static fallback.
+    if (e instanceof StateAnalysisLimit) return
+    throw e
+  }
   if (!owners.size) return
   const definitions: CheckedEffect[] = []
   const indices = new Map<string, number>()

@@ -12,8 +12,8 @@ import {
 import { basename, dirname, join, resolve } from 'node:path'
 import { FONTS, buildIdentity, compileSite } from '@culmjs/core'
 import type { Manifest, SiteDocument } from '@culmjs/core'
-import { SOURCES } from '../shared.ts'
-import { inside, media, refusal } from '../folder/files.ts'
+import { SOURCES, mediaAddresses } from '../shared.ts'
+import { fileDigest, inside, media, refusal } from '../folder/files.ts'
 import type { Loaded } from '../folder/load.ts'
 import type { Located } from '../folder/plugins.ts'
 import type { Project } from '../folder/project.ts'
@@ -175,6 +175,7 @@ export async function buildSite(
     registry,
     data: loaded.data,
     links,
+    availableMedia: mediaAddresses(hashes),
     fonts: project.held.fonts,
     icons: project.held.icons,
   })
@@ -200,10 +201,20 @@ export async function buildSite(
       await writeFile(join(next, f.path), f.content)
     }
     // regular files only: a link in the project is copied as the file it names, never written as a link
-    for (const [rel, real] of media_) {
+    for (const { path: rel, sha256 } of hashes) {
       const to = join(next, rel.startsWith('fonts/') ? `_${rel}` : rel)
       await mkdir(dirname(to), { recursive: true })
-      await copyFile(real, to)
+      await copyFile(media_.get(rel)!, to)
+      if ((await fileDigest(to)) !== sha256)
+        return {
+          ok: false,
+          problems: [
+            bad(
+              `The file "${rel}" changed during the build; the output was left as it is.`,
+              { file: rel },
+            ),
+          ],
+        }
     }
     await writeFile(
       join(next, MANIFEST_FILE),

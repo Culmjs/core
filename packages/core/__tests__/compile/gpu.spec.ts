@@ -262,3 +262,110 @@ test('host and joined shared limits are inclusive; shader and module bytes are n
   assert.deepEqual(findings(6145, 5), ['gpuHostScript'])
   assert.deepEqual(findings(6144, 7), ['sharedScripts'])
 })
+
+const hideWhen = (...values: string[]) => ({
+  when: values.map(is => ({ state: 'panel', is, decl: { hidden: true } })),
+})
+for (const scenario of ['never', 'exclusive', 'reachable'] as const)
+  test(`GPU visibility requires a common declared state across the rendered branch: ${scenario}`, () => {
+    const hero = owner()
+    const caption = hero.children![0]
+    const wrap = node('section', 'box', [hero])
+    const doc = siteWith([wrap], { customEffects: [def] })
+    doc.header.state = [{ name: 'panel', values: 'on-off', initial: 'off' }]
+    // The header may have no emitted strip; its state lives on .s-site.
+    if (scenario !== 'never') wrap.style = hideWhen('off')
+    caption.style = hideWhen(
+      ...(scenario === 'never'
+        ? ['on', 'off']
+        : scenario === 'exclusive'
+          ? ['on']
+          : ['off']),
+    )
+    const p = page(doc)
+    assert.equal(!!p.gpu, scenario === 'reachable')
+    assert.match(p.html, /Real heading/)
+  })
+
+test('an optional file address is not proof of bytes; a rendered labelled icon link is content', () => {
+  const doc = repeated()
+  const hero = doc.pages[0].root.children![0].children![0]
+  hero.children![0].props!.chrome = true
+  const optional = node('opt', 'image')
+  hero.children = [
+    node('wrapper', 'box', [
+      ...hero.children!,
+      {
+        ...text('sample', ''),
+        props: { sample: true, runs: [{ text: 'Example' }] },
+        showIf: { from: 'item', field: 'title' },
+      },
+    ]),
+    optional,
+  ]
+  optional.props = { assetId: 'optional.jpg', alt: '' }
+  const links = {
+    page: (s: string) => s,
+    file: (id: string) => '/assets/' + id,
+  }
+  const absent = page(doc, { links })
+  assert.match(absent.html, /src="\/assets\/optional.jpg"/)
+  assert.equal(absent.gpu, undefined)
+  assert.ok(
+    page(doc, { links, availableMedia: new Set(['/assets/optional.jpg']) }).gpu,
+  )
+  optional.props = { src: 'https://example.invalid/photo.jpg', alt: '' }
+  assert.equal(page(doc, { links }).gpu, undefined)
+  optional.kind = 'icon'
+  optional.props = { name: 'home', label: 'Home', link: { page: '/' } }
+  const icon = page(doc, { links })
+  assert.match(icon.html, /aria-label="Home"><svg/)
+  assert.ok(icon.gpu)
+  optional.props.name = 'missing:home'
+  assert.equal(page(doc, { links }).gpu, undefined)
+})
+
+const registryWithModule = (wasm: unknown) => ({
+  ...registry,
+  effects: () =>
+    registry
+      .effects()
+      .map(e => (e.tier === 3 ? { ...e, wasm: wasm as typeof e.wasm } : e)),
+})
+test('every build refuses a malformed or oversized module view before emitting files', () => {
+  const doc = siteWith([owner('hero', 'field')])
+  for (const wasm of [
+    null,
+    { abi: 'other', bytesBase64: 'AA==' },
+    { abi: 'field-v1', bytesBase64: 'A'.repeat(684) },
+    { abi: 'field-v1', bytesBase64: 'A'.repeat(688) },
+  ]) {
+    const site = compileSite(doc, { registry: registryWithModule(wasm) })
+    assert.deepEqual(
+      site.files.map(f => f.path),
+      [],
+    )
+    assert.ok(
+      site.problems.some(
+        p =>
+          p.code === 'INVALID_DOCUMENT' &&
+          p.path === 'registry.effects.field.wasm',
+      ),
+    )
+  }
+})
+test('the checked module envelope is a snapshot: read its values just once per build', () => {
+  let reads = 0
+  const first = 'A'.repeat(683) + '='
+  const p = page(siteWith([owner('hero', 'field')]), {
+    registry: registryWithModule({
+      abi: 'field-v1',
+      get bytesBase64() {
+        return reads++ === 0 ? first : 'AA=='
+      },
+    }),
+  })
+  assert.equal(reads, 1)
+  assert.equal(payload(p.html).definitions[0].wasm.bytesBase64, first)
+  assert.equal(p.stats.gpuData?.wasmBytes, 512)
+})

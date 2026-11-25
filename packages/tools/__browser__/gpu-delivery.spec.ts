@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
@@ -10,8 +10,9 @@ import { parse } from 'jsonc-parser'
 import { buildSite } from '../src/build/bundle.ts'
 import { startDev } from '../src/dev/server.ts'
 import { openProject } from '../src/folder/project.ts'
+import { media, readAsset } from '../src/folder/files.ts'
 import { openBrowser, type Page } from '../src/measure/browser.ts'
-import { measureAnswers } from '../src/measure/run.ts'
+import { measureAnswers, runMeasure } from '../src/measure/run.ts'
 import { copyFixture } from '../__tests__/fixtures.ts'
 import { gpuFolder, invalid, motion } from '../__tests__/fixtures/shader.ts'
 
@@ -166,6 +167,7 @@ test('the published, dev and isolated measurement pages deliver the SRI host und
         '/',
         async () => assert.fail('Not a folder asset'),
         { n: 0 },
+        policy,
       )
       const url = 'https://site.culm.invalid'
       assert.equal((await answer(url + asset))?.body, js)
@@ -230,6 +232,117 @@ test('the published, dev and isolated measurement pages deliver the SRI host und
       } finally {
         await p.close()
         await dev.close()
+      }
+    },
+  )
+})
+
+test('build, dev and a one-page measurement of a mixed site agree on media, page policy and asset response headers', async t => {
+  const dir = await copyFixture('site-basic')
+  await gpuFolder(dir, true)
+  await mkdir(join(dir, 'assets'), { recursive: true })
+  await writeFile(
+    join(dir, 'assets/note.html'),
+    '<title>Note</title><p>A note.</p>',
+  )
+  await writeFile(
+    join(dir, 'assets/figure.svg'),
+    '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><circle cx="5" cy="5" r="4"/></svg>',
+  )
+  const path = join(dir, 'pages/home.json'),
+    home = parse(await readFile(path, 'utf8'))
+  home.root.children = ['figure', 'absent'].map(id => ({
+    id,
+    name: id,
+    kind: 'box',
+    motion,
+    children: [
+      {
+        id: id + 'image',
+        kind: 'image',
+        name: 'Image',
+        props: { assetId: id + '.svg', alt: '', fallback: 'Fallback' },
+      },
+    ],
+  }))
+  await writeFile(path, JSON.stringify(home))
+  const project = await openProject(dir)
+  const built = await buildSite(project)
+  assert.ok(built.ok, JSON.stringify(built))
+  const policy = (await readFile(join(built.out, '_headers'), 'utf8'))
+    .split('Content-Security-Policy: ')[1]
+    .trim()
+  const html = await readFile(join(built.out, 'index.html'), 'utf8')
+  const checkOwners = (html: string) => {
+    assert.match(html, /src="\/assets\/absent.svg"/)
+    assert.equal((html.match(/data-culm-gpu="/g) ?? []).length, 1)
+    assert.match(html, /data-culm-gpu="0"><img[^>]*src="\/assets\/figure.svg"/)
+  }
+  await t.test('built inventory', () => checkOwners(html))
+  const paths = ['/assets/note.html', '/assets/figure.svg', asset]
+  await t.test(
+    'dev inventory and deployment headers on assets (without reload grant)',
+    async () => {
+      const dev = await startDev(dir, { port: 0 })
+      try {
+        for (const path of paths) {
+          const r = await fetch(dev.url + path)
+          assert.equal(r.status, 200)
+          assert.equal(r.headers.get('content-security-policy'), policy, path)
+        }
+        const page = await fetch(dev.url)
+        assert.notEqual(page.headers.get('content-security-policy'), policy)
+        checkOwners(await page.text())
+      } finally {
+        await dev.close()
+      }
+    },
+  )
+  await t.test(
+    'actual runMeasure uses all published routes even when probing just home',
+    async () => {
+      const b = await openBrowser()
+      assert.ok(b.ok)
+      const seen: { meta: string; html: string; headers: string[] }[] = []
+      try {
+        const result = await runMeasure({
+          registry: project.registry,
+          doc: project.loaded.doc!,
+          data: project.loaded.data,
+          revision: 0,
+          files: (await media(dir)).hashes,
+          assets: p => readAsset(dir, p),
+          pages: ['home'],
+          widths: [1280],
+          themes: ['light'],
+          browser: {
+            ...b.browser,
+            newPage: async () => {
+              const page = await b.browser.newPage()
+              return {
+                ...page,
+                goto: async (url, timeout) => {
+                  const r = await page.goto(url, timeout)
+                  seen.push(
+                    await page.evaluate(
+                      `(async()=>({meta:document.querySelector('[http-equiv]').content,html:document.body.innerHTML,headers:await Promise.all(${JSON.stringify(['/', ...paths])}.map(async path=>(await fetch(path)).headers.get('content-security-policy')))}))()`,
+                    ),
+                  )
+                  return r
+                },
+              }
+            },
+          },
+        })
+        assert.deepEqual(result.incomplete, [])
+        assert.equal(seen.length, 1)
+        assert.equal(seen[0].meta, policy)
+        for (const h of seen[0].headers)
+          assert.equal(h?.split(', ').at(-1), policy)
+        assert.match(seen[0].headers[0], /sandbox allow-scripts/)
+        checkOwners(seen[0].html)
+      } finally {
+        await b.browser.close()
       }
     },
   )

@@ -2,7 +2,10 @@ import { extname } from 'node:path'
 import {
   buildIdentity,
   compilePage,
+  compileSite,
   pageScriptPolicy,
+  policyMeta,
+  type CompileOptions,
   type CompiledPage,
   walk,
   type Data,
@@ -26,7 +29,12 @@ import {
 import type { SiteStore } from '@culmjs/core/ops'
 import { openBrowser, type Answer, type Browser, type Page } from './browser.ts'
 import { contrastOf } from './contrast.ts'
-import { MIME } from '../shared.ts'
+import {
+  deploymentPolicy,
+  mediaAddresses,
+  MIME,
+  NO_SCRIPTS,
+} from '../shared.ts'
 
 export type MeasureInput = {
   doc: SiteDocument
@@ -50,7 +58,7 @@ export type MeasureInput = {
   browser?: Browser
   /** The Chrome to open when no `browser` is given (else `CULM_CHROME`, Playwright's Chromium, the system Chrome). */
   executable?: string
-  /** The font and asset files of the project, for the build identity. */
+  /** Confirmed project files, for optional media eligibility and the build identity. */
   files?: { path: string; sha256: string }[]
   /** The bytes of a file the page asks for, by project path (`assets/…`, `fonts/…`), or undefined. */
   assets?(path: string): Promise<Uint8Array | undefined>
@@ -105,8 +113,12 @@ export function measureAnswers(
   slug: string,
   assets: MeasureInput['assets'],
   missing: { n: number },
+  policy: string,
 ) {
-  const policy = pageScriptPolicy(page.scripts)
+  const html = page.html.replace(
+    policyMeta(pageScriptPolicy(page.scripts)),
+    () => policyMeta(policy),
+  )
   const generated = new Map(page.assets?.map(f => ['/' + f.path, f.content]))
   return async (url: string): Promise<Answer | undefined> => {
     let u: URL
@@ -117,9 +129,9 @@ export function measureAnswers(
     }
     if (u.origin !== ORIGIN) return undefined
     if (u.pathname === slug)
-      return { type: 'text/html; charset=utf-8', body: page.html, policy }
+      return { type: 'text/html; charset=utf-8', body: html, policy }
     const js = generated.get(u.pathname)
-    if (js !== undefined) return { type: MIME['.js']!, body: js }
+    if (js !== undefined) return { type: MIME['.js']!, body: js, policy }
     const m = /^\/(assets|_fonts)\/(.+)$/.exec(u.pathname)
     if (!m || !assets) return undefined
     let rest: string
@@ -139,6 +151,7 @@ export function measureAnswers(
     return {
       type: MIME[extname(rest).toLowerCase()] ?? 'application/octet-stream',
       body,
+      policy,
     }
   }
 }
@@ -152,6 +165,8 @@ const fontsLoaded = (page: Page) =>
 async function measurePage(
   browser: Browser,
   i: MeasureInput,
+  compileOptions: CompileOptions,
+  policy: string,
   pageId: string,
   dir: 'ltr' | 'rtl',
   lang: string | undefined,
@@ -185,12 +200,8 @@ async function measurePage(
     })
 
   const compiled = compilePage(doc, pageId, {
-    registry,
-    data: i.data,
+    ...compileOptions,
     mode: 'measure',
-    links: { page: slug => slug, file: id => `/assets/${id}` },
-    ...(i.fonts ? { fonts: i.fonts } : {}),
-    ...(i.icons ? { icons: i.icons } : {}),
     ...(lang ? { lang } : {}),
   })
   if (!compiled.ok)
@@ -221,7 +232,7 @@ async function measurePage(
   let page: Page | undefined
   try {
     page = await browser.newPage()
-    await page.answer(measureAnswers(compiled, slug, i.assets, missing))
+    await page.answer(measureAnswers(compiled, slug, i.assets, missing, policy))
     const went = await page.goto(ORIGIN + slug, LOAD_MS)
     if (!went.ok)
       throw new Error(
@@ -346,6 +357,17 @@ async function measureAll(input: MeasureInput): Promise<Report> {
     } else none = o.problems
   }
   try {
+    const compileOptions: CompileOptions = {
+      registry: input.registry,
+      data: input.data,
+      links: { page: slug => slug, file: id => `/assets/${id}` },
+      availableMedia: mediaAddresses(input.files ?? []),
+      fonts: input.fonts,
+      icons: input.icons,
+    }
+    const policy = browser
+      ? deploymentPolicy(compileSite(doc, compileOptions))
+      : NO_SCRIPTS
     const per: Parameters<typeof buildReport>[3] = []
     for (const page of pages) {
       const one = {
@@ -362,6 +384,8 @@ async function measureAll(input: MeasureInput): Promise<Report> {
           const r = await measurePage(
             browser,
             input,
+            compileOptions,
+            policy,
             page,
             dir,
             declared.get(dir),

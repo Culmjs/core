@@ -75,7 +75,7 @@ function sameSettings(a: ShaderSettings, b: ShaderSettings) {
 export const WASM_LIMITS = { wasmBytes: 512, wasmTransportBytes: 684 } as const
 export const moduleBytes = (b: string) =>
   (b.length / 4) * 3 - (b.endsWith('==') ? 2 : b.endsWith('=') ? 1 : 0)
-function moduleSnapshot(wasm: NonNullable<GpuEffectDef['wasm']>) {
+export function moduleSnapshot(wasm: NonNullable<GpuEffectDef['wasm']>) {
   if (
     !isRecord(wasm) ||
     !Object.hasOwn(wasm, 'abi') ||

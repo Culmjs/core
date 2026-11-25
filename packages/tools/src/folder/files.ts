@@ -87,6 +87,11 @@ export async function walkFiles(
   return { files, refused }
 }
 
+export const fileDigest = async (path: string) =>
+  createHash('sha256')
+    .update(await readFile(path))
+    .digest('hex')
+
 /** Every file under assets/ and fonts/ with the SHA-256 of its bytes, in path order; the links refused. */
 export async function media(dir: string) {
   const { files, refused } = await walkFiles(
@@ -100,9 +105,7 @@ export async function media(dir: string) {
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .map(async ([path, real]) => ({
         path,
-        sha256: createHash('sha256')
-          .update(await readFile(real))
-          .digest('hex'),
+        sha256: await fileDigest(real),
       })),
   )
   return { files, refused, hashes }

@@ -52,6 +52,8 @@ export type CompileOptions = {
   /** `measure` is live plus a `data-id` on every node, for the probe; it is never written to a site. */
   mode?: 'live' | 'edit' | 'measure'
   links?: Links
+  /** Exact emitted media addresses the caller knows it can deliver. Does not change ordinary URLs. */
+  availableMedia?: ReadonlySet<string>
   lang?: string
   fontBase?: string
   /** The fonts the site's folder holds (`up:<name>`), read by the tools; core opens no file. */
@@ -352,7 +354,7 @@ export function build(
   const site = siteElement(doc, page, p, mail, rendered)
   const gpu =
     hasGpu && rendered && effects
-      ? lowerGpu(site, rendered, doc.look.dark, effects)
+      ? lowerGpu(site, rendered, p, effects, options.availableMedia)
       : undefined
   const motion =
     hasSteps && rendered
