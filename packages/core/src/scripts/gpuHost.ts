@@ -222,11 +222,13 @@ export function hostGpu(
       stop()
     }
   }
-  // Geometry is recomputed on every active display opportunity. When asleep,
-  // intersection/size changes wake newly visible or newly positive-area owners.
+  // A zero-area edge touch can already count as intersecting. Scroll or
+  // viewport resize may expose pixels without either owner observer firing.
   for (const ob of observers) for (const [e] of rows) ob.observe(e)
   const on = (t: EventTarget, k: string, f: EventListener = wake) =>
-    t.addEventListener(k, f, { signal })
+    t.addEventListener(k, f, { signal, capture: k === 'scroll' })
+  on(w, 'scroll')
+  on(w, 'resize')
   on(doc, 'visibilitychange')
   on(w, 'pagehide', stop)
   on(w, 'pointermove', e => {

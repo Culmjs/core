@@ -77,6 +77,7 @@ const setup = async (
     window.owners=[...document.querySelectorAll('[data-culm-gpu]')];
     const raf=requestAnimationFrame;window.paint=()=>new Promise(r=>raf(()=>raf(r)));
     let next,at=100,ack;window.requestAnimationFrame=f=>{next=f;return 1};
+    window.framePending=()=>!!next;
     window.workerCount=0;window.work=[];window.draws=[];window.members=[];window.held=false;
     window.Worker=class extends Worker{constructor(...a){super(...a);workerCount++;
       this.addEventListener('message',e=>{if(e.data!==1)throw Error('GL failed: '+e.data);if(ack)setTimeout(ack,0)})}
@@ -471,6 +472,45 @@ test('same-box changed fallback while the first frame is pending is not uncovere
     [17, 238],
   )
 })
+for (const wake of ['nested scroll', 'viewport growth'] as const)
+  test(`an edge-touching owner sleeps and then paints on ${wake}`, async t => {
+    const { p, start, tick } = await setup(t, middle)
+    await p.setViewport(320, 240)
+    await p.evaluate(`(()=>{
+    const main=document.querySelector('main'),port=document.createElement('div');
+    main.replaceWith(port);port.append(main);port.style.cssText='height:100vh;overflow:auto';
+    main.style.paddingTop='240px';
+  })()`)
+    assert.equal(await p.evaluate('owners[0].getBoundingClientRect().top'), 240)
+    await start()
+    // Let Chromium deliver its initial observers at zero intersection area.
+    await p.evaluate('paint()')
+    await tick(1)
+    assert.deepEqual(
+      await p.evaluate(
+        '[framePending(),workerCount,document.querySelectorAll("canvas").length]',
+      ),
+      [false, 0, 0],
+    )
+    if (wake === 'nested scroll')
+      await p.evaluate(
+        `document.querySelector('main').parentElement.scrollTop=120`,
+      )
+    else await p.setViewport(320, 360)
+    await p.evaluate('paint()')
+    assert.deepEqual(
+      await p.evaluate(
+        '[scrollY,innerHeight-owners[0].getBoundingClientRect().top,owners[0].offsetHeight]',
+      ),
+      [0, 120, 320],
+    )
+    await tick(2)
+    assert.deepEqual(await p.evaluate(marked), [true, false])
+    assert.equal(
+      await p.evaluate('document.querySelectorAll("canvas").length'),
+      1,
+    )
+  })
 test('blocked patterned owners submit no empty frames and never share a neighbour’s slow flag', async t => {
   const { p, start, tick } = await setup(t, middle, true)
   await p.evaluate(`owners.forEach(e=>e.style.boxShadow='0 1px 2px #000')`)
