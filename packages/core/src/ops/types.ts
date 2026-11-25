@@ -165,6 +165,8 @@ export type Allow = (
   op: Op | { op: 'restore'; to: number },
   doc: SiteDocument,
 ) => Problem | undefined
+/** Optional client receipt kept with a committed key: original input digest and bounded reply. */
+type Receipt = { identity: string; text: string }
 export type SiteStore = {
   head(
     site: string,
@@ -177,7 +179,9 @@ export type SiteStore = {
   replay(
     site: string,
     key: string,
-  ): Promise<{ request: string; result: ApplyResult } | undefined>
+  ): Promise<
+    { request: string; result: ApplyResult; receipt?: Receipt } | undefined
+  >
   commit(
     site: string,
     c: {
@@ -187,6 +191,7 @@ export type SiteStore = {
       doc: SiteDocument
       key: string
       request: string
+      receipt?: Receipt
       result: ApplyResult
     },
   ): Promise<

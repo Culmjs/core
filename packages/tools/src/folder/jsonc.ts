@@ -142,12 +142,24 @@ function spliceInsert(
     const after = (comma >= 0 ? comma : end) + 1
     const at =
       after + (/^[ \t]*\/\/[^\r\n]*/.exec(body.slice(after))?.[0].length ?? 0)
-    return body.slice(0, at) + sep + text + ',' + body.slice(at)
+    return (
+      body.slice(0, at) +
+      (at > after ? eol + indent : sep) +
+      text +
+      ',' +
+      body.slice(at)
+    )
   }
   // the last element has none yet: it gets its comma right after it, before any comment on its line
-  const at = end + same.exec(body.slice(end))![0].length
+  const tail = same.exec(body.slice(end))![0]
+  const at = end + tail.length
   return (
-    body.slice(0, end) + ',' + body.slice(end, at) + sep + text + body.slice(at)
+    body.slice(0, end) +
+    ',' +
+    tail +
+    (tail.trimStart().startsWith('//') ? eol + indent : sep) +
+    text +
+    body.slice(at)
   )
 }
 

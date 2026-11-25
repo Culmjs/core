@@ -115,7 +115,12 @@ export async function folderMcpOptions(
     // the hashes of assets/ and fonts/, read again for each measure
     files: () => fileHashes(cwd),
     // a Google family a batch names is fetched once into fonts/ (the hosts are a parameter so tests can point at a local fake)
-    fetch: (ops: unknown[], doc: SiteDocument, offline?: boolean) =>
+    fetch: (
+      ops: unknown[],
+      doc: SiteDocument,
+      offline?: boolean,
+      defer?: boolean,
+    ) =>
       fetchFor(
         cwd,
         doc,
@@ -126,6 +131,7 @@ export async function folderMcpOptions(
               get: () => Promise.reject(new Error('no network for a replay')),
             }
           : fetchOptions,
+        defer,
       ),
     held: () => readHeld(cwd),
     assets: (p: string) => readAsset(cwd, p),

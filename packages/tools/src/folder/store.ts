@@ -29,6 +29,7 @@ type Rec = {
   by: 'culm' | 'outside'
   key?: string
   request?: string
+  receipt?: Parameters<SiteStore['commit']>[1]['receipt']
   result?: ApplyResult
   time: number
 }
@@ -428,7 +429,11 @@ export async function fileStore(
       for (const n of (await numbers()).filter(n => n <= st.revision)) {
         const rec = await readRec(n)
         if (rec?.key === key && rec.request !== undefined && rec.result)
-          return { request: rec.request, result: rec.result }
+          return {
+            request: rec.request,
+            result: rec.result,
+            ...(rec.receipt ? { receipt: rec.receipt } : {}),
+          }
       }
       return undefined
     },
@@ -489,7 +494,12 @@ export async function fileStore(
           const rec = await readRec(n)
           if (rec?.key !== c.key || !rec.result) continue
           return end(
-            rec.request === c.request
+            rec.request === c.request &&
+              !(
+                c.receipt &&
+                rec.receipt &&
+                c.receipt.identity !== rec.receipt.identity
+              )
               ? { ok: true as const, revision: n, result: rec.result }
               : ({ ok: false, code: 'KEY_CONFLICT' } satisfies Refusal),
           )
@@ -498,16 +508,15 @@ export async function fileStore(
           return end<Refusal>({ ok: false, code: 'REVISION_CONFLICT' })
         hook(3)
         // 4. the edits, and the files as they are now
-        const edits =
-          (await restoreEdits(c, head, mine)) ??
-          fileEdits(loaded.doc, c.doc, loaded, registry)
+        const restored = await restoreEdits(c, head, mine)
+        const edits = restored ?? fileEdits(loaded.doc, c.doc, loaded, registry)
         if (edits.problems.length)
           return end<Refusal>({
             ok: false,
             code: 'SOURCE_CONFLICT',
             problems: edits.problems,
           })
-        const paths = [...Object.keys(edits.write), ...edits.remove]
+        const writes = { ...edits.write }
         const was = new Map(loaded.files.map(f => [f.path, f.text]))
         if (registry.gpu?.enabled) {
           const scan = await readFolder(dir)
@@ -518,19 +527,27 @@ export async function fileStore(
           )
             return end<Refusal>({ ok: false, code: 'SOURCE_CONFLICT' })
         }
-        for (const p of paths) {
+        for (const p of [...Object.keys(writes), ...edits.remove]) {
           let now1
           if (shaderPath(p)) {
             const r = await shaderInput(dir, p)
             if (r && 'why' in r)
               return end<Refusal>({ ok: false, code: 'SOURCE_CONFLICT' })
             now1 = r?.text ?? null
+            // A hand save can unlist a shader pair without deleting its files.
+            // Adopt exact target bytes on restore only. Never journal an adopted
+            // path: rollback to the unreferenced head must leave it on disk.
+            if (restored && !was.has(p) && now1 === writes[p]) {
+              delete writes[p]
+              continue
+            }
           } else now1 = await readFile(join(dir, p), 'utf8').catch(() => null)
           if (now1 !== (was.get(p) ?? null))
             return end<Refusal>({ ok: false, code: 'SOURCE_CONFLICT' })
         }
         hook(4)
         // 5. the journal
+        const paths = [...Object.keys(writes), ...edits.remove]
         await put(journalPath, JSON.stringify({ paths }))
         hook(5)
         // 6. blobs, then each file through a temporary name and a rename
@@ -539,7 +556,7 @@ export async function fileStore(
         for (const p of edits.remove) next.delete(p)
         await blobs(next)
         let hooked = false
-        for (const [p, t] of Object.entries(edits.write)) {
+        for (const [p, t] of Object.entries(writes)) {
           await projectFile(p, t)
           if (!hooked) {
             hooked = true
@@ -568,6 +585,7 @@ export async function fileStore(
           by: 'culm',
           key: c.key,
           request: c.request,
+          ...(c.receipt ? { receipt: c.receipt } : {}),
           result,
           time: now(),
         }

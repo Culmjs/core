@@ -3,13 +3,108 @@ import { writeFileSync } from 'node:fs'
 import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import test from 'node:test'
-import { apply } from '@culmjs/core/ops'
+import { apply, restore } from '@culmjs/core/ops'
 import { main } from '../../src/cli/main.ts'
 import { openProject } from '../../src/folder/project.ts'
 import { fileStore } from '../../src/folder/store.ts'
 import { copyFixture } from '../fixtures.ts'
 import { attach, define, gpuFolder, invalid, mist } from '../fixtures/shader.ts'
 import { files } from '../mcp/serve.ts'
+
+for (const comma of ['', ','])
+  test(`commented reference append (${comma ? 'trailing comma' : 'no comma'}) reloads both shaders and the attachment`, async () => {
+    const dir = await copyFixture('site-basic')
+    await gpuFolder(dir, true)
+    const site = join(dir, 'site.json')
+    await writeFile(
+      site,
+      (await readFile(site, 'utf8')).replace(
+        '"effects/mist.json"]',
+        `"effects/mist.json"${comma} // keep mist\r\n  ]`,
+      ),
+    )
+    const { registry } = await openProject(dir)
+    const store = await fileStore(dir, registry)
+    const h = await store.head('s')
+    assert.ok('doc' in h)
+    const cloud = { ...mist, name: 'cloud' },
+      motion = { ...attach.motion, gpu: cloud.name }
+    const result = await apply(store, registry, {
+      site: 's',
+      key: 'append',
+      baseRevision: h.revision,
+      ops: [
+        { ...define, effect: cloud },
+        { ...attach, motion },
+      ],
+    })
+    assert.ok(result.ok, JSON.stringify(result))
+    const { loaded } = await openProject(dir)
+    assert.deepEqual(loaded.problems, [])
+    assert.deepEqual(loaded.doc?.customEffects, [mist, cloud])
+    assert.deepEqual(loaded.doc?.pages[0]!.root.motion, motion)
+    assert.match(await readFile(site, 'utf8'), /\/\/ keep mist\r\n/)
+  })
+
+for (const crash of [0, 6, 8])
+  test(`restore reuses exact unreferenced sidecars and journals only mutations (crash ${crash})`, async () => {
+    const dir = await copyFixture('site-basic')
+    await gpuFolder(dir)
+    const initial = await files(dir)
+    const { registry } = await openProject(dir)
+    let armed = false
+    const store = await fileStore(dir, registry, {
+      after(n) {
+        if (armed && n === crash) throw Error('interrupted')
+      },
+    })
+    const first = await store.head('s')
+    assert.ok('doc' in first)
+    const a = await apply(store, registry, {
+      site: 's',
+      key: 'define',
+      baseRevision: first.revision,
+      ops: [define, attach],
+    })
+    assert.ok(a.ok)
+    const target = await files(dir)
+    for (const p of ['site.json', 'pages/home.json'])
+      await writeFile(join(dir, p), initial[p]!)
+    // Record the hand save. Both shader files still exist but are no longer inputs.
+    const r = await apply(store, registry, {
+      site: 's',
+      key: 'outside',
+      baseRevision: a.revision,
+      ops: [],
+    })
+    assert.ok(!r.ok && r.problems[0].code === 'REVISION_CONFLICT')
+    const outside = await files(dir)
+    const req = {
+      site: 's',
+      key: 'back',
+      baseRevision: a.revision + 1,
+      to: a.revision,
+    }
+    for (const p of ['effects/mist.json', 'effects/mist.frag']) {
+      await writeFile(join(dir, p), target[p] + ' ')
+      const changed = await restore(store, registry, req)
+      assert.ok(!changed.ok && changed.problems[0].code === 'SOURCE_CONFLICT')
+      assert.deepEqual(await files(dir), { ...outside, [p]: target[p] + ' ' })
+      await writeFile(join(dir, p), target[p]!)
+    }
+    armed = true
+    if (crash)
+      await assert.rejects(restore(store, registry, req), /interrupted/)
+    else assert.ok((await restore(store, registry, req)).ok)
+    const recovered = await fileStore(dir, registry)
+    assert.deepEqual(await files(dir), crash === 6 ? outside : target)
+    const redo = await restore(recovered, registry, req)
+    assert.ok(redo.ok)
+    assert.deepEqual(await files(dir), target)
+    assert.deepEqual((await recovered.get('s', redo.revision))?.customEffects, [
+      mist,
+    ])
+  })
 
 test('unused shader: CLI check and build locate the authored source line and keep last good files', async () => {
   const dir = await copyFixture('site-basic')

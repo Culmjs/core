@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import test from 'node:test'
+import { memoryStore, type SiteStore } from '@culmjs/core/ops'
 import { parse } from 'jsonc-parser'
 import { folderMcpOptions } from '../../src/cli/main.ts'
 import { openProject } from '../../src/folder/project.ts'
 import { createMcpServer } from '../../src/mcp/server.ts'
 import { copyFixture } from '../fixtures.ts'
+import { startFake } from '../fakeSources.ts'
 import {
   attach,
   define,
@@ -15,7 +18,148 @@ import {
   mist,
   motion,
 } from '../fixtures/shader.ts'
-import { connectClient, files } from './serve.ts'
+import { connectClient, files, serve } from './serve.ts'
+
+test('retained compact key replays after predecessor pruning and restart; changed input conflicts', async () => {
+  const dir = await copyFixture('site-basic')
+  await gpuFolder(dir)
+  const open = async () =>
+    connectClient(
+      createMcpServer({
+        ...(await folderMcpOptions(dir, await openProject(dir))),
+        jsonOps: true,
+      }),
+    )
+  const call = await open()
+  const { revision } = (await call('describe')).json
+  const update = { op: 'update', id: 'hero', motion }
+  const args = {
+    baseRevision: revision,
+    key: 'retained',
+    ops: [define, update],
+  }
+  const made = await call('write', args)
+  assert.equal(made.error, false, JSON.stringify(made.json))
+  const later = await call('write', {
+    baseRevision: made.json.revision,
+    key: 'later',
+    ops: [{ op: 'insert', node: { id: 'later', kind: 'text', text: 'Later' } }],
+  })
+  assert.equal(later.error, false)
+  assert.notDeepEqual(later.json.sections, made.json.sections)
+  // Reach the same retained-record boundary without performing 199 unrelated transactions.
+  await rm(join(dir, `.culm/revisions/${revision}.json`))
+  const restarted = await open()
+  assert.deepEqual(await restarted('write', args), made)
+  assert.deepEqual(
+    await restarted('write', {
+      ...args,
+      ops: [{ effect: mist, op: 'addCustomEffect' }, update],
+    }),
+    made,
+  )
+  // Explicit page and default page project to the same core ops, but the submitted input differs.
+  for (const change of [
+    { page: 'home' },
+    { ops: [{ ...define, effect: { ...mist, source: invalid } }] },
+  ]) {
+    const r = await restarted('write', { ...args, ...change })
+    assert.equal(r.json.problems[0].code, 'KEY_CONFLICT')
+  }
+  assert.equal((await restarted('describe')).json.revision, later.json.revision)
+  const full = await serve(dir)
+  const normalized = await full.call('apply', {
+    ...args,
+    ops: [define, attach],
+  })
+  assert.equal(normalized.error, false)
+  assert.equal(normalized.json.revision, made.json.revision)
+})
+
+test('non-folder store without receipt metadata replays ordered writes from its retained base', async () => {
+  const dir = await copyFixture('site-basic')
+  await gpuFolder(dir)
+  const { loaded, registry } = await openProject(dir)
+  const memory = memoryStore({ s: loaded.doc! })
+  const store: SiteStore = {
+    ...memory,
+    commit: (s, c) => memory.commit(s, { ...c, receipt: undefined }),
+  }
+  const call = await connectClient(
+    createMcpServer({
+      store,
+      registry,
+      site: 's',
+      data: loaded.data,
+      jsonOps: true,
+    }),
+  )
+  const args = {
+    baseRevision: 0,
+    key: 'compat',
+    ops: [define, { op: 'update', id: 'hero', motion }],
+  }
+  const first = await call('write', args)
+  assert.equal(first.error, false, JSON.stringify(first.json))
+  assert.equal((await store.replay('s', args.key))?.receipt, undefined)
+  assert.deepEqual(await call('write', args), first)
+})
+
+for (const tool of ['plan', 'apply'])
+  for (const bad of ['source', 'placement'])
+    test(`mixed asset/shader ${tool} preflights ${bad} before publishing held assets`, async t => {
+      const fake = await startFake()
+      t.after(() => fake.close())
+      const dir = await copyFixture('site-basic')
+      await gpuFolder(dir)
+      const { call } = await serve(dir, undefined, { hosts: fake.hosts })
+      const initial = await files(dir)
+      const { revision } = (await call('describe')).json
+      const assets = [
+        { op: 'setFonts', fonts: [{ google: 'Roboto Slab' }] },
+        {
+          op: 'add',
+          tree: attach.tree,
+          parent: 'hero',
+          index: 0,
+          node: {
+            kind: 'icon',
+            id: 'camera',
+            props: { name: 'lucide:camera' },
+          },
+        },
+      ]
+      const r = await call(tool, {
+        baseRevision: revision,
+        key: 'bad',
+        ops: [
+          ...assets,
+          { ...attach, id: bad === 'placement' ? 'intro' : 'hero' },
+          {
+            ...define,
+            effect: bad === 'source' ? { ...mist, source: invalid } : mist,
+          },
+        ],
+      })
+      assert.equal(r.error, true, JSON.stringify(r.json))
+      const p = r.json.problems[0]
+      if (bad === 'source')
+        assert.deepEqual([p.op, p.rule, p.shaderLine], [3, 'shader.input', 3])
+      else assert.deepEqual([p.op, p.nodeId], [2, 'intro'])
+      assert.deepEqual(await files(dir), initial)
+      assert.deepEqual(fake.hits, [])
+      assert.equal((await call('describe')).json.revision, revision)
+      const good = await call(tool, {
+        baseRevision: revision,
+        key: 'good',
+        ops: [...assets, attach, define],
+      })
+      assert.equal(good.error, false, JSON.stringify(good.json))
+      assert.equal(good.json.revision, revision + (tool === 'apply' ? 1 : 0))
+      const after = await files(dir)
+      assert.ok(after['fonts/roboto-slab/font.json'])
+      assert.ok(after['assets/icons/lucide/camera.svg'])
+    })
 
 test('a running folder writer cannot use its startup GPU grant after opt-out', async () => {
   const dir = await copyFixture('site-basic')
