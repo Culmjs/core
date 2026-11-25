@@ -22,6 +22,13 @@ export type GpuCapability = {
   /** Match the checked declaration, not its invocation overrides or its module. */
   readonly isReviewed: (d: CustomEffect) => boolean
 }
+// Only capabilities minted from checked, copied registration data may exempt
+// output. A structurally compatible caller-provided predicate is not authority.
+const issued = new WeakSet<GpuCapability>()
+export const reviewedSnapshot = (
+  cap: GpuCapability | undefined,
+  definition: CustomEffect,
+) => !!cap && issued.has(cap) && cap.isReviewed(definition)
 export const customKeys = fieldsOf<CustomEffect>({
   name: true,
   source: true,
@@ -127,17 +134,19 @@ export function gpuAuthority(options?: GpuOptions) {
     contours,
     ...(options.reviewed ?? []).map(d => checkedSnapshot(d, customKeys)),
   ]
+  const capability = Object.freeze({
+    enabled: true as const,
+    isReviewed: (d: CustomEffect) =>
+      reviewed.some(
+        r =>
+          r.name === d.name &&
+          r.source === d.source &&
+          sameSettings(r.settings, d.settings),
+      ),
+  })
+  issued.add(capability)
   return {
-    capability: Object.freeze({
-      enabled: true as const,
-      isReviewed: (d: CustomEffect) =>
-        reviewed.some(
-          r =>
-            r.name === d.name &&
-            r.source === d.source &&
-            sameSettings(r.settings, d.settings),
-        ),
-    }),
+    capability,
     register(input: GpuEffectDef, name: string, version: number): GpuEffectDef {
       const wasm = input.wasm
       if (

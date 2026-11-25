@@ -1,12 +1,14 @@
 import type { GpuMotion, Look, Node } from '../document/index.ts'
 import { renderedFacts } from './scrollScene.ts'
 import { NO, StateAnalysisLimit, StateConditions } from './stateConditions.ts'
-import { moduleBytes } from '../registry/gpu.ts'
+import { moduleBytes, reviewedSnapshot } from '../registry/gpu.ts'
 import type { CheckedEffect } from '../validate/gpu.ts'
 import { visibleText } from '../validate/required.ts'
 import { byteLength } from './budgets.ts'
 import type { HtmlNode } from './html.ts'
 import { knownMedia } from './links.ts'
+import type { GpuCapability } from '../registry/gpu.ts'
+import { GPU_CHECKED } from '../scripts/scriptsMin.ts'
 
 /** Text is counted on the actual emitted element. For non-text media require
  * a confirmed file, labelled drawing, or both the icon link and its rendered glyph. */
@@ -41,6 +43,7 @@ export function lowerGpu(
   effects: ReadonlyMap<string, CheckedEffect>,
   canvasSlot: boolean,
   availableMedia?: ReadonlySet<string>,
+  authority?: GpuCapability,
 ) {
   const { trees, classOf, scheme } = view
   const { facts } = renderedFacts(
@@ -99,7 +102,7 @@ export function lowerGpu(
     throw e
   }
   if (!owners.size) return
-  const definitions: CheckedEffect[] = []
+  const definitions: (CheckedEffect & { reviewed?: true })[] = []
   const indices = new Map<string, number>()
   const regions = []
   // A strip or an enclosing GPU owner's box cannot use the main plane.
@@ -110,7 +113,12 @@ export function lowerGpu(
     for (const child of el.children ?? [])
       if (typeof child !== 'string' && select(child)) nested = true
     const m = owners.get(el)
-    if (!nested && m && effects.get(m.gpu)?.builtin) runnable.add(el)
+    if (
+      !nested &&
+      m &&
+      (GPU_CHECKED ? !effects.get(m.gpu)?.wasm : effects.get(m.gpu)?.builtin)
+    )
+      runnable.add(el)
     return nested || !!m
   }
   function markContent(el: HtmlNode) {
@@ -131,7 +139,11 @@ export function lowerGpu(
     if (definition === undefined) {
       definition = definitions.length
       indices.set(m.gpu, definition)
-      definitions.push(def)
+      definitions.push(
+        GPU_CHECKED && reviewedSnapshot(authority, def)
+          ? { ...def, reviewed: true }
+          : def,
+      )
       stats.shaderBytes += byteLength(def.source)
       if (def.wasm) {
         stats.wasmBytes += moduleBytes(def.wasm.bytesBase64)
@@ -147,7 +159,7 @@ export function lowerGpu(
       ]),
     )
     if (runnable.has(el)) {
-      el.attrs['data-gpu-run'] = settings.speed
+      el.attrs['data-gpu-run'] = def.builtin ? settings.speed : 'custom'
       markContent(el)
     }
     regions.push({
@@ -163,7 +175,10 @@ export function lowerGpu(
     raw: { kind: 'json', content: JSON.stringify({ definitions, regions }) },
   }
   const css = worker
-    ? 'main:has(>.culm-plane:not([hidden])){isolation:isolate}.culm-plane{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:-1;image-rendering:pixelated}[data-gpu-painted]{background-color:transparent!important;background-image:none!important}'
+    ? 'main:has(>.culm-plane:not([hidden])){isolation:isolate}.culm-plane{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:-1;image-rendering:pixelated}[data-gpu-painted]{background-color:transparent!important;background-image:none!important}' +
+      (GPU_CHECKED
+        ? '[data-gpu-run]:not([data-gpu-painted])[style*="--culm-veil"]{box-shadow:inset 0 0 0 100vmax rgba(0,0,0,var(--culm-veil))!important}'
+        : '')
     : ''
   return {
     element,

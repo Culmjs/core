@@ -1,4 +1,5 @@
-import type { Region } from './gpuWorker.ts'
+import type { Rect } from './gpuWorker.ts'
+declare const CHECKED_GEOMETRY: boolean
 
 type Box = [number, number, number, number]
 const box = (r: DOMRect): Box => [r.left, r.top, r.right, r.bottom]
@@ -40,10 +41,8 @@ function content(el: Element, visible: Box) {
           if (Array.from(range.getClientRects()).some(hit)) return true
         }
     } else if (
-      !(
-        ('naturalWidth' in leaf && !leaf.naturalWidth) ||
-        ('readyState' in leaf && Number(leaf.readyState) < 2)
-      ) &&
+      (leaf as HTMLImageElement).naturalWidth !== 0 &&
+      !((leaf as HTMLVideoElement).readyState < 2) &&
       hit(leaf.getBoundingClientRect())
     )
       return true
@@ -55,16 +54,16 @@ function content(el: Element, visible: Box) {
  * Reject ambiguous clip/overlap cases instead of reconstructing CSS paint. */
 export function gpuRect(
   el: Element,
+  r: Box,
   main: Element,
   forms: Box[],
   w: number,
   h: number,
   bw: number,
   bh: number,
-  speed: number,
-): Region | undefined | false {
-  const r = bounds(el),
-    visible = intersection(r, [0, 0, w, h])
+  exact = false,
+): Rect | undefined | false {
+  const visible = intersection(r, [0, 0, w, h])
   if (!visible) return false // outside: wait for intersection/resize, no polling
   if (forms.some(f => intersection(f, visible)) || !main.contains(el)) return
   const [left, top, right, bottom] = visible
@@ -88,14 +87,10 @@ export function gpuRect(
     const s = getComputedStyle(n)
     inside &&= n !== main
     if (
-      [
-        s.opacity,
-        s.visibility,
-        s.mixBlendMode,
-        s.contentVisibility,
-        s.willChange,
-        s.borderRadius,
-      ].join(' ') !== '1 visible normal visible auto 0px' ||
+      'opacity visibility mixBlendMode contentVisibility willChange borderRadius'
+        .split(' ')
+        .map(k => s[k as keyof CSSStyleDeclaration])
+        .join(' ') !== '1 visible normal visible auto 0px' ||
       'transform translate scale rotate filter backdropFilter perspective clipPath maskImage contain offsetPath'
         .split(' ')
         .some(k => s[k as keyof CSSStyleDeclaration] !== 'none') ||
@@ -130,6 +125,16 @@ export function gpuRect(
     y = ceil(((h - r[3]) * bh) / h)
   const dx = floor((r[2] * bw) / w) - x,
     dy = floor(((h - r[1]) * bh) / h) - y
+  // Removing an authored background along a sub-texel fringe would reveal
+  // the plane behind it. Leave such custom placements static.
+  if (
+    CHECKED_GEOMETRY &&
+    exact &&
+    [(left * bw) / w, (right * bw) / w, (top * bh) / h, (bottom * bh) / h].some(
+      n => !Number.isInteger(n),
+    )
+  )
+    return
   if (min(dx, dy, bw - x, bh - y, x + dx, y + dy) > 0 && content(el, visible))
-    return [x, y, dx, dy, speed]
+    return [x, y, dx, dy]
 }

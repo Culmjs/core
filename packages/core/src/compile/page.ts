@@ -378,6 +378,7 @@ export function build(
           effects,
           siteCount + 3 <= BUDGETS.elements,
           options.availableMedia,
+          options.registry.gpu,
         )
       : undefined
   const scripts: PageScript[] = []
