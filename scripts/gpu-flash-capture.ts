@@ -4,7 +4,9 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { pathToFileURL } from 'node:url'
 import { join } from 'node:path'
 import { candidateCompiler } from './gpu-flash/compiler.ts'
 import { node, siteWith, text } from '../packages/core/__tests__/kit.ts'
@@ -33,6 +35,7 @@ const compiled = compilePage(
     [
       {
         ...node('hero', 'box', [text('caption', 'Luminance fixture')]),
+        style: { base: { bg: '#000000', height: { n: 768, unit: 'px' } } },
         motion: { trigger: 'enter-view', gpu: 'luminance' },
       },
     ],
@@ -54,6 +57,10 @@ assert.equal(worker.split(clamp).length, 2)
 const b = await openBrowser()
 assert.ok(b.ok, JSON.stringify(b))
 await mkdir(root, { recursive: true })
+const tmp = await mkdtemp(join(tmpdir(), 'culm-field-'))
+const scene = join(tmp, 'static.html')
+// No executable in the on-disk fixture. CDP explicitly starts the priced host.
+await writeFile(scene, compiled.html.replace(/<script>[^]*?<\/script>/g, ''))
 const toolchain = {
   browser: b.browser.version,
   worker: sha(worker),
@@ -71,22 +78,39 @@ try {
       await p.setViewport(1024, 768, 1)
       await p.setScheme('light')
       await p.setReducedMotion(false)
-      // No dynamic effect in navigable markup. The worker cannot run a frame
-      // before a CDP command transfers a surface and submits its checked binding.
+      assert.ok((await p.goto(pathToFileURL(scene).href, 10000)).ok)
       const code = variant === 'control' ? worker.replace(clamp, 'b') : worker
       await p.evaluate(`(()=>{
-        document.body.style.cssText='margin:0;background:black';
-        const c=document.createElement('canvas');c.width=1024;c.height=768;
-        c.style.cssText='display:block;width:100vw;height:100vh';document.body.append(c);
-        const surface=c.transferControlToOffscreen();
+        const raf=requestAnimationFrame.bind(window);let tick,worker,template,resolve,reject;
+        window.requestAnimationFrame=f=>{tick=f;return 1};
         const observer="const get=OffscreenCanvas.prototype.getContext;OffscreenCanvas.prototype.getContext=function(...args){const g=get.apply(this,args),ext=g.getExtension('WEBGL_debug_renderer_info');postMessage({gl:g.getParameter(g.VERSION),renderer:ext&&g.getParameter(ext.UNMASKED_RENDERER_WEBGL)});return g};";
-        const worker=new Worker(URL.createObjectURL(new Blob([observer,${JSON.stringify(code)}],{type:'text/javascript'})));
-        let resolve,reject;worker.onerror=e=>reject(Error(e.message));worker.onmessage=e=>{if(typeof e.data==='object')window.driver=e.data;else if(e.data===1)resolve();else reject(Error('bad frame '+e.data))};
+        window.Blob=class extends Blob{constructor(parts,opts){
+          if(opts?.type==='text/javascript'){
+            if(parts.length!==1||parts[0]!==${JSON.stringify(worker)})throw Error('embedded worker drift');
+            parts=[observer,${JSON.stringify(code)}]
+          }super(parts,opts)}};
+        window.Worker=class extends Worker{constructor(...args){super(...args);worker=this;
+          this.addEventListener('error',e=>reject(Error(e.message)));this.addEventListener('message',e=>{
+            if(typeof e.data==='object'){e.stopImmediatePropagation();window.driver=e.data}
+            else if(e.data===1)setTimeout(resolve,0);else reject(Error('bad frame '+e.data))})
+          }postMessage(msg,...args){template=msg;super.postMessage(msg,...args)}};
+        const wait=f=>new Promise((r,j)=>{resolve=r;reject=j;f()});
+        window.prepare=async()=>{
+          // Allocation, real fallback seeding, acknowledgement, reveal and quality
+          // warm-up all run through the compiled host, at fixed simulation time 0.
+          for(let n=0;n<123;n++)await wait(()=>tick(100));
+          const owner=document.querySelector('[data-gpu-painted]');
+          if(!owner||template[0]!==1024||template[1]!==768||template[2].length!==1||
+            template[2][0].slice(0,4).join()!=='0,0,1024,768')throw Error('not one full-size presented owner');
+          for(const child of owner.children)child.style.visibility='hidden';
+        };
         window.step=async n=>{const submitted=performance.now();
-          await new Promise((r,j)=>{resolve=r;reject=j;
-            worker.postMessage([1024,768,[[0,0,1024,768,0,[0,0,0],n>0]],n/30,n?undefined:surface,n?undefined:${JSON.stringify([[payload.definitions[0].source, payload.regions[0].settings, false]])},0,0,0],n?[]:[surface])});
-          const ack=performance.now();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+          const msg=template.slice();msg[3]=n/30;
+          await wait(()=>worker.postMessage(msg));
+          const ack=performance.now();await new Promise(r=>raf(()=>raf(r)));
           return {submitted,ack,paint:performance.now()}}})()`)
+      await p.evaluate(compiled.assets![0].content)
+      await p.evaluate('prepare()')
       const frames = []
       const start = performance.now()
       for (let n = 0; n < 180; n++) {
@@ -230,4 +254,5 @@ try {
   }
 } finally {
   await b.browser.close()
+  await rm(tmp, { recursive: true, force: true })
 }

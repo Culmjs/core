@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { transformSync } from 'esbuild'
 import * as shipped from '@culmjs/core'
 import { candidateCompiler } from './gpu-flash/compiler.ts'
 import { renderGpuWorker, RELEASE_CHECKED } from './gen-scripts.ts'
@@ -11,7 +12,8 @@ for (const [profile, core, checked] of [
   ['release', shipped, RELEASE_CHECKED],
   ['candidate', await candidateCompiler(), true],
 ] as const) {
-  const doc = await scenes.mixed()
+  const fixture = process.argv.includes('--simple') ? 'control' : 'mixed'
+  const doc = await scenes[fixture]()
   const registry = core.createRegistry({
     gpu: {
       enabled: true,
@@ -42,6 +44,17 @@ for (const [profile, core, checked] of [
     host = Buffer.byteLength(code),
     inline = Buffer.byteLength(c.scripts.map(s => s.code).join(';'))
   assert.equal(host, c.stats.scriptBytes.gpuHost)
+  const worker = renderGpuWorker(checked)
+  for (const js of [code, worker]) {
+    assert.equal(
+      transformSync(js, { target: 'es2017' }).code,
+      transformSync(js, { target: 'esnext' }).code,
+    )
+    assert.doesNotMatch(
+      js,
+      /\breadPixels\b|\bWebAssembly\b|\bfetch\(|XMLHttpRequest|new Function\(|\beval\(/,
+    )
+  }
   assert.equal(
     host + inline,
     Object.values(c.stats.scriptBytes).reduce((a, b) => a + b, 0),
@@ -50,7 +63,8 @@ for (const [profile, core, checked] of [
   console.log(
     JSON.stringify({
       profile,
-      worker: Buffer.byteLength(renderGpuWorker(checked)),
+      fixture,
+      worker: Buffer.byteLength(worker),
       host,
       inline,
       shared: host + inline,

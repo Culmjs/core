@@ -68,7 +68,8 @@ function bundle(contents: string, define?: Record<string, string>) {
 
 // Release selection is build-owned. Both artifacts are independently priced
 // complete bundles; this is not a runtime switch or a compiler option.
-export const RELEASE_CHECKED: boolean = true
+// The complete candidate exceeds both approved prices. See flash-analysis.md.
+export const RELEASE_CHECKED: boolean = false
 export function renderGpuWorker(checked = RELEASE_CHECKED): string {
   return bundle(
     `import {acquire} from './${checked ? 'gpuWorker' : 'gpuTrustedWorker'}.ts';onmessage=acquire`,

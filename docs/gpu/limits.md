@@ -118,6 +118,8 @@ For the observed grey 123 → 125 in 33 ms, `ΔY=0.0070094` or **0.21241/s**. A 
 
 Frozen **Task 7 capture specification** (the spike PNGs above are not analyzer inputs):
 
+The later [Task 7 offline handoff](flash-analysis.md) records the actual candidate AVIs, hashes, frame logs, budget refusal and still-open independent-analysis gate.
+
 1. Isolated headless profile, light, sRGB, DPR 1, no zoom/scroll/overlays; one opaque 1,024 × 768 region filling the viewport. Use the shipped presentation path and one deterministic clock; advance once per output frame at `n × 1000/30` ms. Reset history to the same static starting colour for both runs. Wait for the matching worker frame and compositor paint before saving the full viewport. Log frame index, requested/displayed time, dropped/duplicated frames, browser, renderer and build.
 2. Capture 180 consecutive frames (6 s). Input: black for `floor(n/3) % 2 == 0`, white otherwise, RGB channels equal, alpha 1. Positive control: test-only bypass of the last-pass clamp. Limited capture: identical input, resolution, cadence, region and clock with the real limiter. The 5 Hz control must be detected. Keep these offline; no autoplay demo.
 3. Store lossless numbered PNGs starting at `000.png` and encode each sequence with `ffmpeg -framerate 30 -start_number 0 -i %03d.png -frames:v 180 -an -c:v rawvideo -pix_fmt bgr24 clip.avi` (uncompressed RGB, no resizing, blending or dropped frames). Verify 180 frames, CFR 30, 1024 × 768 with `ffprobe -v error -count_frames -show_streams clip.avi`; record SHA-256 for both clips.

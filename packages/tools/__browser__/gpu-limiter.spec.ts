@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import test from 'node:test'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -21,7 +23,7 @@ const reviewed: CustomEffect = {
 const changed = {
   ...reviewed,
   source:
-    'vec4 shade(vec2 uv){float n=texture(u_noise,uv).r;return vec4(u_set_tint+u_set_bias*n,0.0);}',
+    'vec4 shade(vec2 uv){float n=texture(u_noise,vec2(0.1)).r;if(u_pointer.x>0.0){return vec4(vec3(float(n>0.0 && u_pointer.x<2.0 && u_resolution.x>0.0 && u_scroll==0.0)),0.0);}return vec4(u_set_tint+u_set_bias*n,0.0);}',
 }
 const decode = (code: number) =>
   code / 255 <= 0.04045
@@ -109,13 +111,18 @@ test('changed reviewed shader: independently limited composited owners, resume a
       )
       const first = await sample(p)
       let prev = poster
-      for (let frame = 0; frame < 4; frame++) {
+      for (let frame = 0; frame < 6; frame++) {
+        if (frame >= 4)
+          await p.evaluate(
+            `dispatchEvent(new PointerEvent('pointermove',{clientX:${frame - 3}}))`,
+          )
         if (frame) await step(1000 / hz)
         const colors = frame ? await sample(p) : first
         for (const [i, rgba] of colors.entries()) {
           for (let k = 0; k < 3; k++) {
             const a = decode(prev[i][k]),
-              target = i === 0 && k === 0 ? 1 : 0
+              target =
+                frame >= 4 ? Number(frame === 4) : Number(i === 0 && k === 0)
             const cap = (0.25 * Math.min(33, 1000 / hz)) / 1000
             const expected = encode(
               a + Math.max(-cap, Math.min(cap, target - a)),
@@ -130,6 +137,9 @@ test('changed reviewed shader: independently limited composited owners, resume a
         }
         prev = colors
       }
+      await p.evaluate(
+        `dispatchEvent(new PointerEvent('pointermove',{clientX:0}))`,
+      )
       await p.evaluate(
         `Object.defineProperty(document,'hidden',{value:true,configurable:true});document.dispatchEvent(new Event('visibilitychange'));`,
       )
@@ -178,6 +188,69 @@ test('review belongs to the exact snapshot; an arbitrary registry predicate cann
     const payload = JSON.parse(c.html.match(/id="culm-gpu">([^<]+)</)![1])
     assert.equal(!!payload.definitions[0].reviewed, expected)
   }
+})
+
+test('unaltered SRI loader presents an exact reviewed solid and a limited solid together', async t => {
+  const registry = createRegistry({
+    gpu: { enabled: true, reviewed: [reviewed] },
+  })
+  const custom = { ...changed, name: 'unreviewed' }
+  const c = compilePage(
+    siteWith(
+      ['wash', 'unreviewed'].map((gpu, i) => ({
+        ...node('panel' + i, 'box', [text('label' + i, 'Notes')]),
+        style: { base: { bg: '#383838', height: { n: 120, unit: 'px' } } },
+        motion: { gpu, trigger: 'enter-view', settings: { tint: '#808080' } },
+      })),
+      { customEffects: [reviewed, custom] },
+    ),
+    'home',
+    { registry },
+  )
+  assert.ok(c.ok)
+  assert.deepEqual(
+    c.problems.map(x => x.path),
+    ['gpuHostScript'],
+  )
+  let requests = 0
+  const server = createServer((req, res) => {
+    if (req.url === '/_culm/gpu.js') {
+      requests++
+      res.setHeader('Content-Type', 'text/javascript').end(c.assets![0].content)
+    } else if (req.url === '/')
+      res.setHeader('Content-Type', 'text/html').end(c.html)
+    else res.writeHead(204).end()
+  })
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r))
+  t.after(() => new Promise<void>(r => server.close(() => r())))
+  const b = await openBrowser()
+  assert.ok(b.ok)
+  t.after(() => b.browser.close())
+  const p = await b.browser.newPage()
+  t.after(() => p.close())
+  await p.unblock()
+  await p.setViewport(360, 400)
+  await p.setReducedMotion(true)
+  assert.ok(
+    (
+      await p.goto(
+        `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+        10000,
+      )
+    ).ok,
+  )
+  assert.equal(requests, 0)
+  await p.setReducedMotion(false)
+  assert.ok(
+    await p.evaluate(
+      `(async()=>{for(let i=0;i<200;i++){if(document.querySelectorAll('[data-gpu-painted]').length===2)return true;await new Promise(r=>setTimeout(r,5))}return false})()`,
+    ),
+  )
+  assert.equal(requests, 1)
+  const [direct, limited] = await sample(p)
+  assert.deepEqual(direct, [128, 128, 128, 255])
+  assert.ok(limited[0] >= 56 && limited[0] < 128, JSON.stringify(limited))
+  assert.deepEqual(p.errors, [])
 })
 
 test('patterned first exposure, mixed trusted regions, nonfinite channels, allocation failure and resolution resampling', async t => {
