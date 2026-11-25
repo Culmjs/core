@@ -66,6 +66,36 @@ The approved caps are **4,096 UTF-8 bytes per shader** and, per pixel, **64 loop
 
 Hand ledger for these exact sources: literals/variable references/return cost 0; selection, constructor, arithmetic, comparison, initialization, assignment and increment cost 1 each; `sin` costs 4; `texture` costs 8 and one read. Count operands, charge loop init once, test `N+1` times and increment `N` times. Contours = 16 for `ridge` + 4 return; ripple = 10 for `h` + 4 return; mist = 1 initial value + 8 loop control + 3 × 12 body + 4 return. Scores apply to effect code, not the fixed host pass (two additional texture reads per pixel) or the WASM simulation. These small fixtures establish that useful effects fit; they do not exercise the boundary, reject bad GLSL, or validate a device at the caps.
 
+### Production custom-shader cost table
+
+`checkShader(source, settings)` in `@culmjs/core/document` (also exported from `@culmjs/core`) prices one invocation of `vec4 shade(vec2)`. Source bytes include whitespace and comments as authored, before line-ending normalization; the host prelude and wrapper are excluded. The caps above are inclusive. The checker also limits settings to **16** and nested syntax to **32** levels.
+
+The table gives **additional** cost, independent of vector width. Add every operand or argument exactly once. In the signatures, `F` is `float` or a floating vector (`vec2`, `vec3`, `vec4`); `T` is `F` or `int`. Repeating a type letter means the same type throughout that signature.
+
+| Source construct / signature                                                                                           | Additional weighted ops |    Additional reads |
+| ---------------------------------------------------------------------------------------------------------------------- | ----------------------: | ------------------: |
+| Literal, variable/input reference, parentheses, block, declaration without initializer, expression statement, `return` |                       0 |                   0 |
+| Initializer, simple assignment `=`, vector component selection (including a write selection)                           |                  1 each |                   0 |
+| Unary `+ - !`; binary `+ - * / % < <= > >= == != && \|\|` (charge both operands, even for logical operators)           |                  1 each |                   0 |
+| Constructor `bool`, `int`, `float`, `vec2`, `vec3`, `vec4`                                                             |                       1 |                   0 |
+| `abs(T)`; `min(T,T)`, `max(T,T)` (also vector/float bound)                                                             |                       1 |                   0 |
+| `clamp(T,T,T)` (also two float bounds on a vector)                                                                     |                       2 |                   0 |
+| `mix(F,F,F)` (also float factor on vectors)                                                                            |                       3 |                   0 |
+| `sin(F)`, `cos(F)`, `dot(F,F)`                                                                                         |                       4 |                   0 |
+| `length(F)`                                                                                                            |                       5 |                   0 |
+| `smoothstep(F,F,F)` (also two float edges on a vector)                                                                 |                       6 |                   0 |
+| `texture(u_noise, vec2)` → `vec4`                                                                                      |                       8 |                   1 |
+| Typed helper call                                                                                                      |   1 + called body's ops | Called body's reads |
+
+For **each** metric (`passes`, `reads`, `ops`):
+
+- Sum statements in source order, conservatively including statements following a return. A helper call adds its arguments, call cost, and the complete body summary **each time**, including all its loop passes. Only completed, previously defined helpers can be called; no overloads, forward declarations or recursion. Unused definitions are checked but do not contribute per-pixel work.
+- For `if`/`else` and `?:`, add the condition's cost to the **componentwise maximum** of the two arms (missing `else` = zero). There is no additional branch charge. Different arms can supply the maximum for different metrics.
+- For `for(int i=0;i<N;i++)` (decimal nonnegative int literal `N`), add **`N` passes**, multiply **all** body metrics by `N`, and add **`1 + (N+1) + N` ops** for initialization, tests and increments. Thus an empty zero-trip loop costs two ops; nested iterations count the outer passes as well as the inner ones.
+- Cache the three counters once per function and saturate intermediate results at the respective cap + 1. No call-tree expansion, GPU timing, device query or optimization assumptions enter a score. A work refusal points to the first top-level statement in `shade` that takes cumulative work over a cap (passes, reads, ops in that order).
+
+The language has `bool`/`int`/`float` and float vectors, explicit scalar conversions, vector splat/packing, and swizzles within one of `xyzw`, `rgba`, `stpq`. Types must match for initialization, assignment, helper arguments and returns. Variables are local or value parameters (`in` is optional); assignments can target writable locals/parameters or their distinct components. Counters cannot be shadowed or written in the body. Inputs are read-only: `u_time` and `u_scroll` are `float`; `u_resolution` and `u_pointer` are `vec2`; `u_noise` is the only `sampler2D`. `u_set_<key>` is `float` for a finite number setting or `vec3` for a `#rrggbb` colour. Keys match `[a-z][a-z0-9_]{0,31}`, excluding unsafe fields and GLSL's reserved double underscore. The spike's `u_field` is private to a future trusted built-in.
+
 ## Browser evidence
 
 - **Composition.** `insertBlock('hero','plain',…)` and `compilePage` produced the heading, art and link. Two 1,280 × 400 hero regions occupied y=0–400 and 400–800 in a 1,280 × 900 viewport at DPR 1. Both `.s-site` and `main` kept their opaque `rgb(246,243,232)` backgrounds. One transferred 320 × 225 canvas, one worker context, separate raw and previous/next RGBA8 targets per region. The negative-z, pointer-transparent canvas is inside an isolated `main`, above its background, below the content.

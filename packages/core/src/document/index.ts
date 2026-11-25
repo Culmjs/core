@@ -17,6 +17,9 @@ export type {
   Step,
 } from './motion.ts'
 export { isRequired, textRangeFor } from './required.ts'
+export { checkShader } from './shader/check.ts'
+export { SHADER_LIMITS } from './shader/types.ts'
+export type { ShaderCheck, ShaderCost, ShaderSettings } from './shader/types.ts'
 export { CODES } from './problems.ts'
 export type { Code, Problem } from './problems.ts'
 export {
