@@ -1,12 +1,12 @@
 # Stage 4 GPU spike: measurements for the owner
 
-**Decision: pending.** The mixed fixture uses **16,023 of the existing 20,000 shared JS bytes**, leaving **3,977**. The owner has not approved a Stage 4 host, WASM, shader-cost or limiter ceiling. These are inputs to that decision; implementation of the next task is gated on it.
+**Decision: approved, 2026-11-24.** After review of the mixed fixture (**16,023 of 20,000 shared JS bytes**), the owner approved the host and WASM ceilings below and the [shader cost caps](#shader-cost-inputs) for production. The existing 20,000-byte page ceiling still applies. The [flash-limiter rate](#luminance-and-independent-analysis) remains provisional pending independent analysis.
 
-| Proposed ceiling                                    | Measured fixture | Basis                                                                                                                                                         |
+| Approved ceiling                                    | Measured fixture | Basis                                                                                                                                                         |
 | --------------------------------------------------- | ---------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 6,144 bytes for the lazy host, including its worker |            4,806 | 1,338 bytes of host growth for the missing behavior below. At this ceiling, the measured mixed inline script plus the host would leave 2,639 shared JS bytes. |
 | 512 raw WASM bytes per used module                  |              382 | 130 bytes above the assembled, bounded ripple field.                                                                                                          |
-| 684 UTF-8 bytes of base64 per used module           |              512 | `4 × ceil(512 / 3)` at the proposed raw ceiling. Report both sizes; they describe the same module.                                                            |
+| 684 UTF-8 bytes of base64 per used module           |              512 | `4 × ceil(512 / 3)` at the approved raw ceiling. Report both sizes; they describe the same module.                                                            |
 
 ## Reproduce
 
@@ -56,7 +56,7 @@ The CLI counts the uninstrumented live body in Chrome at the initial viewport, a
 
 ## Shader cost inputs
 
-Propose the starting candidates **4,096 source bytes, 64 loop passes, 16 texture reads, 512 weighted operations per pixel**. These are source-work caps, not frame-time predictions. No production parser or validator exists in this spike.
+The approved caps are **4,096 UTF-8 bytes per shader** and, per pixel, **64 loop passes, 16 texture reads and 512 weighted operations**. They bound work counted from source, not frame time.
 
 | Executed `shade` body                  | Source bytes (UTF-8) | Loop passes | Texture reads | Weighted ops/pixel |
 | -------------------------------------- | -------------------: | ----------: | ------------: | -----------------: |
