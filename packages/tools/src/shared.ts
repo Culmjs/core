@@ -6,6 +6,7 @@ export const isObj = (v: unknown): v is Record<string, unknown> =>
 
 // core's id rule, not exported by core
 export const ID_RE = /^[a-z0-9]{1,20}$/
+export const descriptorPattern = '^effects/[a-z][a-z0-9_-]{0,63}\\.json$'
 
 /** The look a site gets when it declares none. */
 export const PLAIN: Look = {
@@ -27,6 +28,7 @@ export const SOURCES = [
   'fonts',
   'pages',
   'pieces',
+  'effects',
   'blocks',
   'data',
   'node_modules',

@@ -7,7 +7,8 @@ import { media, readAsset, refusal } from '../folder/files.ts'
 import { startDev } from '../dev/server.ts'
 import { expandShortForm } from '../folder/write.ts'
 import { fileStore } from '../folder/store.ts'
-import { loadFolder } from '../folder/load.ts'
+import { parseFile } from '../folder/jsonc.ts'
+import { isObj } from '../shared.ts'
 import type { Problem, SiteDocument, TreeRef } from '@culmjs/core'
 import { fetchFor, type FetchOptions } from '../folder/fetch.ts'
 import { readHeld } from '../folder/held.ts'
@@ -75,22 +76,32 @@ export async function folderMcpOptions(
   fetchOptions?: FetchOptions,
 ) {
   const { loaded } = project
-  // ponytail: one extra load per tool call; read again only on a changed revision or file hash if that costs.
-  const kept = await fileStore(cwd, project.registry)
   let map = loaded.map
   let data = loaded.data
-  const store: typeof kept = {
-    ...kept,
-    async head(site) {
-      const h = await kept.head(site)
-      if ('doc' in h) {
-        const now = await loadFolder(cwd, project.registry)
-        map = now.map
-        data = now.data
+  const store = await fileStore(cwd, project.registry, {
+    onHead(now) {
+      map = now.map
+      data = now.data
+      // Installed plugins and their registry are fixed for this MCP session.
+      // A later opt-out must not leave that registry's GPU grant usable.
+      if (project.registry.gpu?.enabled) {
+        const text = now.files.find(f => f.path === 'culm.json')?.text ?? ''
+        const config = parseFile(text, 1).value
+        if (
+          !isObj(config) ||
+          !isObj(config.features) ||
+          config.features.gpu !== true
+        )
+          return {
+            code: 'UNSUPPORTED_CAPABILITY',
+            file: 'culm.json',
+            path: 'features.gpu',
+            message:
+              'GPU support is no longer enabled. Reopen the folder session to use its current configuration.',
+          }
       }
-      return h
     },
-  }
+  })
   return {
     store,
     registry: project.registry,

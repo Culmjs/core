@@ -13,6 +13,7 @@ import {
 } from 'node:fs/promises'
 import { join } from 'node:path'
 import { copyFixture } from '../fixtures.ts'
+import { gpuFolder, invalid, mist } from '../fixtures/shader.ts'
 import { openProject } from '../../src/folder/project.ts'
 import { buildSite } from '../../src/build/bundle.ts'
 import { CLIENT_MARKER, CLIENT_SCRIPT } from '../../src/dev/client.ts'
@@ -173,6 +174,29 @@ test('a save that fixes it produces reload', async () => {
     await events.wait('reload', i)
     assert.ok((await get(dev, '/about')).body.includes('Fixed'))
   })
+})
+
+test('a source-only edit to an unused shader reports its line, serves last good HTML, then reloads', async () => {
+  await withDev(
+    async ({ dir, dev, events }) => {
+      const before = await get(dev, '/')
+      assert.equal(before.status, 200)
+      const file = join(dir, 'effects/mist.frag')
+      await writeFile(file, invalid)
+      const at = await events.wait('problems')
+      assert.deepEqual(
+        (events.log[at]!.data as { file: string; line: number }[]).map(p => [
+          p.file,
+          p.line,
+        ]),
+        [['effects/mist.frag', 3]],
+      )
+      assert.deepEqual(await get(dev, '/'), before)
+      await writeFile(file, mist.source)
+      await events.wait('reload', at)
+    },
+    dir => gpuFolder(dir, true),
+  )
 })
 
 test('a change to blocks/ or culm.json rewrites culm.schema.json', async () => {

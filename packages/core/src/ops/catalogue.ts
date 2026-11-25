@@ -906,6 +906,18 @@ export const OPERATIONS: readonly Entry[] = [
     { fonts: ['list', false] },
     { op: 'setFonts', fonts: ['sys:serif'] },
   ),
+  entry(
+    'addCustomEffect',
+    { effect: ['CustomEffect', false] },
+    {
+      op: 'addCustomEffect',
+      effect: {
+        name: 'mist',
+        settings: {},
+        source: 'vec4 shade(vec2 uv){return vec4(uv,0.0,1.0);}',
+      },
+    },
+  ),
 ]
 
 /** The legend of the operations list: a type longer than 24 characters is one of these keys. */

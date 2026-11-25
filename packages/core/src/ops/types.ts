@@ -1,5 +1,6 @@
 import type {
   Code,
+  CustomEffect,
   Decl,
   FontRef,
   Language,
@@ -125,6 +126,7 @@ export type Op =
   | { op: 'setLook'; look: Look }
   | { op: 'setSiteStyles'; styles: Nullable<SiteStyles> }
   | { op: 'setFonts'; fonts: FontRef[] }
+  | { op: 'addCustomEffect'; effect: CustomEffect }
 
 export type ChangeRequest = {
   site: string
@@ -166,7 +168,10 @@ export type Allow = (
 export type SiteStore = {
   head(
     site: string,
-  ): Promise<{ revision: number; doc: SiteDocument } | { problems: Problem[] }>
+  ): Promise<
+    | { revision: number; doc: SiteDocument; readStamp?: string }
+    | { problems: Problem[] }
+  >
   /** The document at a revision, or `undefined`, and never a throw, for any revision the store does not hold (negative, above the head, or dropped). */
   get(site: string, revision: number): Promise<SiteDocument | undefined>
   replay(
@@ -177,6 +182,8 @@ export type SiteStore = {
     site: string,
     c: {
       expected: number
+      /** Optional opaque identity of the source files read by this transaction's head. */
+      readStamp?: string
       doc: SiteDocument
       key: string
       request: string

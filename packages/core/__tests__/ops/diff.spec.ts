@@ -224,6 +224,37 @@ test('a changed look or site styles affects every page', () => {
   assert.deepEqual([e.site, e.pages], [['styles'], ['home', 'about']])
 })
 
+test('customEffects diffs name only pages with attachments, following nested masters and chrome', () => {
+  const a = twoPages([instance('i', 'outer')], [])
+  a.components = [
+    comp('outer', [instance('nested', 'inner')]),
+    comp('inner', [text('caption', 'Caption')]),
+  ]
+  a.customEffects = [
+    {
+      name: 'mist',
+      source: 'vec4 shade(vec2 uv){return vec4(1.0);}',
+      settings: {},
+    },
+  ]
+  const edit = () => {
+    const b = clone(a)
+    b.customEffects![0].source += ' '
+    const d = ok(diffSites(a, b))
+    assert.deepEqual(d.trees, [])
+    assert.deepEqual(d.site, ['customEffects'])
+    return d.pages
+  }
+  assert.deepEqual(edit(), [])
+  a.components[1].root.motion = { trigger: 'enter-view', gpu: 'mist' }
+  assert.deepEqual(edit(), ['home'])
+  for (const shared of ['header', 'footer'] as const) {
+    a[shared].children = [instance('shared', 'outer')]
+    assert.deepEqual(edit(), ['home', 'about'])
+    delete a[shared].children
+  }
+})
+
 test('inMenu on one page is a site-level change listed as pages.<id>.inMenu and affects that page only', () => {
   const a = twoPages([], [])
   const b = clone(a)

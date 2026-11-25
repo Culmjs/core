@@ -1,5 +1,6 @@
 import type { Problem, TreeRef } from '@culmjs/core'
 import type { JsonPath, Place } from './jsonc.ts'
+import type { ShaderFiles } from './shaders.ts'
 
 export type Origin = {
   file: string
@@ -33,6 +34,7 @@ const SITE_KEYS = [
   'styles',
   'languages',
   'centreMaxWidth',
+  'customEffects',
 ]
 
 /** What the loader recorded, as the lookups of {@link SourceMap}. `at` finds a place in a parsed file. */
@@ -43,6 +45,7 @@ export type Recorded = {
   /** page id -> file, in the order of the pages list */
   pages: Map<string, string>
   pieces: Map<string, string>
+  shaders?: ShaderFiles[]
   at(file: string, path: JsonPath): Place | undefined
 }
 
@@ -107,6 +110,19 @@ export function makeSourceMap(r: Recorded): SourceMap {
         return where ? { ...p, ...where } : p
       }
       const segs = p.path?.split('.') ?? []
+      if (segs[0] === 'customEffects' && segs[1] !== undefined) {
+        const origin = r.shaders?.[Number(segs[1])]
+        if (origin) {
+          if (segs[2] === 'source')
+            return {
+              ...p,
+              file: origin.source,
+              line: p.shaderLine ?? 1,
+              column: 1,
+            }
+          return { ...p, ...spot(origin.descriptor, segs.slice(2)) }
+        }
+      }
       if (SITE_KEYS.includes(segs[0] ?? ''))
         return { ...p, ...spot('site.json', steps(p.path!)) }
       if (segs[0] === 'pages' && segs[1] !== undefined) {

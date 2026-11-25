@@ -3,7 +3,7 @@ import {
   createScanner,
   findNodeAtLocation,
   modify,
-  parse,
+  getNodeValue,
   parseTree,
   printParseErrorCode,
   type FormattingOptions,
@@ -33,7 +33,10 @@ const placeOf = (body: string, offset: number, bom: number): Place => {
 }
 
 /** `at` points at the key when the path ends in a key, at the value when it ends in an index. */
-export function parseFile(text: string): {
+export function parseFile(
+  text: string,
+  errorLimit = Infinity,
+): {
   value: unknown
   at(path: JsonPath): Place | undefined
   errors: (Place & { message: string })[]
@@ -41,12 +44,15 @@ export function parseFile(text: string): {
   const [bom, body] = split(text)
   const errs: ParseError[] = []
   const tree = parseTree(body, errs, { allowTrailingComma: true })
-  const errors = errs.map(e => ({
+  const errors = errs.slice(0, errorLimit).map(e => ({
     ...placeOf(body, e.offset, bom.length),
     message: printParseErrorCode(e.error),
   }))
   return {
-    value: parse(body, [], { allowTrailingComma: true }),
+    // getNodeValue builds null-prototype records: "__proto__" is a data key,
+    // never an inherited capability/field. Clone into normal JSON objects as
+    // the public folder document expects, preserving numeric values verbatim.
+    value: tree && structuredClone(getNodeValue(tree)),
     errors,
     at(path) {
       if (!tree) return undefined

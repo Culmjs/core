@@ -114,11 +114,25 @@ export function buildRequest(
       ok: false,
       problems: [bad('insert', 'Batch exceeds the write size limit.')],
     }
+  let editIndex: number | undefined
   try {
-    safeData(values, 'write')
+    if (ordered)
+      for (const [i, edit] of edits.entries()) {
+        editIndex = i
+        safeData(edit, `ops[${i}]`)
+      }
+    else safeData(values, 'write')
   } catch (e) {
     if (e instanceof JsxError)
-      return { ok: false, problems: [bad(e.path ?? 'write', e.message)] }
+      return {
+        ok: false,
+        problems: [
+          {
+            ...bad(e.path ?? 'write', e.message),
+            ...(editIndex === undefined ? {} : { op: editIndex }),
+          },
+        ],
+      }
     throw e
   }
   const project = (ops: Obj[], path: string, b?: Good) => {
@@ -349,6 +363,10 @@ export function buildRequest(
     if (!isObj(edit))
       return void error(path, 'Expected a JSON operation object.')
     switch (edit.op) {
+      case 'addCustomEffect':
+        fields(edit, ['op', 'effect'], path)
+        project([edit], path)
+        break
       case 'insert': {
         fields(edit, ['op', 'node'], path)
         if (
@@ -400,7 +418,10 @@ export function buildRequest(
         break
       }
       default:
-        error(`${path}.op`, 'Use insert, update, move, remove or theme.')
+        error(
+          `${path}.op`,
+          'Use insert, update, move, remove, theme or addCustomEffect.',
+        )
     }
   }
   edits.forEach((edit, i) => fromEdit(i, () => orderedItem(edit, `ops[${i}]`)))

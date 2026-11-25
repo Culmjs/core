@@ -56,6 +56,7 @@ export function checkCustomEffects(
   input: unknown,
   registry: Registry,
   out: Problem[],
+  existing: readonly CustomEffect[] = [],
 ) {
   const defs = new Map<string, CustomEffect>()
   if (input === undefined) return defs
@@ -64,7 +65,7 @@ export function checkCustomEffects(
     message: string,
     code: Problem['code'] = 'INVALID_DOCUMENT',
   ) => void out.push({ path, message, code })
-  if (!Array.isArray(input) || input.length > 32) {
+  if (!Array.isArray(input) || existing.length + input.length > 32) {
     bad(
       'customEffects',
       'Custom effects must be a list of at most 32 definitions.',
@@ -77,7 +78,7 @@ export function checkCustomEffects(
       'Custom effects require GPU support.',
       'UNSUPPORTED_CAPABILITY',
     )
-  const seen = new Set<string>()
+  const seen = new Set(existing.map(e => e.name))
   for (const [i, d] of input.entries()) {
     const at = `customEffects.${i}`
     if (!isRecord(d)) {

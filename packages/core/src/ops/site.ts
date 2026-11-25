@@ -1,6 +1,7 @@
 import { ID_RE } from '../document/kinds.ts'
 import { isObj } from '../document/rules.ts'
-import type { Page, SiteDocument } from '../document/index.ts'
+import type { Page, Problem, SiteDocument } from '../document/index.ts'
+import { checkCustomEffects } from '../validate/gpu.ts'
 import { defaultSiteStyles } from '../style/index.ts'
 import { nextIds } from './ids.ts'
 import {
@@ -25,6 +26,23 @@ const done = (doc: SiteDocument): OpResult => ({
   created: [],
   changed: [],
 })
+
+/** Check the submitted source now, even when unused. Cross-node references and placement
+ * still belong to final batch validation. Never register site data as host effects. */
+export const addCustomEffect: OpFn<'addCustomEffect'> = (doc, registry, op) => {
+  const problems: Problem[] = []
+  const existing = doc.customEffects ?? []
+  const added = checkCustomEffects([op.effect], registry, problems, existing)
+  if (problems.length)
+    return {
+      ok: false,
+      problems: problems.map(p => ({
+        ...p,
+        path: p.path?.replace(/^customEffects(?:\.0)?/, 'effect'),
+      })),
+    }
+  return done({ ...doc, customEffects: [...existing, ...added.values()] })
+}
 
 /** The refusal for the first of `fields` that is given and fails its check, else undefined. */
 function checkTypes(

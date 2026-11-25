@@ -258,6 +258,7 @@ export function diffAll(
     'fonts',
     'languages',
     'centreMaxWidth',
+    'customEffects',
   ])
     if (!same(da[k], db[k])) site.push(k)
   const order = (m: Map<string, unknown>, o: Map<string, unknown>) =>
@@ -286,6 +287,33 @@ export function diffAll(
   for (const id of A.pages.keys())
     if (!B.pages.has(id)) site.push(`pages.${id}`)
   const changedComp = new Set<string>()
+  // A definition can change without an edit to its owners (hand save, restore).
+  // Treat only trees that reference a changed name as dirty for page selection.
+  if (site.includes('customEffects')) {
+    const byName = (v: unknown) =>
+      new Map(
+        arr(v)
+          .filter(isObj)
+          .map(e => [e.name, e]),
+      )
+    const left = byName(da.customEffects),
+      right = byName(db.customEffects)
+    const names = new Set(
+      [...left.keys(), ...right.keys()].filter(
+        n => !same(left.get(n), right.get(n)),
+      ),
+    )
+    for (const t of B.list)
+      for (const { node } of index(t.root).values())
+        if (
+          isObj(node.motion) &&
+          'gpu' in node.motion &&
+          names.has(node.motion.gpu)
+        ) {
+          dirty.add(t.key)
+          break
+        }
+  }
   for (const id of new Set([...B.comps.keys(), ...A.comps.keys()])) {
     const c = B.comps.get(id)
     const o = A.comps.get(id)

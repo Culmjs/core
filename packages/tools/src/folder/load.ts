@@ -33,6 +33,12 @@ import { derivedId } from './ids.ts'
 import { parseFile, type JsonPath } from './jsonc.ts'
 import { readByPlugins, type Located } from './plugins.ts'
 import { makeSourceMap, treeKey } from './sourceMap.ts'
+import {
+  loadShaders,
+  parseDescriptor,
+  readShaderFiles,
+  type ShaderFiles,
+} from './shaders.ts'
 import type { Origin, SourceMap } from './sourceMap.ts'
 
 export type { Origin, SourceMap } from './sourceMap.ts'
@@ -65,7 +71,7 @@ type Scan = {
   unreadable?: Located
 }
 
-/** Reads the project's JSON files. A symbolic link that leaves the folder is not read; it is listed in `refused`. */
+/** Reads project JSON and referenced local shader pairs. Refused links are never read. */
 export async function readFolder(dir: string): Promise<Scan> {
   let walked
   try {
@@ -85,18 +91,24 @@ export async function readFolder(dir: string): Promise<Scan> {
     }
   }
   const { files, refused } = walked
-  const read = await Promise.all(
-    [...files].map(
-      async ([rel, abs]) => [rel, await readFile(abs, 'utf8')] as const,
-    ),
+  const texts = new Map<string, string>()
+  await Promise.all(
+    [...files].map(async ([rel, abs]) => {
+      try {
+        texts.set(rel, await readFile(abs, 'utf8'))
+      } catch {
+        refused.set(rel, 'it could not be read')
+      }
+    }),
   )
+  await readShaderFiles(dir, texts, refused)
   return {
-    files: new Map(read.sort(([a], [b]) => (a < b ? -1 : 1))),
+    files: new Map([...texts].sort(([a], [b]) => (a < b ? -1 : 1))),
     refused,
   }
 }
 
-/** culm.json, site.json, pages/, pieces/, blocks/ and data/, as project-relative paths to text. Never reads outside the folder. */
+/** Project sources, including referenced effects/, as project-relative paths to text. */
 export async function readProject(dir: string): Promise<Map<string, string>> {
   return (await readFolder(dir)).files
 }
@@ -125,18 +137,28 @@ async function build(
   const parsed = new Map<string, ReturnType<typeof parseFile>>()
   const parse = (file: string) => {
     let f = parsed.get(file)
-    if (!f) parsed.set(file, (f = parseFile(files.get(file) ?? '')))
+    if (!f) {
+      const text = files.get(file) ?? ''
+      parsed.set(
+        file,
+        (f = file.startsWith('effects/')
+          ? parseDescriptor(text)
+          : parseFile(text, 1)),
+      )
+    }
     return f
   }
   const origins = new Map<string, Origin>()
   const trees = new Map<string, TreeRef>()
   const pageFiles = new Map<string, string>()
   const pieceFiles = new Map<string, string>()
+  const shaders: ShaderFiles[] = []
   const map = makeSourceMap({
     origins,
     trees,
     pages: pageFiles,
     pieces: pieceFiles,
+    shaders,
     at: (file, path) => parse(file).at(path),
   })
   const record = (tree: TreeRef, id: string, o: Origin) => {
@@ -195,6 +217,7 @@ async function build(
   // the files readByPlugins names; this reports every other file (and the rows of data/).
   let broken = false
   for (const [file] of files) {
+    if (file.endsWith('.frag')) continue
     const e = parse(file).errors[0]
     if (!e) continue
     broken = true
@@ -293,7 +316,7 @@ async function build(
       return undefined
     }
     if (refer(rel, file, key)) return undefined
-    if (!files.has(rel)) {
+    if (!files.has(rel) || rel.endsWith('.frag')) {
       bad(`The piece file ${rel} is missing.`, file, key)
       return undefined
     }
@@ -513,7 +536,7 @@ async function build(
     }
     listed.add(file)
     if (refer(file, 'site.json', at)) continue
-    if (!files.has(file)) {
+    if (!files.has(file) || file.endsWith('.frag')) {
       bad(`The page file ${file} is missing.`, 'site.json', at)
       continue
     }
@@ -562,6 +585,10 @@ async function build(
   }
   const header = chrome('header', 'Header')
   const footer = chrome('footer', 'Footer')
+  const customEffects =
+    site.customEffects === undefined
+      ? undefined
+      : loadShaders(site.customEffects, files, shaders, parse, refer, bad)
 
   for (const rel of refused.keys())
     if (!reported.has(rel)) problems.push(refusal(rel, refused.get(rel)!))
@@ -611,6 +638,7 @@ async function build(
     header,
     footer,
     components: [...pieces.values()],
+    ...(customEffects !== undefined ? { customEffects } : {}),
     fonts: (Array.isArray(site.fonts)
       ? site.fonts
       : [

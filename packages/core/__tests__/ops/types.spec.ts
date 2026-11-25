@@ -54,6 +54,14 @@ const ops: { [K in Op['op']]: Extract<Op, { op: K }> } = {
   },
   setStates: { op: 'setStates', tree: t, id: 'a', state: null, on: [] },
   setMotion: { op: 'setMotion', tree: t, id: 'a', motion: null },
+  addCustomEffect: {
+    op: 'addCustomEffect',
+    effect: {
+      name: 'mist',
+      source: 'vec4 shade(vec2 uv){return vec4(1.0);}',
+      settings: {},
+    },
+  },
   insertBlock: {
     op: 'insertBlock',
     tree: t,
@@ -111,8 +119,8 @@ const ops: { [K in Op['op']]: Extract<Op, { op: K }> } = {
   setFonts: { op: 'setFonts', fonts: ['sys:sans'] },
 }
 
-test('the 27 operations', () => {
+test('the 28 operations', () => {
   const names = Object.values(ops).map(o => o.op)
-  assert.equal(new Set(names).size, 27)
+  assert.equal(new Set(names).size, 28)
   assert.deepEqual(names, Object.keys(ops))
 })

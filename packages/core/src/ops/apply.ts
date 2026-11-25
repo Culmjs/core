@@ -29,7 +29,7 @@ async function begin(
   key: string,
   baseRevision: number,
   request: string,
-): Promise<ApplyResult | { doc: SiteDocument }> {
+): Promise<ApplyResult | { doc: SiteDocument; readStamp?: string }> {
   const seen = await store.replay(site, key)
   if (seen)
     return seen.request === request
@@ -45,7 +45,7 @@ async function begin(
       `The site is at revision ${head.revision}, not ${baseRevision}.`,
       { path: 'baseRevision' },
     )
-  return { doc: head.doc }
+  return head
 }
 
 async function finish(
@@ -56,10 +56,12 @@ async function finish(
   key: string,
   request: string,
   made: Omit<Extract<ApplyResult, { ok: true }>, 'ok' | 'revision'>,
+  readStamp?: string,
 ): Promise<ApplyResult> {
   const result: ApplyResult = { ok: true, revision: baseRevision + 1, ...made }
   const c = await store.commit(site, {
     expected: baseRevision,
+    ...(readStamp !== undefined ? { readStamp } : {}),
     doc,
     key,
     request,
@@ -111,7 +113,7 @@ export async function apply(
   const p = plan(b.doc, registry, snap, allow)
   if (!p.ok) return p
   const { doc, ...made } = p
-  return finish(store, site, baseRevision, doc, key, text, made)
+  return finish(store, site, baseRevision, doc, key, text, made, b.readStamp)
 }
 
 /**
@@ -189,9 +191,18 @@ export async function restore(
   }
   if (veto) return { ok: false, problems: [vetoProblem(veto)] }
   const d = diffAll(b.doc, restored)
-  return finish(store, site, baseRevision, restored, key, text, {
-    ...affected(d),
-    pages: d.pages,
-    notes: [],
-  })
+  return finish(
+    store,
+    site,
+    baseRevision,
+    restored,
+    key,
+    text,
+    {
+      ...affected(d),
+      pages: d.pages,
+      notes: [],
+    },
+    b.readStamp,
+  )
 }

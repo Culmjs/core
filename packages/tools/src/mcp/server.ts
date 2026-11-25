@@ -128,6 +128,7 @@ const batch = (key: Obj) =>
       ...key,
       ops: {
         type: 'array',
+        maxItems: 200,
         items: {
           type: 'object',
           properties: { op: str },
@@ -291,28 +292,31 @@ function reply(body: Obj): Result {
 }
 function refuse(problems: Problem[], locate?: McpOptions['locate']): Result {
   const ps = problems.slice(0, 20).map(p => (locate ? locate(p) : p))
-  return {
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify({ problems: ps }).slice(0, READ_CAP),
-      },
-    ],
-    isError: true,
-  }
+  return refuseMany(ps)
 }
 
 /** A refusal with every problem that fits the cap, in the order given (by place in the JSX); `more` counts the ones left out. */
 function refuseMany(problems: Problem[], extra: Obj = {}): Result {
   for (let n = problems.length; ; n = Math.floor(n * 0.8)) {
-    const text = JSON.stringify({
+    const body = {
       ...extra,
       problems: problems.slice(0, n),
       ...(n < problems.length ? { more: problems.length - n } : {}),
-    })
-    if (text.length <= READ_CAP || n <= 1)
+    }
+    let text = JSON.stringify(body)
+    if (n === 1 && text.length > READ_CAP) {
+      // One oversized diagnostic (e.g. an invalid setting name). Shorten fields,
+      // never slice the serialized JSON in the middle of a string.
+      const summary: Obj = {}
+      for (const [key, v] of Object.entries(problems[0]!)) {
+        if (typeof v === 'string') summary[key] = v.slice(0, 160)
+        else if (typeof v === 'number') summary[key] = v
+      }
+      text = JSON.stringify({ ...body, problems: [summary], cut: true })
+    }
+    if (text.length <= READ_CAP)
       return {
-        content: [{ type: 'text', text: text.slice(0, READ_CAP) }],
+        content: [{ type: 'text', text }],
         isError: true,
       }
   }
@@ -446,7 +450,7 @@ export function createMcpServer(o: McpOptions): Server {
           ? {
               ...t,
               description:
-                'Commit 1–32 ordered insert/update/move/remove/theme operations atomically. Each insert.node is one JSON section; update merges fields on an id. Give motion as {trigger,effect,settings?} or {trigger,steps}; update.motion:null clears it. Move defaults to the page root. Returns revision and section ids.',
+                'Commit 1–32 ordered insert/update/move/remove/theme/addCustomEffect operations atomically. Each insert.node is one JSON section; update merges fields on an id. Give motion as {trigger,effect,settings?}, {trigger,steps}, or {trigger:"enter-view",gpu:"mist"} after addCustomEffect {effect:{name,source,settings}}; update.motion:null clears it. Move defaults to the page root. Returns revision and section ids.',
               inputSchema: schema(
                 { baseRevision: num, page: str, key: str, ops: jsonEditSchema },
                 ['baseRevision', 'ops'],
@@ -512,7 +516,7 @@ export function createMcpServer(o: McpOptions): Server {
   // `measure` continues from the report it made, not a second run
   let last: { key: string; rows: Obj[]; meta: Obj } | undefined
 
-  const tools: Record<string, (a: Obj) => Promise<Result>> = {
+  const tools: Record<string, (a: Obj, snapshot?: Head) => Promise<Result>> = {
     async describe(a) {
       const h = await headOf()
       if ('content' in h) return h
@@ -536,6 +540,7 @@ export function createMcpServer(o: McpOptions): Server {
             {
               revision: h.revision,
               name: h.doc.name,
+              ...(registry.gpu?.enabled ? { features: { gpu: true } } : {}),
               ...(h.doc.styles?.textRange
                 ? { textRange: h.doc.styles.textRange }
                 : {}),
@@ -676,10 +681,10 @@ export function createMcpServer(o: McpOptions): Server {
         : fail(r.problems)
     },
 
-    async apply(a) {
+    async apply(a, snapshot) {
       const badRev = badBase(a)
       if (badRev) return badRev
-      const h = await headOf()
+      const h = snapshot ?? (await headOf())
       if ('content' in h) return h
       // a key already committed is replayed by core, whatever the revision is now; the fetch still runs (held files: no request)
       const seen =
@@ -709,7 +714,18 @@ export function createMcpServer(o: McpOptions): Server {
         ])
       const f = offline && !offline.refusal ? offline : await fetched(a, h.doc)
       if (f.refusal) return f.refusal
-      const r = await apply(store, registry, request(a, f.ops), allow)
+      // Keep the same optimistic source read through fetch, compact projection
+      // and core's plan. Even another head read on this server cannot replace it.
+      const transaction: SiteStore =
+        h.readStamp === undefined
+          ? store
+          : {
+              head: async () => h,
+              replay: (s, k) => store.replay(s, k),
+              get: (s, n) => store.get(s, n),
+              commit: (s, c) => store.commit(s, c),
+            }
+      const r = await apply(transaction, registry, request(a, f.ops), allow)
       return r.ok
         ? reply(
             summary(r, await store.get(site, r.revision), {
@@ -811,7 +827,10 @@ export function createMcpServer(o: McpOptions): Server {
       if (!b.ops.length && !seen)
         sum = { revision: h.revision, from: base, ops: 0, noop: true }
       else {
-        const res = await tools.apply({ baseRevision: base, key, ops: b.ops })
+        const res = await tools.apply(
+          { baseRevision: base, key, ops: b.ops },
+          h.readStamp === undefined ? undefined : h,
+        )
         const j = JSON.parse(res.content[0]!.text) as Obj
         if (res.isError)
           return refuseMany(

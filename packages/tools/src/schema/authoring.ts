@@ -1,5 +1,6 @@
 import { KINDS } from '@culmjs/core'
 import type { BlockDef, KindSpec, Registry } from '@culmjs/core'
+import { descriptorPattern } from '../shared.ts'
 
 type Schema = Record<string, unknown>
 
@@ -9,6 +10,41 @@ const ref = (name: string): Schema => ({
 const str: Schema = { type: 'string' }
 const STYLE_LAYERS = ['base', 'tablet', 'phone', 'hover', 'dark']
 const ID = '^[a-z0-9]{1,20}$'
+
+export const shaderSchema = (folder: boolean): Schema => {
+  const number = { type: 'number' }
+  const source = folder ? 'sourceFile' : 'source'
+  const declaration = (properties: Schema) => ({
+    type: 'object',
+    properties,
+    required: Object.keys(properties),
+    additionalProperties: false,
+  })
+  return declaration({
+    name: { type: 'string', pattern: '^[a-z][a-z0-9_]{0,31}$' },
+    settings: {
+      type: 'object',
+      maxProperties: 16,
+      additionalProperties: {
+        oneOf: [
+          declaration({
+            type: { const: 'number' },
+            min: number,
+            max: number,
+            default: number,
+          }),
+          declaration({
+            type: { const: 'color' },
+            default: { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' },
+          }),
+        ],
+      },
+    },
+    [source]: folder
+      ? { type: 'string', pattern: '^[a-z][a-z0-9_]{0,31}\\.frag$' }
+      : str,
+  })
+}
 
 // The node keys every kind shares. Open on purpose: the schema never refuses what validateSite accepts.
 const NODE_KEYS: Record<string, Schema> = {
@@ -32,17 +68,49 @@ const NODE_KEYS: Record<string, Schema> = {
   motion: {
     type: 'object',
     description:
-      'A trigger with either steps or a registered effect and optional numeric settings.',
+      'A trigger with steps, a registered preset, or a GPU effect on enter-view.',
     properties: {
       trigger: { anyOf: [str, { type: 'object' }] },
       steps: { type: 'array', items: { type: 'object' } },
       effect: str,
-      settings: { type: 'object', additionalProperties: { type: 'number' } },
+      gpu: str,
+      poster: str,
+      settings: { type: 'object' },
       pinPx: { type: 'number' },
       scrollFallback: { const: 'timeline' },
     },
     required: ['trigger'],
-    oneOf: [{ required: ['steps'] }, { required: ['effect'] }],
+    oneOf: [
+      { required: ['steps'] },
+      { required: ['effect'] },
+      { required: ['gpu'] },
+    ],
+    if: { required: ['gpu'] },
+    then: {
+      properties: {
+        trigger: { const: 'enter-view' },
+        gpu: str,
+        poster: {
+          type: 'string',
+          pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$',
+        },
+        settings: {
+          type: 'object',
+          additionalProperties: {
+            anyOf: [
+              { type: 'number' },
+              { type: 'string', pattern: '^#[a-fA-F0-9]{6}$' },
+            ],
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    else: {
+      properties: {
+        settings: { type: 'object', additionalProperties: { type: 'number' } },
+      },
+    },
   },
   required: { type: 'boolean' },
 }
@@ -172,12 +240,27 @@ export function authoringSchema(registry: Registry): Record<string, unknown> {
           },
         },
         pages: { type: 'array', items: str },
+        customEffects: {
+          type: 'array',
+          maxItems: 32,
+          uniqueItems: true,
+          items: { type: 'string', pattern: descriptorPattern },
+        },
         header: ref('node'),
         footer: ref('node'),
       },
       // what tells a site from the other four shapes, so a broken page is not read as a site
       not: {
-        anyOf: ['root', 'fields', 'looks', 'plugins', 'out'].map(k => ({
+        anyOf: [
+          'root',
+          'fields',
+          'looks',
+          'plugins',
+          'out',
+          'features',
+          'sourceFile',
+          'settings',
+        ].map(k => ({
           required: [k],
         })),
       },
@@ -188,9 +271,18 @@ export function authoringSchema(registry: Registry): Record<string, unknown> {
         $schema: str,
         plugins: { type: 'array', items: str },
         out: str,
+        features: {
+          type: 'object',
+          properties: { gpu: { type: 'boolean' } },
+          additionalProperties: false,
+        },
       },
       // what tells culm.json from the others, so a broken page is not read as one
-      anyOf: [{ required: ['plugins'] }, { required: ['out'] }],
+      anyOf: [
+        { required: ['plugins'] },
+        { required: ['out'] },
+        { required: ['features'] },
+      ],
     },
     page: {
       type: 'object',
@@ -251,6 +343,7 @@ export function authoringSchema(registry: Registry): Record<string, unknown> {
       required: ['fields'],
     },
     fieldType,
+    customEffect: shaderSchema(true),
     use: {
       description:
         'A piece placed here; every other key is a value for one of its settings.',
@@ -306,7 +399,15 @@ export function authoringSchema(registry: Registry): Record<string, unknown> {
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     title: 'Culm authoring format',
-    anyOf: ['site', 'culm', 'page', 'piece', 'block', 'data'].map(ref),
+    anyOf: [
+      'site',
+      'culm',
+      'page',
+      'piece',
+      'block',
+      'data',
+      'customEffect',
+    ].map(ref),
     $defs: defs,
   }
 }

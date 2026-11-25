@@ -361,7 +361,7 @@ test('OPERATIONS has one entry per name in OP_NAMES, in that order', () => {
 })
 
 test('every operation example is accepted by plan on its fixture', () => {
-  const registry = kitRegistry()
+  const registry = kitRegistry({ gpu: { enabled: true } })
   let doc = siteWith([text('t', 'Hello')])
   for (const [i, entry] of OPERATIONS.entries()) {
     const r = plan(doc, registry, request([entry.example], `k${i}`))
@@ -785,9 +785,9 @@ test('catalogue never throws, whatever it is given', () => {
 const whole = (what: 'operations' | 'blocks', registry = kitRegistry()) =>
   ok(catalogue(registry, { what }))
 
-test('operations list: 27 strings and a legend, at most 2,500 characters; rows[0] is "add(tree:T, parent:string, index:number, node:N)"; no row has an example', () => {
+test('operations list: 28 strings and a legend, at most 2,500 characters; rows[0] is "add(tree:T, parent:string, index:number, node:N)"; no row has an example', () => {
   const r = whole('operations')
-  assert.equal(r.rows.length, 27)
+  assert.equal(r.rows.length, 28)
   for (const row of r.rows) assert.equal(typeof row, 'string')
   assert.equal(r.rows[0], 'add(tree:T, parent:string, index:number, node:N)')
   assert.deepEqual(Object.keys(r.legend), ['T', 'N', 'L', 'U', 'V'])
@@ -813,12 +813,13 @@ test('every type in an operation line is at most 24 characters or a legend key, 
 })
 
 test('operations id=<op> still returns fields and the example, and the examples are still accepted by plan in order', () => {
+  const registry = kitRegistry({ gpu: { enabled: true } })
   let doc = siteWith([text('t', 'Hello')])
   for (const [i, e] of OPERATIONS.entries()) {
-    const d = ok(catalogue(kitRegistry(), { what: 'operations', id: e.op }))
+    const d = ok(catalogue(registry, { what: 'operations', id: e.op }))
     assert.deepEqual(d.rows[0].example, e.example)
     assert.equal(d.rows[0].fields.length, e.fields.length)
-    const p = plan(doc, kitRegistry(), request([d.rows[0].example], `k${i}`))
+    const p = plan(doc, registry, request([d.rows[0].example], `k${i}`))
     assert.equal(p.ok, true, e.op)
     if (p.ok) doc = p.doc
   }
