@@ -239,7 +239,8 @@ export function unrollInstances(
         ...inst.state.filter(s => !out.state?.some(m => m.name === s.name)),
       ]
     if (inst.on !== undefined) out.on = inst.on
-    // The use's motion addresses its own slot content, not the master's local part ids.
+    // A use's motion replaces the master's. Its step targets address its own slot
+    // content; a GPU reference names a site effect and has no part ids to remap.
     if (inst.motion !== undefined) out.motion = structuredClone(inst.motion)
     for (const k of [
       'slot',

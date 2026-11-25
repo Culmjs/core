@@ -17,6 +17,7 @@ import { isFontRef } from '../style/fonts.ts'
 import { diagnosticId, fieldsOf, isStr, oneOf } from './common.ts'
 import { checkShown } from './required.ts'
 import { checkTrees } from './tree.ts'
+import { checkCustomEffects } from './gpu.ts'
 
 export const TOP_KEYS = fieldsOf<SiteDocument>({
   schemaVersion: true,
@@ -25,6 +26,7 @@ export const TOP_KEYS = fieldsOf<SiteDocument>({
   header: true,
   footer: true,
   components: true,
+  customEffects: true,
   fonts: true,
   styles: true,
   look: true,
@@ -281,15 +283,26 @@ export function checkDocument(
       })
     }
   }
-  // A document that is not a site is not handed to the rules.
-  if (out.length) return
-  const projected = checkTrees(doc as unknown as SiteDocument, registry, out)
+  const hasSiteShape = !out.length
+  const custom = checkCustomEffects(doc.customEffects, registry, out)
+  if (!hasSiteShape) return
+  const definitionsOk = !out.length
+  const projected = checkTrees(
+    doc as unknown as SiteDocument,
+    registry,
+    out,
+    custom,
+  )
+  // Even when a definition was refused, the attachment reports on its authored owner.
+  if (!definitionsOk) return
   // The two checks below assume a well-formed tree.
   if (!out.length) {
     out.push(...checkShown(doc as unknown as SiteDocument, registry))
   }
   runRules(doc as unknown as SiteDocument, registry, out)
-  return projected
+  return projected && doc.customEffects !== undefined
+    ? { ...projected, customEffects: [...custom.values()] }
+    : projected
 }
 
 /** A rule's problem, copied field by field: a rule is outside code, so only the known fields, short and of the right type, reach the result. */

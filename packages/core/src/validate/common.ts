@@ -2,6 +2,7 @@ import {
   kindSpec,
   type Code,
   type Component,
+  type CustomEffect,
   type KindSpec,
   type Motion,
   type Node,
@@ -46,6 +47,7 @@ export type Tree = {
 export type Ctx = {
   reg: Registry
   effects: Map<Node, Motion>
+  customEffects: ReadonlyMap<string, CustomEffect>
   kinds: ReadonlyMap<string, KindSpec>
   styles: SiteStyles
   fonts: ReadonlySet<string>

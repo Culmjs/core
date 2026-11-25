@@ -14,9 +14,11 @@ import type {
   BlockDef,
   DataSource,
   EffectDef,
+  RegisteredEffect,
   Registry,
 } from '../registry/index.ts'
 import { paged, tagOf } from './cap.ts'
+import { checkCustomEffects } from '../validate/gpu.ts'
 import { GUIDE as GUIDE_ROWS } from './guide.ts'
 import { RECIPES } from './recipes.ts'
 import { OP_NAMES } from './plan.ts'
@@ -520,8 +522,34 @@ function effectExample(e: EffectDef, site?: Head) {
   }
 }
 
-function effectView(e: EffectDef, site: Head | undefined): Entryview {
+function effectView(e: RegisteredEffect, site: Head | undefined): Entryview {
   const head = () => ({ name: str(e.name), tier: e.tier })
+  if (e.tier === 3)
+    return {
+      name: e.name,
+      list: head,
+      detail: () => ({
+        header: {
+          ...head(),
+          trigger: 'enter-view',
+          requires:
+            'Choose a layout container with real static content, outside forms and with no form or field inside.',
+          fallback:
+            'The static block remains usable. An optional poster names one local asset.',
+        },
+        rows: Object.entries(e.settings).map(([k, s]) =>
+          s.type === 'color'
+            ? { key: cut(k, TEXT), type: 'color', default: str(s.default) }
+            : {
+                key: cut(k, TEXT),
+                type: 'number',
+                min: num(s.min),
+                max: num(s.max),
+                default: num(s.default),
+              },
+        ),
+      }),
+    }
   return {
     name: e.name,
     list: head,
@@ -953,6 +981,22 @@ export function catalogue(
       views = registry.sources().map(sourceView)
     } else if (query.what === 'effects') {
       views = registry.effects().map(e => effectView(e, site))
+      if (site?.doc.customEffects !== undefined) {
+        const problems: Problem[] = []
+        const custom = checkCustomEffects(
+          site.doc.customEffects,
+          registry,
+          problems,
+        )
+        if (problems.length)
+          return refuse(
+            problems[0].code,
+            'The site’s GPU definitions could not be listed. Validate the site for details.',
+            { path: 'customEffects' },
+          )
+        for (const d of custom.values())
+          views.push(effectView({ ...d, tier: 3 }, site))
+      }
     } else if (query.what === 'guide') {
       if (query.id !== undefined)
         return bad('The guide has no entries by id.', { path: 'id' })

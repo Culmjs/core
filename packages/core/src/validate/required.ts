@@ -37,11 +37,12 @@ const policy = (
 const INVISIBLE = '\u115F\u1160\u3164\uFFA0\u2800\u{1D159}'
 /** A character a reader sees: a letter, a number, punctuation or a symbol, other than `INVISIBLE`. Combining marks alone, format, control and private-use characters do not count. */
 const VISIBLE = new RegExp(`(?![${INVISIBLE}])[\\p{L}\\p{N}\\p{P}\\p{S}]`, 'u')
+export const visibleText = (s: unknown) =>
+  typeof s === 'string' && VISIBLE.test(s)
 
 /** A run counts as content when it has a binding or a character a reader sees in its `text`. A `math` run never counts: whether the compiler draws it is decided by its parser, in the compile layer. */
 const runHas = (r: unknown) =>
-  isObj(r) &&
-  ((typeof r.text === 'string' && VISIBLE.test(r.text)) || isObj(r.bind))
+  isObj(r) && (visibleText(r.text) || isObj(r.bind))
 
 /** A text has content when a run has text or a binding. */
 const hasContent = (n: Node) => {

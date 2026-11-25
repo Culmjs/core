@@ -323,7 +323,7 @@ export function build(
   const { mode } = p
   const mail = { used: false }
   const hasMotion = (w: Node): boolean =>
-    !!w.motion || !!w.children?.some(hasMotion)
+    (!!w.motion && !('gpu' in w.motion)) || !!w.children?.some(hasMotion)
   const rendered =
     mode === 'live' && p.trees.some(hasMotion)
       ? new Map<Node, HtmlNode>()

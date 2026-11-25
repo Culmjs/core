@@ -5,6 +5,7 @@ import type {
   Node,
   Problem,
   Step,
+  StepMotion,
 } from '../document/index.ts'
 import { find, orderedChildren, walk } from '../document/tree.ts'
 import { cssEase } from '../scripts/motionEase.ts'
@@ -32,7 +33,7 @@ type Lowered = { tier: 1 | 2; steps: Step[] }
 
 /** A validated program. The private render projection already has the exact checked
  * steps, including copy-local target IDs, even when it came from a named preset. */
-export function lowerMotion(m: Motion, registry: Registry): Lowered {
+export function lowerMotion(m: StepMotion, registry: Registry): Lowered {
   const def = 'effect' in m ? registry.effect(m.effect) : undefined
   const steps =
     'steps' in m
@@ -159,6 +160,7 @@ function inlineTarget(n: Node, el: HtmlNode, style: InlineStyles) {
 
 type Pending = {
   w: Node
+  motion: StepMotion
   owner: HtmlNode
   steps: Step[]
   state?: Binding
@@ -209,11 +211,10 @@ function timelines(
   const splitRules = new Set<string>()
   let timeline = false
   let alpha = false
-  for (const { w, owner, steps, state, pinChild } of programs) {
+  for (const { w, motion: m, owner, steps, state, pinChild } of programs) {
     const bound: BoundStep[] = []
     const draw = new Set<number>(),
       reveals = new Set<number>()
-    const m = w.motion!
     const transformBox = (n: Node, el: HtmlNode, id: number) => {
       const inl = inlineTarget(n, el, style)
       if (!inl.natural && !inl.restore) return
@@ -545,7 +546,7 @@ export function motionCss(
       chain[depth] = w
       const m = w.motion,
         owner = rendered.get(w)
-      if (!m || !owner) return
+      if (!m || 'gpu' in m || !owner) return
       // The fallback buys a host even when native CSS is available. Defer only
       // its execution to the host; a host-only program has no CSS branch.
       const { tier, steps } = lowerMotion(
@@ -580,7 +581,7 @@ export function motionCss(
           }
           if (!pinChild) return
         }
-        pending.push({ w, owner, steps, state, pinChild })
+        pending.push({ w, motion: m, owner, steps, state, pinChild })
       }
       if (hostOnly) return
       const t = steps[0].target

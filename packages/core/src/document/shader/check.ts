@@ -1,4 +1,4 @@
-import { isObj, UNSAFE_FIELDS } from '../rules.ts'
+import { isRecord, UNSAFE_FIELDS } from '../rules.ts'
 import { parse } from './parse.ts'
 import {
   refuse,
@@ -25,12 +25,6 @@ function byteCount(source: string) {
   return n
 }
 
-function record(v: unknown): v is Record<string, unknown> {
-  if (!isObj(v)) return false
-  const proto = Object.getPrototypeOf(v)
-  return proto === null || Object.getPrototypeOf(proto) === null
-}
-
 function exactFields(obj: object, fields: readonly string[]) {
   for (const key in obj)
     if (Object.hasOwn(obj, key) && !fields.includes(key)) return false
@@ -38,7 +32,7 @@ function exactFields(obj: object, fields: readonly string[]) {
 }
 
 function inputs(settings: ShaderSettings) {
-  if (!record(settings)) refuse('settings', 1, 'settings', 'setting map')
+  if (!isRecord(settings)) refuse('settings', 1, 'settings', 'setting map')
   let count = 0
   for (const key in settings)
     if (Object.hasOwn(settings, key) && ++count > SHADER_LIMITS.settings)
@@ -60,7 +54,7 @@ function inputs(settings: ShaderSettings) {
       refuse('settings', 1, key, 'safe setting key')
     const s = settings[key]
     if (
-      record(s) &&
+      isRecord(s) &&
       s.type === 'number' &&
       exactFields(s, ['type', 'min', 'max', 'default']) &&
       [s.min, s.max, s.default].every(Number.isFinite) &&
@@ -69,7 +63,7 @@ function inputs(settings: ShaderSettings) {
     )
       env.set(`u_set_${key}`, 'float')
     else if (
-      record(s) &&
+      isRecord(s) &&
       s.type === 'color' &&
       exactFields(s, ['type', 'default']) &&
       typeof s.default === 'string' &&

@@ -25,5 +25,9 @@ export type Problem = {
   path?: string
   allowed?: readonly string[]
   rule?: string
+  /** One-based line in authored shader source (separate from a folder location). */
+  shaderLine?: number
+  measured?: number | string
+  limit?: number | string
   op?: number
 }

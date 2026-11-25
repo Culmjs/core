@@ -1,6 +1,7 @@
 import type { Step } from '../document/motion.ts'
 import { checkSteps, stepsTier, type Say } from '../document/motionSteps.ts'
 import { isObj, isNum, UNSAFE_FIELDS } from '../document/rules.ts'
+import type { GpuEffectDef } from './gpu.ts'
 
 export type EffectDef = {
   name: string
@@ -8,6 +9,7 @@ export type EffectDef = {
   settings: Record<string, { min: number; max: number; default: number }>
   steps(settings: Readonly<Record<string, number>>): Step[]
 }
+export type RegisteredEffect = EffectDef | GpuEffectDef
 
 // Catalogue reads registration's checked snapshot. Discovery never runs a factory.
 const defaults = new WeakMap<EffectDef, Step[]>()
@@ -15,10 +17,15 @@ export const defaultEffectSteps = (d: EffectDef) => defaults.get(d)
 
 /** One isolated snapshot: the checked data is what callers receive, never a second call to the factory. */
 export function resolveEffect(
-  d: EffectDef | undefined,
+  definition: RegisteredEffect | undefined,
   settings: unknown,
   say: Say,
 ): Step[] | undefined {
+  if (definition?.tier === 3) {
+    say('A GPU effect needs a GPU attachment.', 'motion.effect')
+    return
+  }
+  const d = definition
   let ok = true
   const bad: Say = (msg, path) => {
     ok = false
@@ -70,6 +77,7 @@ export function checkedEffect(input: EffectDef): EffectDef {
     !input ||
     !nameOk(input.name) ||
     (input.tier !== 1 && input.tier !== 2) ||
+    'wasm' in input ||
     !isObj(input.settings) ||
     typeof input.steps !== 'function'
   )
