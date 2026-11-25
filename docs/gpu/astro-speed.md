@@ -70,3 +70,14 @@ BENCH_VARIANTS=culm-trusted-poster,culm-checked-poster BENCH_PROFILES=mobile BEN
 ```
 
 [Benchmark source](../../scripts/benchmark-astro-speed.mjs) · [independent flash-analysis handoff](flash-analysis.md) · [approved production limits](limits.md)
+
+### Repeat on a physical Android phone
+
+Use one unlocked, USB-connected Android phone with Chrome open and USB debugging authorized. Keep it in portrait, with the display awake and the benchmark tab in the foreground; note device model and power-saving / reduced-motion settings. The runner attaches to Chrome via `adb -d`, uses new test tabs and fresh loopback origins, and removes its own forwards when finished. The `handset` profile uses the actual screen, DPR, CPU and GPU; it shapes only the network to the mobile profile above. A missing device stops the run. This lane has no handset results yet.
+
+```sh
+BENCH_ANDROID=1 node --conditions=source --import tsx scripts/benchmark-astro-speed.mjs
+BENCH_ANDROID=1 BENCH_VARIANTS=culm-trusted-poster,culm-checked-poster BENCH_ROUNDS=3 BENCH_WINDOW_MS=14000 BENCH_OUTPUT=.superpowers/astro-speed/handset-poster.json node --conditions=source --import tsx scripts/benchmark-astro-speed.mjs
+```
+
+For a separate visual diagnostic, install `pngjs@7.0.0` in the same benchmark prefix and repeat the poster command with `BENCH_POSTER_PIXELS=1` and a separate `BENCH_OUTPUT`. It takes occasional lossless compositor screenshots of one row below the text, then records the capture interval and 10th/90th percentile green codes. The grey poster ranges from 153 to 156; `p10 ≤ 150` **and** `p90 ≥ 159` witnesses both light and dark contour bands, which a uniform fade to black cannot do. The first qualifying sample is an upper bound on visible contour onset, not the exact first moving pixel. Do not pool these instrumented timings with the speed runs.

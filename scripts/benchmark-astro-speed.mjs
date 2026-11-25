@@ -2,6 +2,7 @@
 // Run from the repo root with: node --conditions=source --import tsx scripts/benchmark-astro-speed.mjs
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -14,8 +15,10 @@ import { node, siteWith, text } from '../packages/core/__tests__/kit.ts'
 import { scenes } from '../packages/tools/__tests__/fixtures/motion-scenes.ts'
 import { contours } from '../packages/core/src/registry/gpuBuiltins.ts'
 import { candidateCompiler } from './gpu-flash/compiler.ts'
+import { physicalAndroid } from './benchmark-android.mjs'
 
 const root = resolve('.superpowers/astro-speed')
+const phone = process.env.BENCH_ANDROID === '1' ? physicalAndroid() : null
 const require = createRequire(join(root, 'package.json'))
 const { chromium } = require('playwright-core')
 const variants = {}
@@ -30,10 +33,26 @@ const profiles = {
     downKbps: 1600,
     upKbps: 750,
   },
+  ...(phone && {
+    handset: { cpu: 1, latency: 150, downKbps: 1600, upKbps: 750 },
+  }),
 }
 const count = Number(process.env.BENCH_ROUNDS || 9)
 const observationMs = Number(process.env.BENCH_WINDOW_MS || 2400)
-const output = process.env.BENCH_OUTPUT || join(root, 'results.json')
+const probePoster = process.env.BENCH_POSTER_PIXELS === '1'
+const PNG = probePoster ? require('pngjs').PNG : null
+const output =
+  process.env.BENCH_OUTPUT ||
+  join(
+    root,
+    probePoster
+      ? phone
+        ? 'handset-pixels.json'
+        : 'pixels.json'
+      : phone
+        ? 'handset.json'
+        : 'results.json',
+  )
 const candidate = await candidateCompiler()
 const custom = {
   name: 'survey_contours',
@@ -234,6 +253,9 @@ try {
     ].map(m => m[1])
     bytes[name] = {
       rawHtml: size(files['/']),
+      gpuHostSha256: files['/_culm/gpu.js']
+        ? createHash('sha256').update(files['/_culm/gpu.js']).digest('hex')
+        : null,
       rawJs:
         inline.reduce((n, s) => n + size(s), 0) +
         Object.entries(files)
@@ -269,26 +291,32 @@ try {
     )
     origins[name] = 'http://127.0.0.1:' + server.address().port
   }
-  browser = await chromium.launch({
-    ...(process.env.CULM_CHROME
-      ? { executablePath: process.env.CULM_CHROME }
-      : {}),
-    headless: true,
-    args: [
-      '--hide-scrollbars',
-      '--force-color-profile=srgb',
-      ...(process.env.BENCH_SOFTWARE_GL
-        ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
-        : []),
-    ],
-  })
-  const metaPage = await browser.newPage()
-  const renderer = await metaPage.evaluate(() => {
-    const gl = document.createElement('canvas').getContext('webgl2')
-    const ext = gl.getExtension('WEBGL_debug_renderer_info')
-    return gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)
-  })
-  await metaPage.close()
+  browser = phone
+    ? await phone.connect(chromium)
+    : await chromium.launch({
+        ...(process.env.CULM_CHROME
+          ? { executablePath: process.env.CULM_CHROME }
+          : {}),
+        headless: true,
+        args: [
+          '--hide-scrollbars',
+          '--force-color-profile=srgb',
+          ...(process.env.BENCH_SOFTWARE_GL
+            ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
+            : []),
+        ],
+      })
+  const metaPage = phone
+    ? await browser.contexts()[0].newPage()
+    : await browser.newPage()
+  const renderer = await metaPage
+    .evaluate(() => {
+      const gl = document.createElement('canvas').getContext('webgl2')
+      if (!gl) return 'WebGL2 unavailable'
+      const ext = gl.getExtension('WEBGL_debug_renderer_info')
+      return gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER)
+    })
+    .finally(() => metaPage.close())
   const result = {
     commit: execFileSync('git', ['rev-parse', 'HEAD'], {
       encoding: 'utf8',
@@ -298,9 +326,12 @@ try {
     playwright: require('playwright-core/package.json').version,
     chrome: browser.version(),
     node: process.version,
-    platform: `${platform()} ${osRelease()}`,
-    cpu: cpus()[0].model,
+    platform: phone
+      ? `Android ${phone.info.android}`
+      : `${platform()} ${osRelease()}`,
+    cpu: phone ? phone.info.soc || phone.info.model : cpus()[0].model,
     renderer,
+    ...(phone && { physicalAndroid: phone.info }),
     profiles,
     bytes,
     count,
@@ -312,10 +343,20 @@ try {
     process.env.BENCH_VARIANTS?.split(',') ||
     Object.keys(variants).filter(n => !n.endsWith('-poster'))
   ).sort()
-  const profileNames = process.env.BENCH_PROFILES?.split(',') || [
-    'local',
-    'mobile',
-  ]
+  const profileNames =
+    process.env.BENCH_PROFILES?.split(',') ||
+    (phone ? ['handset'] : ['local', 'mobile'])
+  assert.ok(
+    profileNames.every(name =>
+      phone ? name === 'handset' : ['mobile', 'local'].includes(name),
+    ),
+    'Handset and emulated profiles must run separately.',
+  )
+  if (probePoster)
+    assert.ok(
+      names.every(name => name.endsWith('-poster')) && observationMs >= 2400,
+      'Pixel diagnostics need poster variants and at least a 2400 ms observation window.',
+    )
   for (let round = -1; round < count; round++) {
     const ordered = names.map(
       (_, i) =>
@@ -328,15 +369,19 @@ try {
       : profileNames) {
       const p = profiles[profile]
       for (const name of ordered) {
-        const ctx = await browser.newContext({
-          viewport: { width: p.width, height: p.height },
-          deviceScaleFactor: 1,
-          reducedMotion: 'no-preference',
-        })
+        const ctx = phone
+          ? browser.contexts()[0]
+          : await browser.newContext({
+              viewport: { width: p.width, height: p.height },
+              deviceScaleFactor: 1,
+              reducedMotion: 'no-preference',
+            })
+        const page = await ctx.newPage()
         try {
+          if (phone) await page.bringToFront()
           // Instrumentation is out-of-band and identical across variants. Keep the
           // native frame clock and record actual worker acknowledgements, not submits.
-          await ctx.addInitScript(() => {
+          await page.addInitScript(() => {
             const m = (window.__bench = {
               lcp: null,
               lcpElement: null,
@@ -393,12 +438,14 @@ try {
                 return super.postMessage(msg, ...rest)
               }
             }
-            const finish = WebGL2RenderingContext.prototype.finish
-            WebGL2RenderingContext.prototype.finish = function () {
-              const ret = finish.call(this)
-              m.acks.push(performance.now())
-              sizeSeen(this.drawingBufferWidth, this.drawingBufferHeight)
-              return ret
+            if (window.WebGL2RenderingContext) {
+              const finish = WebGL2RenderingContext.prototype.finish
+              WebGL2RenderingContext.prototype.finish = function () {
+                const ret = finish.call(this)
+                m.acks.push(performance.now())
+                sizeSeen(this.drawingBufferWidth, this.drawingBufferHeight)
+                return ret
+              }
             }
             const loop = t => {
               m.raf.push(t)
@@ -407,7 +454,6 @@ try {
             requestAnimationFrame(loop)
             window.addEventListener('error', e => m.errors.push(e.message))
           })
-          const page = await ctx.newPage()
           const cdp = await ctx.newCDPSession(page)
           await cdp.send('Network.enable')
           await cdp.send('Network.setCacheDisabled', { cacheDisabled: true })
@@ -419,12 +465,64 @@ try {
               uploadThroughput: (p.upKbps * 1000) / 8,
               connectionType: 'cellular4g',
             })
-          await cdp.send('Emulation.setCPUThrottlingRate', { rate: p.cpu })
+          if (!phone)
+            await cdp.send('Emulation.setCPUThrottlingRate', { rate: p.cpu })
           const bad = []
           page.on('requestfailed', r =>
             bad.push([r.url(), r.failure()?.errorText]),
           )
-          await page.goto(origins[name], { waitUntil: 'load', timeout: 20000 })
+          await page.goto(phone ? phone.visit(origins[name]) : origins[name], {
+            waitUntil: 'load',
+            timeout: 20000,
+          })
+          // Separate diagnostic visits only. Sample across the low-contrast
+          // poster, below its text. A uniform dark fade cannot register as both
+          // light AND dark contour bands. Screenshots perturb frame timings.
+          const pixels = []
+          if (probePoster) {
+            const rect = await page
+              .locator('[data-culm-gpu]')
+              .first()
+              .boundingBox()
+            assert.ok(rect && rect.width >= 32 && rect.height >= 24)
+            const clip = {
+              x: Math.ceil(rect.x + rect.width * 0.05),
+              y: Math.ceil(rect.y + rect.height * 0.75),
+              width: Math.floor(rect.width * 0.9),
+              height: 1,
+            }
+            for (const at of [500, 800, 1250, 2200, 5000, 10000, 12500].filter(
+              t => t < observationMs,
+            )) {
+              const before = await page.evaluate(async at => {
+                await new Promise(r =>
+                  setTimeout(r, Math.max(0, at - performance.now())),
+                )
+                return performance.now()
+              }, at)
+              const buf = await page.screenshot({
+                clip,
+                scale: 'css',
+                timeout: 10000,
+              })
+              const after = await page.evaluate(() => performance.now())
+              const png = PNG.sync.read(buf),
+                codes = []
+              assert.equal(png.height, 1)
+              for (let x = 0; x < png.width; x++)
+                codes.push(png.data[x * 4 + 1])
+              codes.sort((a, b) => a - b)
+              const p10 = codes[Math.floor(codes.length * 0.1)],
+                p90 = codes[Math.floor(codes.length * 0.9)]
+              pixels.push({
+                before,
+                after,
+                p10,
+                p90,
+                contour: p10 <= 150 && p90 >= 159,
+              })
+            }
+          }
           const row = await page.evaluate(async ms => {
             await new Promise(r =>
               setTimeout(r, Math.max(0, ms - performance.now())),
@@ -462,6 +560,8 @@ try {
               raf: stats(b.raf),
               ack: stats(b.acks),
               sizes: b.sizes,
+              viewport: [innerWidth, innerHeight, devicePixelRatio],
+              visible: document.visibilityState,
               hostStarts: b.hostStarts,
               longMs: b.longMs,
               cls: b.cls,
@@ -487,6 +587,11 @@ try {
             }
           }, observationMs)
           assert.equal(row.content[0], 'Reading the tide')
+          assert.equal(
+            row.visible,
+            'visible',
+            'An obscured/backgrounded tab is not a usable timing sample.',
+          )
           assert.ok(
             row.fcp > 0 && row.lcp > 0,
             JSON.stringify({ name, profile, row }),
@@ -495,9 +600,16 @@ try {
           assert.deepEqual(row.errors, [])
           if (name.endsWith('-static')) assert.equal(row.hostStarts, 0)
           if (round >= 0)
-            result.runs.push({ name, profile, round: round + 1, ...row })
+            result.runs.push({
+              name,
+              profile,
+              round: round + 1,
+              ...row,
+              ...(probePoster && { pixels }),
+            })
         } finally {
-          await ctx.close()
+          if (phone) await page.close()
+          else await ctx.close()
         }
       }
     }
@@ -508,6 +620,12 @@ try {
   }
   console.log(output)
 } finally {
-  if (browser) await browser.close()
-  for (const s of Object.values(servers)) s.close()
+  try {
+    // For connectOverCDP, close disconnects this client; never close the
+    // phone's default browser context or any non-benchmark tab.
+    if (browser) await browser.close()
+  } finally {
+    phone?.close()
+    for (const s of Object.values(servers)) s.close()
+  }
 }
