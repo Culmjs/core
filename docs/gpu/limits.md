@@ -2,6 +2,8 @@
 
 **Decision: approved, 2026-11-24.** After review of the mixed fixture (**16,023 of 20,000 shared JS bytes**), the owner approved the host and WASM ceilings below and the [shader cost caps](#shader-cost-inputs) for production. The existing 20,000-byte page ceiling still applies. The [flash-limiter rate](#luminance-and-independent-analysis) remains provisional pending independent analysis.
 
+**Reaffirmed, 2026-11-25:** After the [matched Astro benchmark](astro-speed-fix1.md), the owner retained both raw JS ceilings: **6,144 bytes for the GPU host including its worker**, and **20,000 bytes for all shared JS on a page**. The trusted release fits at 6,070 host bytes and 18,093 bytes on the mixed page. The checked renderer remains experimental while it exceeds either limit.
+
 | Approved ceiling                                    | Measured fixture | Basis                                                                                                                                                         |
 | --------------------------------------------------- | ---------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 6,144 bytes for the lazy host, including its worker |            4,806 | 1,338 bytes of host growth for the missing behavior below. At this ceiling, the measured mixed inline script plus the host would leave 2,639 shared JS bytes. |
