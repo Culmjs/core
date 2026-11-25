@@ -4,10 +4,18 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { cpus, platform, release as osRelease } from 'node:os'
 import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { brotliCompressSync, constants } from 'node:zlib'
 import * as release from '@culmjs/core'
 import { transformSync } from 'esbuild'
@@ -54,6 +62,35 @@ const output =
         : 'results.json',
   )
 const candidate = await candidateCompiler()
+// Same-run controls for the last reviewed candidate before the size pass.
+// Build a temporary copy, with the same installed build tools as the current tree.
+const baselineCommit = '68506610fb11fd8aae08a85f37eef215e3f67c52'
+let baseline
+if (process.env.BENCH_BEFORE === '1') {
+  const dir = await mkdtemp(join(root, 'before-'))
+  try {
+    const archive = execFileSync(
+      'git',
+      [
+        'archive',
+        baselineCommit,
+        'package.json',
+        'packages/core/src',
+        'scripts/gen-scripts.ts',
+        'scripts/gpu-flash/compiler.ts',
+      ],
+      { maxBuffer: 32 * 1024 * 1024 },
+    )
+    execFileSync('tar', ['-xf', '-', '-C', dir], { input: archive })
+    await symlink(resolve('node_modules'), join(dir, 'node_modules'), 'dir')
+    const { candidateCompiler: previous } = await import(
+      pathToFileURL(join(dir, 'scripts/gpu-flash/compiler.ts')).href
+    )
+    baseline = await previous()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
 const custom = {
   name: 'survey_contours',
   source: contours.source,
@@ -93,12 +130,38 @@ const plainDoc = siteWith([
 ])
 const mixedDoc = await scenes.mixed()
 mixedDoc.pages[0].root.children.unshift(hero())
+const fullDoc = structuredClone(mixedDoc)
+fullDoc.pages[0].root.children.splice(
+  1,
+  0,
+  text('pointerclock', 'Field meter', {
+    motion: {
+      trigger: 'pointer-x',
+      steps: [
+        {
+          target: 'self',
+          from: { scale: 1 },
+          to: { scale: 1.25 },
+          durationMs: 200,
+        },
+      ],
+    },
+  }),
+)
 for (const [name, core, fixture, effect] of [
   ['culm-static', release, plainDoc, null],
   ['culm-trusted', release, plainDoc, 'contours'],
   ['culm-checked', candidate, plainDoc, custom.name],
   ['culm-mixed-trusted', release, mixedDoc, 'contours'],
   ['culm-mixed-checked', candidate, mixedDoc, custom.name],
+  ['culm-full-trusted', release, fullDoc, 'contours'],
+  ['culm-full-checked', candidate, fullDoc, custom.name],
+  ...(baseline
+    ? [
+        ['before-mixed-checked', baseline, mixedDoc, custom.name],
+        ['before-full-checked', baseline, fullDoc, custom.name],
+      ]
+    : []),
   ['culm-trusted-poster', release, plainDoc, 'contours'],
   ['culm-checked-poster', candidate, plainDoc, custom.name],
 ]) {
@@ -185,6 +248,7 @@ for (const name of ['astro-static', 'astro-native']) {
 for (const [name, original] of [
   ['astro-checked', 'culm-checked'],
   ['astro-mixed-checked', 'culm-mixed-checked'],
+  ['astro-full-checked', 'culm-full-checked'],
 ])
   astroInputs[name] = split(variants[original]['/'])
 await mkdir(join(root, 'src/pages'), { recursive: true })
@@ -243,6 +307,59 @@ const servers = {},
   origins = {},
   bytes = {}
 let browser
+
+// Probe only after collecting cold-load and cadence measurements. Timing
+// stays on the browser clock and requires the visible computed scale to move.
+async function pointerSamples(page) {
+  if (!(await page.evaluate(() => matchMedia('(pointer:fine)').matches)))
+    return []
+  const meter = page.locator('[data-culm-motion*="pointer-x"]')
+  const samples = []
+  for (const fraction of [0.22, 0.78, 0.22, 0.78]) {
+    const rect = await meter.boundingBox()
+    assert.ok(rect && rect.width > 0 && rect.height > 0)
+    await meter.evaluate(el => {
+      window.__pointerSample = new Promise(resolve => {
+        let raf = 0
+        const timeout = setTimeout(() => {
+          cancelAnimationFrame(raf)
+          resolve(null)
+        }, 1500)
+        const before = getComputedStyle(el).scale
+        el.addEventListener(
+          'pointermove',
+          e => {
+            const measure = () => {
+              const after = getComputedStyle(el).scale
+              if (after !== before) {
+                clearTimeout(timeout)
+                resolve({
+                  ms: performance.now() - e.timeStamp,
+                  before,
+                  after,
+                  trusted: e.isTrusted,
+                })
+              } else raf = requestAnimationFrame(measure)
+            }
+            raf = requestAnimationFrame(measure)
+          },
+          { once: true },
+        )
+      })
+    })
+    await page.mouse.move(
+      rect.x + rect.width * fraction,
+      rect.y + rect.height / 2,
+    )
+    const sample = await page.evaluate(() => window.__pointerSample)
+    assert.ok(
+      sample?.trusted && sample.ms >= 0,
+      `No pointer-driven scale change at ${fraction}`,
+    )
+    samples.push(sample.ms)
+  }
+  return samples
+}
 try {
   for (const [name, files] of Object.entries(variants)) {
     const compressed = Object.fromEntries(
@@ -331,6 +448,7 @@ try {
       : `${platform()} ${osRelease()}`,
     cpu: phone ? phone.info.soc || phone.info.model : cpus()[0].model,
     renderer,
+    ...(baseline && { baselineCommit }),
     ...(phone && { physicalAndroid: phone.info }),
     profiles,
     bytes,
@@ -612,6 +730,8 @@ try {
           assert.deepEqual(bad, [])
           assert.deepEqual(row.errors, [])
           if (name.endsWith('-static')) assert.equal(row.hostStarts, 0)
+          if (process.env.BENCH_POINTER === '1' && name.includes('-full-'))
+            row.pointerMs = await pointerSamples(page)
           if (round >= 0)
             result.runs.push({
               name,

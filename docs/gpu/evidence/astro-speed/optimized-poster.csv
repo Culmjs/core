@@ -1,0 +1,7 @@
+variant,profile,round,lcp_ms,effect_ready_ms,active_at_end,completed_draws_s,p95_interval_ms,brotli_body_bytes,raw_js_bytes,raw_host_sha256,work_sizes,presentation_sizes,cls,fcp_ms,long_task_ms
+culm-checked-poster,mobile,1,220,436,true,60,17.5,7861,10368,2844a4b873444f705f173749aa722da0d6a0cb1c9e653a7f38ae58e6d8d8e597,98x200,392x800,0,220,0
+culm-checked-poster,mobile,2,220,421.5,true,60,17.5,7861,10368,2844a4b873444f705f173749aa722da0d6a0cb1c9e653a7f38ae58e6d8d8e597,98x200,392x800,0,220,0
+culm-checked-poster,mobile,3,216,418.3,true,60,17.7,7861,10368,2844a4b873444f705f173749aa722da0d6a0cb1c9e653a7f38ae58e6d8d8e597,98x200,392x800,0,216,0
+culm-trusted-poster,mobile,1,216,413.6,true,60,17.4,6107,7426,737ca3bd752c31af3ffd8ff11b76ccb226b9dce5d135411fe134a7b00bd90fe0,98x200,98x200,0,216,0
+culm-trusted-poster,mobile,2,212,428.7,true,60,17.5,6107,7426,737ca3bd752c31af3ffd8ff11b76ccb226b9dce5d135411fe134a7b00bd90fe0,98x200,98x200,0,212,0
+culm-trusted-poster,mobile,3,220,433.7,true,60.07,17.8,6107,7426,737ca3bd752c31af3ffd8ff11b76ccb226b9dce5d135411fe134a7b00bd90fe0,98x200,98x200,0,220,0

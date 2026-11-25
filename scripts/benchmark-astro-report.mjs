@@ -26,42 +26,51 @@ const csv = fields =>
   )
 
 const pixels = Array.isArray(run.runs[0].pixels)
+const pointer = process.argv.includes('--pointer')
+if (pointer)
+  assert.ok(
+    run.runs.some(r => r.pointerMs?.length),
+    'No pointer samples',
+  )
 csv(
-  pixels
-    ? [
-        'variant',
-        'profile',
-        'round',
-        'capture_start_ms',
-        'capture_end_ms',
-        'p10_green',
-        'p90_green',
-        'both_contour_bands',
-        'effect_ready_ms',
-      ]
-    : [
-        'variant',
-        'profile',
-        'round',
-        'lcp_ms',
-        'effect_ready_ms',
-        'active_at_end',
-        'completed_draws_s',
-        'p95_interval_ms',
-        'brotli_body_bytes',
-        'raw_js_bytes',
-        'raw_host_sha256',
-        'work_sizes',
-        'presentation_sizes',
-        'cls',
-        'fcp_ms',
-        'long_task_ms',
-      ],
+  pointer
+    ? ['variant', 'profile', 'round', 'move', 'event_to_observed_scale_ms']
+    : pixels
+      ? [
+          'variant',
+          'profile',
+          'round',
+          'capture_start_ms',
+          'capture_end_ms',
+          'p10_green',
+          'p90_green',
+          'both_contour_bands',
+          'effect_ready_ms',
+        ]
+      : [
+          'variant',
+          'profile',
+          'round',
+          'lcp_ms',
+          'effect_ready_ms',
+          'active_at_end',
+          'completed_draws_s',
+          'p95_interval_ms',
+          'brotli_body_bytes',
+          'raw_js_bytes',
+          'raw_host_sha256',
+          'work_sizes',
+          'presentation_sizes',
+          'cls',
+          'fcp_ms',
+          'long_task_ms',
+        ],
 )
 for (const [group, visits] of groups) {
   assert.equal(visits.length, run.count, group)
   assert.equal(new Set(visits.map(r => r.round)).size, run.count, group)
   const bands = []
+  const moves = []
   for (const r of visits) {
     const b = run.bytes[r.name]
     assert.ok(
@@ -76,7 +85,13 @@ for (const [group, visits] of groups) {
     )
     assert.ok(r.wire <= b.brHtml + b.brExternal, group)
     if (r.activeAtEnd) assert.ok(r.firstActive > 0 && r.ack.n > 0, group)
-    if (pixels) {
+    if (pointer) {
+      for (const [i, ms] of (r.pointerMs || []).entries()) {
+        assert.ok(Number.isFinite(ms) && ms >= 0)
+        moves.push(ms)
+        csv([r.name, r.profile, r.round, i + 1, ms])
+      }
+    } else if (pixels) {
       for (const p of r.pixels) {
         assert.ok(p.before <= p.after && p.p10 <= p.p90)
         assert.equal(p.contour, p.p10 <= 150 && p.p90 >= 159)
@@ -114,6 +129,7 @@ for (const [group, visits] of groups) {
       ])
     }
   }
+  if (pointer && !moves.length) continue
   console.error(
     JSON.stringify({
       group,
@@ -124,6 +140,13 @@ for (const [group, visits] of groups) {
       completedDrawsS: median(visits.map(r => r.ack.fps)),
       p95IntervalMs: median(visits.map(r => r.ack.p95ms)),
       bodyBytes: median(visits.map(r => r.wire)),
+      ...(pointer && {
+        moves: moves.length,
+        medianMs: median(moves),
+        p95Ms: +moves
+          .sort((a, b) => a - b)
+          [Math.ceil(0.95 * moves.length) - 1].toFixed(1),
+      }),
       ...(pixels && {
         visitsShowingBands: bands.filter(Number.isFinite).length,
         medianConfirmedByMs: median(bands),

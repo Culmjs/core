@@ -4,6 +4,8 @@ The limits are **6,144 raw minified UTF-8 bytes for the GPU host, worker include
 
 **Result:** Both checked mixed pages fit the aggregate. The standalone GPU-host limit is the remaining byte blocker. These are [actual compiler outputs](evidence/size-work/final-bytes.json), including the SRI-bound lazy asset.
 
+[Visitor speed after optimization](astro-speed-optimized.md) compares these builds with the pre-optimization renderer and matched Astro pages in the same run.
+
 | Final raw JS                                  | Trusted release | Checked candidate | Ceiling | Candidate headroom |
 | --------------------------------------------- | --------------: | ----------------: | ------: | -----------------: |
 | GPU host, including worker                    |           6,070 |         **9,012** |   6,144 |         **−2,868** |

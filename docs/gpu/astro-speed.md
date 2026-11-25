@@ -1,5 +1,7 @@
 # Astro and Culm: visitor speed for the Stage 4 decision
 
+**Latest: [optimized build vs its pre-optimization baseline, the trusted release and matched Astro](astro-speed-optimized.md)**, including actual pointer response on the fully interactive page.
+
 **[After the first correction (`e96e87e`): timings, actual poster contrast and review findings](astro-speed-fix1.md).** The candidate's median poster readiness went from 9.63 s to 0.43 s on the mobile-shaped Mac. The gradual dissolve showed both contrasting contour bands by the 2.23 s sample.
 
 **Original decision point:** The first candidate took **9.63 s** to activate over a patterned poster vs **0.41 s** for the release. Both painted the main content in **212 ms**. This led to the corrected transition in `e96e87e`; its measured results are reported separately from this baseline.
