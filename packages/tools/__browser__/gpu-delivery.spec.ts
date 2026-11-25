@@ -5,7 +5,8 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import test from 'node:test'
-import { compilePage } from '@culmjs/core'
+import { compilePage, compileSite, createRegistry } from '@culmjs/core'
+import { node, twoPages } from '../../core/__tests__/kit.ts'
 import { parse } from 'jsonc-parser'
 import { buildSite } from '../src/build/bundle.ts'
 import { startDev } from '../src/dev/server.ts'
@@ -164,7 +165,7 @@ test('the published, dev and isolated measurement pages deliver the SRI host und
       assert.ok(r.ok)
       const answer = measureAnswers(
         r,
-        '/',
+        { slug: '/', on: true },
         async () => assert.fail('Not a folder asset'),
         { n: 0 },
         policy,
@@ -245,10 +246,12 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
     join(dir, 'assets/note.html'),
     '<title>Note</title><p>A note.</p>',
   )
-  await writeFile(
-    join(dir, 'assets/figure.svg'),
-    '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><circle cx="5" cy="5" r="4"/></svg>',
-  )
+  const filename =
+    process.platform === 'win32' ? 'figure#%.svg' : 'figure?#.svg'
+  const figure = `/assets/${encodeURIComponent(filename)}?v=2#drawing`
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><circle cx="5" cy="5" r="4"/></svg>'
+  await writeFile(join(dir, 'assets', filename), svg)
   const path = join(dir, 'pages/home.json'),
     home = parse(await readFile(path, 'utf8'))
   home.root.children = ['figure', 'absent'].map(id => ({
@@ -261,7 +264,10 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
         id: id + 'image',
         kind: 'image',
         name: 'Image',
-        props: { assetId: id + '.svg', alt: '', fallback: 'Fallback' },
+        props:
+          id === 'figure'
+            ? { src: figure, alt: '' }
+            : { assetId: id + '.svg', alt: '', fallback: 'Fallback' },
       },
     ],
   }))
@@ -276,10 +282,14 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
   const checkOwners = (html: string) => {
     assert.match(html, /src="\/assets\/absent.svg"/)
     assert.equal((html.match(/data-culm-gpu="/g) ?? []).length, 1)
-    assert.match(html, /data-culm-gpu="0"><img[^>]*src="\/assets\/figure.svg"/)
+    assert.equal(
+      html.match(/data-culm-gpu="0"><img[^>]*src="([^"]+)"/)?.[1],
+      figure,
+    )
   }
   await t.test('built inventory', () => checkOwners(html))
-  const paths = ['/assets/note.html', '/assets/figure.svg', asset]
+  assert.equal(await readFile(join(built.out, 'assets', filename), 'utf8'), svg)
+  const paths = ['/assets/note.html', figure, asset]
   await t.test(
     'dev inventory and deployment headers on assets (without reload grant)',
     async () => {
@@ -289,6 +299,7 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
           const r = await fetch(dev.url + path)
           assert.equal(r.status, 200)
           assert.equal(r.headers.get('content-security-policy'), policy, path)
+          if (path === figure) assert.equal(await r.text(), svg)
         }
         const page = await fetch(dev.url)
         assert.notEqual(page.headers.get('content-security-policy'), policy)
@@ -303,7 +314,12 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
     async () => {
       const b = await openBrowser()
       assert.ok(b.ok)
-      const seen: { meta: string; html: string; headers: string[] }[] = []
+      const seen: {
+        meta: string
+        html: string
+        headers: string[]
+        imageWidth: number
+      }[] = []
       try {
         const result = await runMeasure({
           registry: project.registry,
@@ -325,7 +341,7 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
                   const r = await page.goto(url, timeout)
                   seen.push(
                     await page.evaluate(
-                      `(async()=>({meta:document.querySelector('[http-equiv]').content,html:document.body.innerHTML,headers:await Promise.all(${JSON.stringify(['/', ...paths])}.map(async path=>(await fetch(path)).headers.get('content-security-policy')))}))()`,
+                      `(async()=>({meta:document.querySelector('[http-equiv]').content,html:document.body.innerHTML,imageWidth:document.querySelector('img[src="${figure}"]').naturalWidth,headers:await Promise.all(${JSON.stringify(['/', ...paths])}.map(async path=>(await fetch(path)).headers.get('content-security-policy')))}))()`,
                     ),
                   )
                   return r
@@ -337,6 +353,7 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
         assert.deepEqual(result.incomplete, [])
         assert.equal(seen.length, 1)
         assert.equal(seen[0].meta, policy)
+        assert.equal(seen[0].imageWidth, 10)
         for (const h of seen[0].headers)
           assert.equal(h?.split(', ').at(-1), policy)
         assert.match(seen[0].headers[0], /sandbox allow-scripts/)
@@ -346,4 +363,91 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
       }
     },
   )
+})
+
+test('an explicitly measured draft runs its own joined state script under its page policy and sandbox', async () => {
+  const registry = createRegistry()
+  const draft = node('panel', 'column', [
+    {
+      ...node('switch', 'button'),
+      props: { label: 'Toggle panel' },
+      on: [{ on: 'click', do: { toggle: 'panel' } }],
+    },
+  ])
+  draft.state = [{ name: 'panel', values: 'on-off', initial: 'off' }]
+  const doc = twoPages([], [draft])
+  doc.pages[1].on = false
+  const site = compileSite(doc, { registry })
+  assert.deepEqual(site.problems, [])
+  const deployed = site.files
+    .find(f => f.path === '_headers')!
+    .content.split('Content-Security-Policy: ')[1]
+    .trim()
+  const standalone = compilePage(doc, 'about', { registry, mode: 'measure' })
+  assert.ok(standalone.ok)
+  assert.deepEqual(
+    standalone.scripts.map(s => s.name),
+    ['base', 'states'],
+  )
+  const hash = createHash('sha256')
+    .update(standalone.scripts.map(s => s.code).join(';'))
+    .digest('base64')
+  const expected = `script-src 'sha256-${hash}'; worker-src 'none'`
+  assert.ok(!deployed.includes(hash))
+  const b = await openBrowser()
+  assert.ok(b.ok)
+  const seen: {
+    before: string
+    after: string
+    meta: string
+    page: string
+    asset: string
+  }[] = []
+  try {
+    const result = await runMeasure({
+      registry,
+      doc,
+      data: { rows: {} },
+      revision: 0,
+      pages: ['about'],
+      widths: [1280],
+      themes: ['light'],
+      assets: async p =>
+        p === 'assets/note.html'
+          ? new TextEncoder().encode('<p>Note</p>')
+          : undefined,
+      browser: {
+        ...b.browser,
+        newPage: async () => {
+          const page = await b.browser.newPage()
+          return {
+            ...page,
+            goto: async (url, timeout) => {
+              const r = await page.goto(url, timeout)
+              seen.push(
+                await page.evaluate(`(async()=>{
+            const holder=document.querySelector('[data-s-panel]'),before=holder.dataset.sPanel;
+            document.querySelector('[data-id="switch"]').click();
+            const policy=async url=>(await fetch(url)).headers.get('content-security-policy');
+            return {before,after:holder.dataset.sPanel,meta:document.querySelector('[http-equiv]').content,page:await policy(location.pathname),asset:await policy('/assets/note.html')}
+          })()`),
+              )
+              return r
+            },
+          }
+        },
+      },
+    })
+    assert.deepEqual(result.incomplete, [])
+    assert.deepEqual(result.blocked, [])
+    assert.equal(seen.length, 1)
+    assert.deepEqual([seen[0].before, seen[0].after], ['off', 'on'])
+    assert.equal(seen[0].meta, expected)
+    assert.equal(seen[0].page.split(', ').at(-1), expected)
+    assert.equal(seen[0].asset.split(', ').at(-1), deployed)
+    assert.match(seen[0].page, /sandbox allow-scripts/)
+    assert.match(seen[0].asset, /sandbox allow-scripts/)
+  } finally {
+    await b.browser.close()
+  }
 })

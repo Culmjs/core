@@ -52,7 +52,7 @@ export type CompileOptions = {
   /** `measure` is live plus a `data-id` on every node, for the probe; it is never written to a site. */
   mode?: 'live' | 'edit' | 'measure'
   links?: Links
-  /** Exact emitted media addresses the caller knows it can deliver. Does not change ordinary URLs. */
+  /** Confirmed local media pathnames, without query or fragment. Does not change emitted URLs. */
   availableMedia?: ReadonlySet<string>
   lang?: string
   fontBase?: string

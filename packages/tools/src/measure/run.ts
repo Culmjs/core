@@ -110,15 +110,18 @@ export function skippedStates(doc: SiteDocument, pageId: string): string[] {
 /** Answer the compiled page, its generated assets, and project media and fonts. Other requests are blocked. */
 export function measureAnswers(
   page: Extract<CompiledPage, { ok: true }>,
-  slug: string,
+  route: Pick<SiteDocument['pages'][number], 'slug' | 'on'>,
   assets: MeasureInput['assets'],
   missing: { n: number },
-  policy: string,
+  deployed: string,
 ) {
-  const html = page.html.replace(
-    policyMeta(pageScriptPolicy(page.scripts)),
-    () => policyMeta(policy),
-  )
+  const standalone = pageScriptPolicy(page.scripts)
+  // A requested draft has no deployed route. Keep its own executable set on
+  // that page only; shared project files still have the deployment policy.
+  const policy = route.on ? deployed : standalone
+  const html = route.on
+    ? page.html.replace(policyMeta(standalone), () => policyMeta(deployed))
+    : page.html
   const generated = new Map(page.assets?.map(f => ['/' + f.path, f.content]))
   return async (url: string): Promise<Answer | undefined> => {
     let u: URL
@@ -128,10 +131,11 @@ export function measureAnswers(
       return undefined
     }
     if (u.origin !== ORIGIN) return undefined
-    if (u.pathname === slug)
+    if (u.pathname === route.slug)
       return { type: 'text/html; charset=utf-8', body: html, policy }
     const js = generated.get(u.pathname)
-    if (js !== undefined) return { type: MIME['.js']!, body: js, policy }
+    if (js !== undefined)
+      return { type: MIME['.js']!, body: js, policy: deployed }
     const m = /^\/(assets|_fonts)\/(.+)$/.exec(u.pathname)
     if (!m || !assets) return undefined
     let rest: string
@@ -151,7 +155,7 @@ export function measureAnswers(
     return {
       type: MIME[extname(rest).toLowerCase()] ?? 'application/octet-stream',
       body,
-      policy,
+      policy: deployed,
     }
   }
 }
@@ -223,7 +227,6 @@ async function measurePage(
       blocked: [],
     }
 
-  const slug = node!.slug
   const layouts: LayoutRaw[] = []
   const contrast: ContrastRaw[] = []
   const measured: Report['measured'] = []
@@ -232,8 +235,10 @@ async function measurePage(
   let page: Page | undefined
   try {
     page = await browser.newPage()
-    await page.answer(measureAnswers(compiled, slug, i.assets, missing, policy))
-    const went = await page.goto(ORIGIN + slug, LOAD_MS)
+    await page.answer(
+      measureAnswers(compiled, node!, i.assets, missing, policy),
+    )
+    const went = await page.goto(ORIGIN + node!.slug, LOAD_MS)
     if (!went.ok)
       throw new Error(
         `the page did not load: ${went.problem ?? 'no reason given'}`,

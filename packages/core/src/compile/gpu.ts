@@ -7,6 +7,34 @@ import { visibleText } from '../validate/required.ts'
 import { byteLength } from './budgets.ts'
 import type { HtmlNode } from './html.ts'
 
+/** Inventory keys name files. Strip literal URL suffixes before interpreting
+ * escapes: an encoded '?' or '#' is still part of the filename. */
+function knownMedia(
+  src: unknown,
+  available: ReadonlySet<string> | undefined,
+): boolean {
+  if (
+    !available ||
+    typeof src !== 'string' ||
+    !src.startsWith('/') ||
+    src.startsWith('//')
+  )
+    return false
+  const path = src.split(/[?#]/, 1)[0]
+  if (available.has(path)) return true
+  try {
+    // Match the folder inventory's encoded spelling, segment by segment.
+    return available.has(
+      path
+        .split('/')
+        .map(s => encodeURIComponent(decodeURIComponent(s)))
+        .join('/'),
+    )
+  } catch {
+    return false
+  }
+}
+
 /** Text is counted on the actual emitted element. For non-text media require
  * a confirmed file, labelled drawing, or both the icon link and its rendered glyph. */
 function mediaWitness(
@@ -15,7 +43,7 @@ function mediaWitness(
   available: ReadonlySet<string> | undefined,
 ) {
   if (el.tag === 'img' || el.tag === 'video')
-    return typeof el.attrs?.src === 'string' && available?.has(el.attrs.src)
+    return knownMedia(el.attrs?.src, available)
   if (el.tag === 'svg') return visibleText(el.attrs?.['aria-label'])
   return (
     w?.kind === 'icon' &&

@@ -325,6 +325,31 @@ test('an optional file address is not proof of bytes; a rendered labelled icon l
   assert.equal(page(doc, { links }).gpu, undefined)
 })
 
+test('only the local image pathname witnesses a region; suffixes and encoded delimiters retain their meanings', () => {
+  const hero = owner()
+  const image = node('poster', 'image')
+  hero.children = [image]
+  const doc = siteWith([hero], { customEffects: [def] })
+  const availableMedia = new Set([
+    '/assets/cover.jpg',
+    '/assets/note%3F%23%25.jpg',
+  ])
+  for (const [src, expected] of [
+    ['/assets/cover.jpg?v=2', true],
+    ['/assets/cover.jpg#detail', true],
+    ['/assets/note%3F%23%25.jpg?v=2#detail', true],
+    ['/assets/note%3f%23%25.jpg#detail', true],
+    ['/assets/note?%23%25.jpg', false],
+    ['/assets/cover.jpg%23detail', false],
+    ['https://example.invalid/assets/cover.jpg?v=2', false],
+  ] as const) {
+    image.props = { src, alt: '' }
+    const p = page(doc, { availableMedia })
+    assert.ok(p.html.includes(`src="${src}"`), src)
+    assert.equal(!!p.gpu, expected, src)
+  }
+})
+
 const registryWithModule = (wasm: unknown) => ({
   ...registry,
   effects: () =>
