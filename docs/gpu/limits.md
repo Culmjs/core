@@ -6,6 +6,8 @@
 
 **Post-benchmark decision, 2026-11-25:** The owner authorized raising the GPU-host ceiling if it is the only remaining production blocker. For the measured host `2844a4b873444f70`, the minimum is **9,012 bytes**; the page ceiling stays **20,000**. On the owner's instruction to proceed without Windows, [EA IRIS](iris-analysis.md) qualified the achromatic and saturated-red fixtures on macOS. The retained nominal limiter rate is **0.25 linear-light units/channel/s**, elapsed capped at **33 ms**. PEAT was not run.
 
+**Production selection:** qualification build `f78f903` applied the proposed cap and emitted those exact analyzed bytes through the public compiler and packed packages. Both mixed pages fit. However, Chromium showed that existing framework `contours` owners stopped animating in two supported layouts. The enforced cap is still **6,144 bytes** and the trusted renderer remains selected. See the [compatibility cases and reproduction command](flash-analysis.md#production-compatibility).
+
 | Approved ceiling                                    | Measured fixture | Basis                                                                                                                                                         |
 | --------------------------------------------------- | ---------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 6,144 bytes for the lazy host, including its worker |            4,806 | 1,338 bytes of host growth for the missing behavior below. At this ceiling, the measured mixed inline script plus the host would leave 2,639 shared JS bytes. |

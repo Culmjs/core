@@ -74,3 +74,14 @@ Before size optimization (`6850661`), raw minified ES2017 UTF-8; the worker is *
 | Fix-2 checked-shader candidate |              3,858 |                11,570 |         23,593 |        −5,426 / −3,593 |
 
 At the end of the [optimization and speed work](size-work.md), the default generator and public `hostGpu` boot delivered the trusted-only host (`737ca3bd752c31af3ffd8ff11b76ccb226b9dce5d135411fe134a7b00bd90fe0`). The separately priced checked host (`2844a4b873444f705f173749aa722da0d6a0cb1c9e653a7f38ae58e6d8d8e597`) is the one exercised in the four analyzer reports. See the [current production decision](limits.md).
+
+### Production compatibility
+
+At isolated qualification commit `f78f903`, the production selector, generated host, loader integrity hash, CSP and installed tarballs used the analyzed checked host. The host fit **9,012 / 9,012**; the mixed pages fit **17,484 / 20,000** and **19,997 / 20,000**. The default build rendered a built-in and a genuinely limited, unreviewed effect side by side. Two existing built-in layouts nonetheless lost animation:
+
+| Built-in `contours` case                                   | Existing trusted host                                                         | Checked host `2844a4b873444f70`                            |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| A fixed heading returns partly inside its owner            | Starts painting again when its text fragment becomes visible                  | Stays static, including next to a running unreviewed owner |
+| Owners with an authored border or shadowed foreground text | Both paint; border and sampled foreground pixels match their static rendering | Both remain static                                         |
+
+Reproduce with `node --conditions=source --import tsx --test packages/tools/__browser__/gpu-host.spec.ts` at `f78f903` in a separate checkout with the repository dependencies and WebGL2 Chromium installed. These are visitor-facing differences, not analyzer failures or missing Windows results. This build was not promoted.
