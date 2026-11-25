@@ -775,7 +775,9 @@ export function createMcpServer(o: McpOptions): Server {
           ? store
           : {
               head: s =>
-                h.readStamp === undefined ? store.head(s) : Promise.resolve(h),
+                h.readStamp === undefined && !ordered
+                  ? store.head(s)
+                  : Promise.resolve(h),
               replay: (s, k) => store.replay(s, k),
               get: (s, n) => store.get(s, n),
               commit: async (s, c) => {
@@ -875,7 +877,7 @@ export function createMcpServer(o: McpOptions): Server {
           )
           .digest('hex')
           .slice(0, 40)}`
-      const seen = await store.replay(site, key)
+      let seen = await store.replay(site, key)
       const identity =
         a.ops === undefined
           ? undefined
@@ -886,16 +888,22 @@ export function createMcpServer(o: McpOptions): Server {
         return replayReceipt(seen.receipt, identity)
       const h = await headOf()
       if ('content' in h) return h
-      // a stale base is refused before the JSX is read and before any fetch
-      if (!seen && base !== h.revision)
-        return fail([
-          {
-            code: 'REVISION_CONFLICT',
-            message: `The site is at revision ${h.revision}, not ${base}. Nothing was written; send the same write with baseRevision ${h.revision} (find returns the current ids).`,
-            path: 'baseRevision',
-            revision: h.revision,
-          } as Problem,
-        ])
+      // A concurrent caller may have won this key between the miss and the
+      // head read. Resolve that win before refusing the base or projecting edits.
+      if (!seen && base !== h.revision) {
+        seen = await store.replay(site, key)
+        if (identity && seen?.receipt)
+          return replayReceipt(seen.receipt, identity)
+        if (!seen)
+          return fail([
+            {
+              code: 'REVISION_CONFLICT',
+              message: `The site is at revision ${h.revision}, not ${base}. Nothing was written; send the same write with baseRevision ${h.revision} (find returns the current ids).`,
+              path: 'baseRevision',
+              revision: h.revision,
+            } as Problem,
+          ])
+      }
       // the operations are built against the revision the caller read, so a retry builds the same ones
       const original = base === h.revision ? h.doc : await store.get(site, base)
       if (!original && identity)

@@ -2,16 +2,19 @@ import { createHash, randomUUID } from 'node:crypto'
 import {
   access,
   link,
+  lstat,
   mkdir,
   open,
   readdir,
   readFile,
+  readlink,
+  realpath,
   rename,
   rm,
   stat,
   writeFile,
 } from 'node:fs/promises'
-import { dirname, isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import type { Registry } from '@culmjs/core'
 import type { ApplyResult, SiteStore } from '@culmjs/core/ops'
@@ -20,6 +23,7 @@ import type { Loaded } from './load.ts'
 import type { Located } from './plugins.ts'
 import { fileEdits } from './write.ts'
 import { shaderInput, shaderParentOk, shaderPath } from './shaders.ts'
+import { inside, resolveFile } from './files.ts'
 
 export const KEPT_REVISIONS = 200
 export const LOCK_STALE_MS = 60_000
@@ -57,6 +61,64 @@ const stamp = (files: Loaded['files']) =>
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 const code = (e: unknown) => (e as NodeJS.ErrnoException | undefined)?.code
 const HEX = /^[0-9a-f]{64}$/
+
+/** A kept link's current bytes are no witness for the restored revision if a
+ * rename or removal can change its resolution. Check the final physical write
+ * set (after adoption), including mutations to intermediate file links. */
+async function restoreLinksSafe(
+  dir: string,
+  kept: Iterable<string>,
+  paths: string[],
+  was: ReadonlyMap<string, string>,
+) {
+  const changed = new Set(paths)
+  const held = [...kept].filter(p => shaderPath(p) && !changed.has(p))
+  if (!held.length || !paths.some(p => was.has(p))) return true
+  const identity = ({ dev, ino }: { dev: bigint; ino: bigint }) =>
+    `${dev}:${ino}`
+  try {
+    if (!(await shaderParentOk(dir))) return false
+    const root = await realpath(dir)
+    const dependencies = new Set<string>()
+    for (const p of held) {
+      let path = join(root, p)
+      let entry = await lstat(path, { bigint: true })
+      if (!entry.isSymbolicLink()) continue
+      if (!(await resolveFile(dir, 'effects', p.slice('effects/'.length))))
+        return false
+      for (let hops = 0; entry.isSymbolicLink(); hops++) {
+        if (hops === 64) return false
+        const link = await readlink(path)
+        // Resolve the parent as the filesystem sees it (link/.. need not be
+        // the lexical parent). Inspect only directory entries inside the site.
+        const raw = isAbsolute(link) ? link : `${dirname(path)}${sep}${link}`
+        const parent = await realpath(dirname(raw))
+        if (parent !== root && !inside(root, parent)) return false
+        path = join(parent, basename(raw))
+        entry = await lstat(path, { bigint: true })
+        dependencies.add(identity(entry))
+      }
+      if (!entry.isFile() || !inside(join(root, 'effects'), path)) return false
+    }
+    if (!dependencies.size) return true
+    for (const p of changed) {
+      if (!was.has(p)) continue // an absent destination cannot be on an existing link chain
+      const parent = await realpath(dirname(join(root, p)))
+      if (parent !== root && !inside(root, parent)) return false
+      // Rename/unlink mutates the entry, not its ultimate referent. Removing
+      // an independent symlink to the same backing file is harmless.
+      if (
+        dependencies.has(
+          identity(await lstat(join(parent, basename(p)), { bigint: true })),
+        )
+      )
+        return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
 
 const alive = (pid: unknown) => {
   if (typeof pid !== 'number') return true
@@ -545,15 +607,17 @@ export async function fileStore(
           if (now1 !== (was.get(p) ?? null))
             return end<Refusal>({ ok: false, code: 'SOURCE_CONFLICT' })
         }
-        hook(4)
-        // 5. the journal
         const paths = [...Object.keys(writes), ...edits.remove]
-        await put(journalPath, JSON.stringify({ paths }))
-        hook(5)
-        // 6. blobs, then each file through a temporary name and a rename
         const next = new Map(mine)
         for (const [p, t] of Object.entries(edits.write)) next.set(p, t)
         for (const p of edits.remove) next.delete(p)
+        if (restored && !(await restoreLinksSafe(dir, next.keys(), paths, was)))
+          return end<Refusal>({ ok: false, code: 'SOURCE_CONFLICT' })
+        hook(4)
+        // 5. the journal
+        await put(journalPath, JSON.stringify({ paths }))
+        hook(5)
+        // 6. blobs, then each file through a temporary name and a rename
         await blobs(next)
         let hooked = false
         for (const [p, t] of Object.entries(writes)) {

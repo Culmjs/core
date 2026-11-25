@@ -20,6 +20,61 @@ import {
 } from '../fixtures/shader.ts'
 import { connectClient, files, serve } from './serve.ts'
 
+for (const receipts of [true, false])
+  for (const duplicate of [true, false])
+    test(`compact stale head after a concurrent key win: ${receipts ? 'receipt' : 'legacy'}, ${duplicate ? 'duplicate' : 'different ops'}`, async () => {
+      const dir = await copyFixture('site-basic')
+      await gpuFolder(dir)
+      const { registry, loaded } = await openProject(dir)
+      const memory = memoryStore({ s: loaded.doc! })
+      const store: SiteStore = receipts
+        ? memory
+        : {
+            ...memory,
+            commit: (s, c) => memory.commit(s, { ...c, receipt: undefined }),
+          }
+      const client = (store: SiteStore) =>
+        connectClient(
+          createMcpServer({
+            site: 's',
+            data: loaded.data,
+            registry,
+            store,
+            jsonOps: true,
+          }),
+        )
+      const winner = await client(store)
+      const args = {
+        key: 'between',
+        baseRevision: 0,
+        ops: [define, { op: 'update', id: 'hero', motion }],
+      }
+      let won: Awaited<ReturnType<typeof winner>> | undefined
+      const contender = await client({
+        ...store,
+        async replay(s, k) {
+          const entry = await store.replay(s, k)
+          // Suspend after the first lookup has observed its miss. The other
+          // client completes its write before this caller reads the new head.
+          if (!entry && !won) won = await winner('write', args)
+          return entry
+        },
+      })
+      const r = await contender(
+        'write',
+        duplicate
+          ? args
+          : {
+              ...args,
+              ops: [{ ...define, effect: { ...mist, name: 'cloud' } }],
+            },
+      )
+      assert.equal(won?.error, false, JSON.stringify(won))
+      if (duplicate) assert.deepEqual(r, won)
+      else assert.equal(r.json.problems[0].code, 'KEY_CONFLICT')
+      assert.equal((await winner('describe')).json.revision, 1)
+    })
+
 test('retained compact key replays after predecessor pruning and restart; changed input conflicts', async () => {
   const dir = await copyFixture('site-basic')
   await gpuFolder(dir)

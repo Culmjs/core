@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  readFile,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { join } from 'node:path'
 import test from 'node:test'
 import { apply, restore } from '@culmjs/core/ops'
@@ -10,6 +17,109 @@ import { fileStore } from '../../src/folder/store.ts'
 import { copyFixture } from '../fixtures.ts'
 import { attach, define, gpuFolder, invalid, mist } from '../fixtures/shader.ts'
 import { files } from '../mcp/serve.ts'
+
+for (const action of [
+  'remove',
+  'rewrite',
+  'remove intermediate',
+  'remove referenced target',
+  'stable target',
+  'independent links',
+]) {
+  test(`restore verifies kept shader link: ${action}`, async () => {
+    const dir = await copyFixture('site-basic')
+    await gpuFolder(dir, true)
+    const initial = await files(dir)
+    const { registry } = await openProject(dir)
+    const steps: number[] = []
+    const store = await fileStore(dir, registry, { after: n => steps.push(n) })
+    const first = await store.head('s')
+    assert.ok('doc' in first)
+    const cloud = {
+      ...mist,
+      name: 'cloud',
+      source: '// original cloud\n' + mist.source,
+    }
+    const saved = await apply(store, registry, {
+      site: 's',
+      key: 'target',
+      baseRevision: first.revision,
+      ops:
+        action === 'rewrite'
+          ? [{ ...define, effect: cloud }, attach]
+          : [attach],
+    })
+    assert.ok(saved.ok)
+    const expected = await store.get('s', saved.revision)
+    const effects = join(dir, 'effects')
+    // Hand-save a head that lists cloud. Its source now has mist's target
+    // bytes; the retained mist source is a real, contained file link.
+    const refs =
+      action === 'remove referenced target'
+        ? ['effects/mist.json', 'effects/cloud.json']
+        : ['effects/cloud.json']
+    await writeFile(
+      join(dir, 'site.json'),
+      initial['site.json']!.replace(
+        '["effects/mist.json"]',
+        JSON.stringify(refs),
+      ),
+    )
+    await writeFile(join(dir, 'pages/home.json'), initial['pages/home.json']!)
+    await writeFile(
+      join(effects, 'cloud.json'),
+      JSON.stringify({
+        name: 'cloud',
+        settings: mist.settings,
+        sourceFile: 'cloud.frag',
+      }),
+    )
+    await writeFile(join(effects, 'held.frag'), mist.source)
+    if (action === 'remove intermediate' || action === 'independent links')
+      await symlink('held.frag', join(effects, 'cloud.frag'))
+    else await writeFile(join(effects, 'cloud.frag'), mist.source)
+    const stable = action === 'stable target' || action === 'independent links'
+    const link = stable ? 'held.frag' : 'cloud.frag'
+    await rm(join(effects, 'mist.frag'))
+    await symlink(link, join(effects, 'mist.frag'))
+    const outside = await apply(store, registry, {
+      site: 's',
+      key: 'outside',
+      baseRevision: saved.revision,
+      ops: [],
+    })
+    assert.ok(!outside.ok && outside.problems[0].code === 'REVISION_CONFLICT')
+    const before = await files(dir)
+    steps.length = 0
+    const r = await restore(store, registry, {
+      site: 's',
+      key: 'restore',
+      to: saved.revision,
+      baseRevision: saved.revision + 1,
+    })
+    if (stable) {
+      assert.ok(r.ok, JSON.stringify(r))
+      const { loaded } = await openProject(dir)
+      assert.deepEqual(loaded.problems, [])
+      assert.deepEqual(loaded.doc, expected)
+      assert.deepEqual(await store.get('s', r.revision), expected)
+    } else {
+      assert.ok(
+        !r.ok && r.problems[0].code === 'SOURCE_CONFLICT',
+        JSON.stringify(r),
+      )
+      assert.ok(!steps.includes(5), 'refused before journaling')
+      assert.deepEqual(await files(dir), before)
+      const reopened = await fileStore(dir, registry)
+      const h = await reopened.head('s')
+      assert.ok('doc' in h)
+      assert.equal(h.revision, saved.revision + 1)
+      assert.deepEqual(await reopened.get('s', h.revision), h.doc)
+      assert.equal(await reopened.replay('s', 'restore'), undefined)
+    }
+    assert.equal(await readlink(join(effects, 'mist.frag')), link)
+  })
+}
 
 for (const comma of ['', ','])
   test(`commented reference append (${comma ? 'trailing comma' : 'no comma'}) reloads both shaders and the attachment`, async () => {
