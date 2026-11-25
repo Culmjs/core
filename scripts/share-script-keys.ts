@@ -92,7 +92,9 @@ export function shareScriptKeys(code: string): string {
   edits.push([start, start, `var ${defs.join(',')};`])
   let out = '',
     tail = 0
-  for (const [lo, hi, value] of edits.sort(([a], [b]) => a - b)) {
+  for (const [lo, hi, value] of edits.sort(
+    (a, b) => a[0] - b[0] || a[1] - b[1],
+  )) {
     out += code.slice(tail, lo) + value
     tail = hi
   }

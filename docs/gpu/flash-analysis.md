@@ -1,6 +1,6 @@
 # Task 7: offline flash-analysis handoff
 
-**Exit gate: OPEN — no PEAT result.** Use the **fix-2** inputs below for the corrected candidate. It still exceeds both approved byte limits and is isolated; the release renders only framework `contours`. On the corrected pair the [supplemental EA IRIS analysis](iris-analysis.md) flagged the control (159 luminance-failure frames) and passed all 180 limited frames without luminance warnings. Both greyscale clips had no red-flash findings. No final rate is approved.
+**Exit gate: OPEN — no PEAT result.** Use the **size-1** inputs below for the optimized candidate. Its host exceeds the approved limit and is isolated; the release renders only framework `contours`. On this pair of hashes the [supplemental EA IRIS analysis](iris-analysis.md) flagged the control (159 luminance-failure frames) and passed all 180 limited frames without luminance warnings. Both greyscale clips had no red-flash findings. No final rate is approved.
 
 | PEAT 1.6 result       | Positive control | Limited      |
 | --------------------- | ---------------- | ------------ |
@@ -12,12 +12,12 @@
 
 Use the two local **files**, without playing them in a browser. Paths are relative to the worktree. Neither the AVIs nor their numbered PNG sources are distributed.
 
-| Local input                                     | SHA-256                                                            |
-| ----------------------------------------------- | ------------------------------------------------------------------ |
-| `.superpowers/gpu-flash/fix-2/control/clip.avi` | `a132dfcbb8b292ab5f550a40a96695f2c5408b03cc3a4e6b3b0af855baf7b699` |
-| `.superpowers/gpu-flash/fix-2/limited/clip.avi` | `f872ca2cba925b72649f58e36a9b3fb2c40919c0f4d45878e742abc26f39f4a7` |
+| Local input                                      | SHA-256                                                            |
+| ------------------------------------------------ | ------------------------------------------------------------------ |
+| `.superpowers/gpu-flash/size-1/control/clip.avi` | `a132dfcbb8b292ab5f550a40a96695f2c5408b03cc3a4e6b3b0af855baf7b699` |
+| `.superpowers/gpu-flash/size-1/limited/clip.avi` | `f872ca2cba925b72649f58e36a9b3fb2c40919c0f4d45878e742abc26f39f4a7` |
 
-Both inputs were regenerated with the fix-2 host. Each AVI is byte-identical to its [fix-1 counterpart](evidence/task-7/fix-1/limited-summary.json); the IRIS findings above are from the earlier run on those exact hashes. The original pre-fix-1 limited AVI (`eb32b73410b02a0f49aea61ce645f3baeed557d2446a7d09eea0aa104e36a6c5`) and its [records](evidence/task-7/limited-summary.json) remain separate.
+Both inputs were regenerated through the optimized host. Each AVI is byte-identical to its [fix-2](evidence/task-7/fix-2/limited-summary.json) and [fix-1](evidence/task-7/fix-1/limited-summary.json) counterpart; the IRIS findings above are from the earlier run on those exact hashes. The original pre-fix-1 limited AVI (`eb32b73410b02a0f49aea61ce645f3baeed557d2446a7d09eea0aa104e36a6c5`) and its [records](evidence/task-7/limited-summary.json) remain separate.
 
 1. Verify both SHA-256 values (on Windows: `Get-FileHash -Algorithm SHA256 .\clip.avi` in each directory).
 2. In Trace Center [PEAT 1.6, 2017-02-15 release](https://trace.umd.edu/peat/), use **Open video clip**, then **Analyze**, for each AVI. [Input and analysis instructions](https://trace.umd.edu/photosensitive-epilepsy-analysis-tool-peat-user-guide/).
@@ -32,17 +32,17 @@ Use the repo's installed dependencies, an installed Chromium (`CULM_CHROME` can 
 ```sh
 node --conditions=source --import tsx scripts/gpu-flash-price.ts
 node --conditions=source --import tsx scripts/gpu-flash-capture.ts
-shasum -a 256 .superpowers/gpu-flash/fix-2/{control,limited}/clip.avi
+shasum -a 256 .superpowers/gpu-flash/size-1/{control,limited}/clip.avi
 ```
 
-The second command recreates both sequences `000.png` … `179.png`, both AVIs, `summary.json` and `frames.json` under `.superpowers/gpu-flash/fix-2/{control,limited}/`. Allow about 1 GB of disk space. The temporary HTML contains no executable scripts. Nothing listens on a network port; no clip is uploaded. Equivalent encoding in each sequence directory:
+The second command recreates both sequences `000.png` … `179.png`, both AVIs, `summary.json` and `frames.json` under `.superpowers/gpu-flash/size-1/{control,limited}/`. Allow about 1 GB of disk space. The temporary HTML contains no executable scripts. Nothing listens on a network port; no clip is uploaded. Equivalent encoding in each sequence directory:
 
 ```sh
 ffmpeg -y -framerate 30 -start_number 0 -i %03d.png -frames:v 180 -an -c:v rawvideo -pix_fmt bgr24 clip.avi
 ffprobe -v error -count_frames -show_streams clip.avi
 ```
 
-**Recorded inputs (2026-11-25):** 1024×768, DPR 1, light, forced sRGB, no zoom or scroll, one full-viewport opaque region. Each clip is 424,683,286 bytes, uncompressed BGR24 AVI, 180 unique consecutive PTS at 30/1 fps, six seconds. Chromium `156.0.8078.4`; WebGL2 / OpenGL ES 3.0, ANGLE Vulkan SwiftShader; FFmpeg and ffprobe `9.0.2`. See [control summary](evidence/task-7/fix-2/control-summary.json), [limited summary](evidence/task-7/fix-2/limited-summary.json) and the per-frame [control](evidence/task-7/fix-2/control-frames.csv) / [limited](evidence/task-7/fix-2/limited-frames.csv) logs (clock, submission, ACK, compositor opportunity, capture, codes and PNG hash).
+**Recorded inputs (2026-11-25):** 1024×768, DPR 1, light, forced sRGB, no zoom or scroll, one full-viewport opaque region. Each clip is 424,683,286 bytes, uncompressed BGR24 AVI, 180 unique consecutive PTS at 30/1 fps, six seconds. Chromium `156.0.8078.4`; WebGL2 / OpenGL ES 3.0, ANGLE Vulkan SwiftShader; FFmpeg and ffprobe `9.0.2`. See [control summary](evidence/task-7/size-1/control-summary.json), [limited summary](evidence/task-7/size-1/limited-summary.json) and the per-frame [control](evidence/task-7/size-1/control-frames.csv) / [limited](evidence/task-7/size-1/limited-frames.csv) logs (clock, submission, ACK, compositor opportunity, capture, codes and PNG hash).
 
 **Clock and presentation.** A separate offline compiler build uses the candidate's real generated module; it does not change the release or suppress its budget findings. CDP starts the candidate host on compiled content. Geometry, initialization from black, OffscreenCanvas transfer, program compilation, draw acknowledgement, reveal and scale-up use that host. Before capture, 123 completed setup draws at fixed simulation time zero acquire the full-size buffer. The driver then conceals the foreground witness for the required unobstructed field, freezes host scheduling and reuses its last good message, changing **only time** on the same worker/surface. This isolates the 30 Hz rendering test: the normal host deliberately falls back after eight consecutive intervals over 25 ms at minimum scale and cannot provide six seconds of uninterrupted 30 Hz output. No production quality threshold was relaxed.
 
@@ -64,11 +64,11 @@ Fix-2 separates the seed check before exposure from continuity of an already dis
 
 ## Release decision
 
-Raw minified ES2017 UTF-8; the worker is **included** in the host. Same real Stage 3 mixed page, 12,023 joined inline bytes in both cases:
+Before size optimization (`6850661`), raw minified ES2017 UTF-8; the worker is **included** in the host. Same real Stage 3 mixed page, 12,023 joined inline bytes in both cases:
 
 | Build                          | Worker inside host | Complete host / 6,144 | Mixed / 20,000 | Available host / mixed |
 | ------------------------------ | -----------------: | --------------------: | -------------: | ---------------------: |
 | Release, trusted-only          |              1,343 |                 6,070 |         18,093 |             74 / 1,907 |
 | Fix-2 checked-shader candidate |              3,858 |                11,570 |         23,593 |        −5,426 / −3,593 |
 
-The default generator and public `hostGpu` boot deliver the trusted-only host (`737ca3bd752c31af3ffd8ff11b76ccb226b9dce5d135411fe134a7b00bd90fe0`). `scripts/gpu-flash/compiler.ts` selects the complete fix-2 candidate (`859a937afe74f61dca59cf53f851db1df94fe5f99f6ddbe227d1b3a032dd4b24`) **only in an isolated developer build**. Both executable budget findings are preserved. No budget or rate change is approved.
+The default generator and public `hostGpu` boot still deliver the trusted-only host (`737ca3bd752c31af3ffd8ff11b76ccb226b9dce5d135411fe134a7b00bd90fe0`). `scripts/gpu-flash/compiler.ts` selects the optimized candidate (`1f267d72a1642ea1a5a68838fd0a8ac9b728831f1d81ca4eb229b45c32e08265`) **only in an isolated developer build**. See [updated host and page prices](size-work.md). No budget or rate change is approved.
