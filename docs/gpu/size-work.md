@@ -2,7 +2,7 @@
 
 The limits are **6,144 raw minified UTF-8 bytes for the GPU host, worker included**, and **20,000 for the page's shared JS**, including joins and lazy assets. The starting checkpoint `6850661` cost **11,570 / 23,593** on the mixed fixture; its release cost **6,070 / 18,093**. Pricing an isolated candidate does not enable it in production.
 
-**Status: optimization pass and visitor-speed benchmark complete.** Both checked mixed pages fit the aggregate; at the original ceilings the only compiler refusal was the GPU-host limit. The table shows the [actual compiler outputs at that point](evidence/size-work/final-bytes.json), including the SRI-bound lazy asset. See the subsequent [flash-analysis result](flash-analysis.md) and [production limit decision](limits.md).
+**Status: optimization pass and visitor-speed benchmark complete.** Both mixed pages fit the aggregate on the analyzed build. The later [compatibility repair](#compatibility-repair) no longer fits the interactive page. The table below shows [compiler outputs before that repair](evidence/size-work/final-bytes.json), including the SRI-bound lazy asset. See the [flash-analysis result](flash-analysis.md) and [production limit decision](limits.md).
 
 [Visitor speed after optimization](astro-speed-optimized.md) compares these builds with the pre-optimization renderer and matched Astro pages in the same run.
 
@@ -42,6 +42,18 @@ In a separate [Metal GPU smoke test](evidence/size-work/metal-poster-pixels.csv)
 A two-owner Chromium prototype moved each owner's background to a negative-z `::before` layer behind the one shared canvas. It matched the reference on an ordinary patterned poster, but exposed an ancestor's border on **4,352 seed-frame pixels**, and an inset shadow on **9,216**, before the shader moved. Both layouts had working active effects in the reference. A live background override also left **43,049 pixels** stale until the next inspection. The same paint-order error reproduces without JavaScript: a negative-z pseudo-element replaces the normally painted background of an article inside a parent with an inset shadow. The parent's shadow becomes visible over it.
 
 The prototype was **6,688 host bytes with the previous reference worker**, before the full placement checks, watchdog and slow-device handling. It was not adopted. Keeping the real poster in its authored paint layer preserves the behavior being optimized.
+
+## Compatibility repair
+
+Local review branch `review/culm-stage-4-production-qualification`, commit `d2a60dc`, restores the [two built-in layouts](flash-analysis.md#production-compatibility) that the 9,012-byte build left static. Chromium verified fixed-heading visibility and hit order next to a running unreviewed owner, and the original paint of asymmetric and transparent borders. The placement exception is restricted to the framework built-in; a reviewed custom copy did not inherit it. The compositor suite passed 17/17. The production budget checks still fail.
+
+| Emitted artifact                               |  Bytes | Compared with proposed production limits |
+| ---------------------------------------------- | -----: | ---------------------------------------: |
+| Complete host, including the 2,972-byte worker |  9,661 |                           649 over 9,012 |
+| Standard mixed page                            | 18,133 |                       1,867 under 20,000 |
+| Fully interactive mixed page                   | 20,646 |                          646 over 20,000 |
+
+[Compiler output, host hash and refusals](evidence/size-work/compatibility-prototype.json). To reproduce at `d2a60dc`, use the pricing commands below with `--require-fit`. Removing **649 raw bytes from the host** would bring both fixtures within their proposed limits if the other scripts stay the same. Raising only the host allowance would still leave the interactive page over budget. No new flash verdict was recorded for this prototype.
 
 ## Reproduce
 

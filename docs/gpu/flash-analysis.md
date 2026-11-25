@@ -85,3 +85,5 @@ At isolated qualification commit `f78f903`, the production selector, generated h
 | Owners with an authored border or shadowed foreground text | Both paint; border and sampled foreground pixels match their static rendering | Both remain static                                         |
 
 Reproduce with `node --conditions=source --import tsx --test packages/tools/__browser__/gpu-host.spec.ts` at `f78f903` in a separate checkout with the repository dependencies and WebGL2 Chromium installed. These are visitor-facing differences, not analyzer failures or missing Windows results. This build was not promoted.
+
+The [follow-up prototype](size-work.md#compatibility-repair) fixes both layouts, including the mixed-page case. Its host hash changed and both size gates do not pass together. The IRIS verdict above belongs to `2844a4b873444f70`; it has not been transferred to the prototype.

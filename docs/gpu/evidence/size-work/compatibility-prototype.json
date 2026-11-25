@@ -1,0 +1,78 @@
+{
+  "revision": "d2a60dc8bc74cc862a43e4d4e42f63f1e3c6e69a",
+  "selectedInProduction": false,
+  "proposedHostLimit": 9012,
+  "sharedLimit": 20000,
+  "runs": [
+    {
+      "profile": "release",
+      "fixture": "mixed",
+      "interactive": false,
+      "unreviewed": true,
+      "worker": 2972,
+      "embeddedWorker": 2979,
+      "hostExcludingWorker": 6682,
+      "host": 9661,
+      "inline": 8472,
+      "shared": 18133,
+      "hostHeadroom": -649,
+      "mixedHeadroom": 1867,
+      "sha256": "0b383f8ec0212860ebfbd652b744d42472fb79081650457a57cd5bf85cf6d45e",
+      "sri": "sha256-Czg/jsAhKGDr+9ZSt0TUJHL7eQgWUEV6V81b+Fz21F4=",
+      "stats": {
+        "bytes": 18429,
+        "styleBytes": 6627,
+        "scriptBytes": {
+          "base": 688,
+          "states": 1963,
+          "timeline": 4769,
+          "gpuLoader": 1052,
+          "gpuHost": 9661
+        },
+        "elements": 26,
+        "depth": 4,
+        "gpuData": {
+          "shaderBytes": 247,
+          "wasmBytes": 2,
+          "wasmTransportBytes": 4
+        }
+      },
+      "refusals": ["gpuHostScript"]
+    },
+    {
+      "profile": "release",
+      "fixture": "mixed",
+      "interactive": true,
+      "unreviewed": true,
+      "worker": 2972,
+      "embeddedWorker": 2979,
+      "hostExcludingWorker": 6682,
+      "host": 9661,
+      "inline": 10985,
+      "shared": 20646,
+      "hostHeadroom": -649,
+      "mixedHeadroom": -646,
+      "sha256": "0b383f8ec0212860ebfbd652b744d42472fb79081650457a57cd5bf85cf6d45e",
+      "sri": "sha256-Czg/jsAhKGDr+9ZSt0TUJHL7eQgWUEV6V81b+Fz21F4=",
+      "stats": {
+        "bytes": 21356,
+        "styleBytes": 6627,
+        "scriptBytes": {
+          "base": 688,
+          "states": 1963,
+          "timeline": 7282,
+          "gpuLoader": 1052,
+          "gpuHost": 9661
+        },
+        "elements": 27,
+        "depth": 4,
+        "gpuData": {
+          "shaderBytes": 247,
+          "wasmBytes": 2,
+          "wasmTransportBytes": 4
+        }
+      },
+      "refusals": ["gpuHostScript", "sharedScripts"]
+    }
+  ]
+}
