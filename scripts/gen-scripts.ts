@@ -47,18 +47,32 @@ function minify(src: string): string {
 
 /** One priced artifact, including the invocation and its text/layout dependencies. */
 export function renderTimeline(playbackOnly = false): string {
+  // Specialize one lexical constant in the build input, never an ambient
+  // global that could alter the directly imported editor host.
+  const src = readFileSync(new URL('motionHost.ts', dir), 'utf8')
+  const declaration = 'const interactive = true'
+  if (src.split(declaration).length !== 2)
+    throw Error('Missing or ambiguous timeline profile declaration')
   return shareScriptKeys(
     bundle(
-      "import {hostMotion} from './motionHost.ts'; hostMotion(document,window)",
-      { PLAYBACK_ONLY: String(playbackOnly) },
+      (playbackOnly
+        ? src.replace(declaration, 'const interactive = false')
+        : src) + '\nhostMotion(document,window)',
+      undefined,
+      'ts',
     ),
   )
 }
 
-function bundle(contents: string, define?: Record<string, string>) {
+function bundle(
+  contents: string,
+  define?: Record<string, string>,
+  loader: 'js' | 'ts' = 'js',
+) {
   return buildSync({
     stdin: {
       contents,
+      loader,
       resolveDir: fileURLToPath(dir),
     },
     define,

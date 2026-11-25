@@ -1,10 +1,5 @@
 import { measureText, type TextPlan } from './motionText.ts'
 
-// The compiler selects the smaller build only when every emitted scene is a
-// stationary load/entrance with no SVG draw, pin or input-driven clock.
-// The directly imported editor host always supports the full scene language.
-declare const PLAYBACK_ONLY: boolean
-
 /** Fixed tracks share their keyframes across equal targets (the common stagger
  * case). Token 0 is the owner; other numeric tokens select inside it only. */
 export type PackedTrack = [
@@ -54,7 +49,9 @@ export function hostMotion(
   win: Window,
   signal?: AbortSignal,
 ): void {
-  const interactive = typeof PLAYBACK_ONLY === 'undefined' || !PLAYBACK_ONLY
+  // gen-scripts specializes this literal for stationary load/entrance pages.
+  // Direct imports, including the editor's abortable host, always get full support.
+  const interactive = true
   const w = win as Window & typeof globalThis
   const { ResizeObserver, IntersectionObserver, MutationObserver } = w
   const fonts = doc.fonts
