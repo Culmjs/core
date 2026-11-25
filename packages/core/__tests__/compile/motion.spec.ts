@@ -13,6 +13,10 @@ import {
 import { prepare, siteElement } from '../../src/compile/page.ts'
 import { motionCss } from '../../src/compile/motion.ts'
 import type { Scene } from '../../src/scripts/motionHost.ts'
+import {
+  PLAYBACK_TIMELINE_SCRIPT,
+  TIMELINE_SCRIPT,
+} from '../../src/scripts/scriptsMin.ts'
 import { node, sampleRegistry, siteWith, text } from '../kit.ts'
 
 test('both a grouped SVG owner and its nested target receive the scoped classes', () => {
@@ -481,6 +485,29 @@ test('timeline data is escaped on each rendered owner; one charged host for shar
   assert.doesNotMatch(edit.html, /data-culm-motion/)
   const sub = compileSubtree(doc, 'home', 'hero', { registry })
   assert.doesNotMatch(JSON.stringify(sub), /data-culm-motion/)
+})
+
+test('stationary entrances ship only playback; one interactive shared-root scene restores the full host', () => {
+  const doc = docFor({
+    trigger: 'enter-view',
+    steps: [{ ...rise(), target: { id: 'title' } }],
+  })
+  const compiled = page(doc)
+  assert.equal(compiled.scripts.at(-1)?.code, PLAYBACK_TIMELINE_SCRIPT)
+  const bytes = Buffer.byteLength(PLAYBACK_TIMELINE_SCRIPT)
+  assert.equal(compiled.stats.scriptBytes.timeline, bytes)
+  assert.ok(bytes < Buffer.byteLength(TIMELINE_SCRIPT))
+  doc.footer.children = [
+    text('other', 'Survey', {
+      motion: { trigger: 'pointer-x', steps: [rise()] },
+    }),
+  ]
+  const mixed = page(doc)
+  assert.equal(mixed.scripts.at(-1)?.code, TIMELINE_SCRIPT)
+  assert.equal(
+    mixed.stats.scriptBytes.timeline,
+    Buffer.byteLength(TIMELINE_SCRIPT),
+  )
 })
 
 test('timeline tokens bind checked component descendants after repeat expansion; no rows cost nothing', () => {

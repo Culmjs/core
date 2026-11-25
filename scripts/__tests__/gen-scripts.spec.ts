@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { transformSync } from 'esbuild'
+import { runInNewContext } from 'node:vm'
+import { shareScriptKeys } from '../share-script-keys.ts'
 import { render, renderProbe, renderGpuWorker } from '../gen-scripts.ts'
 import { byteLength } from '../../packages/core/src/compile/budgets.ts'
 import { PROBE_SCRIPT } from '../../packages/core/src/measure/probeMin.ts'
@@ -14,6 +16,7 @@ import {
   OPEN_SCRIPT,
   STATES_SCRIPT,
   TIMELINE_SCRIPT,
+  PLAYBACK_TIMELINE_SCRIPT,
 } from '../../packages/core/src/scripts/scriptsMin.ts'
 import {
   pageScriptPolicy,
@@ -29,6 +32,30 @@ test('scriptsMin.ts is up to date', () => {
     render(),
     'run `npm run gen:scripts`',
   )
+})
+
+test('interning DOM keys preserves receivers, nested access, string arguments and directives', () => {
+  const c = `(()=>{"use strict";abc.deeplyNestedElement.deeplyNestedElement.getBoundingClientRect("getBoundingClientRect");
+abc.deeplyNestedElement.getBoundingClientRect("deeplyNestedElement");abc.getBoundingClientRect("getBoundingClientRect");
+abc.deeplyNestedElement.getBoundingClientRect("getBoundingClientRect");
+try{undeclaredVariable=1}catch{abc.getBoundingClientRect("strict")}})()`
+  const min = transformSync(c, { target: 'es2017', minify: true }).code.trim()
+  const smaller = shareScriptKeys(min)
+  assert.ok(Buffer.byteLength(smaller) < Buffer.byteLength(min))
+  const invoke = (code: string) => {
+    const calls: string[] = []
+    const leaf = (name: string, deeplyNestedElement?: object) => ({
+      deeplyNestedElement,
+      name,
+      getBoundingClientRect(k: string) {
+        calls.push(this.name + ':' + k)
+      },
+    })
+    runInNewContext(code, { abc: leaf('root', leaf('child', leaf('leaf'))) })
+    return calls
+  }
+  assert.deepEqual(invoke(smaller), invoke(min))
+  assert.equal(invoke(smaller).at(-1), 'root:strict')
 })
 
 test('each script is within its ceiling, all appendices included', () => {
@@ -49,20 +76,19 @@ test('the production GPU executable is already ES2017', () => {
   }
 })
 
-test('all 32 joined inline selections authorize exactly the executable bytes they deliver', () => {
+test('all 48 joined inline selections authorize exactly the executable bytes they deliver', () => {
   const hash = (s: string) =>
     `sha256-${createHash('sha256').update(s).digest('base64')}`
   for (const open of ['', OPEN_SCRIPT])
     for (const email of ['', EMAIL_SCRIPT])
       for (const states of [false, true])
-        for (const timeline of [false, true])
+        for (const timeline of ['', TIMELINE_SCRIPT, PLAYBACK_TIMELINE_SCRIPT])
           for (const gpu of [false, true]) {
             const scripts: PageScript[] = [
               { name: 'base', code: BASE_SCRIPT + open + email },
             ]
             if (states) scripts.push({ name: 'states', code: STATES_SCRIPT })
-            if (timeline)
-              scripts.push({ name: 'timeline', code: TIMELINE_SCRIPT })
+            if (timeline) scripts.push({ name: 'timeline', code: timeline })
             if (gpu)
               scripts.push({ name: 'gpuLoader', code: GPU_LOADER_SCRIPT })
             assert.deepEqual(
@@ -82,6 +108,7 @@ test('the shipped scripts use no syntax newer than ES2017 and make no request an
     EMAIL_SCRIPT,
     STATES_SCRIPT,
     TIMELINE_SCRIPT,
+    PLAYBACK_TIMELINE_SCRIPT,
   ]) {
     // esbuild lowers newer syntax instead of throwing: if es2017 output differs from esnext output, something was lowered
     const out = (target: string) =>

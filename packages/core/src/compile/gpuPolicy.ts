@@ -2,6 +2,7 @@ import {
   BASE_SCRIPT,
   EMAIL_SCRIPT,
   OPEN_SCRIPT,
+  PLAYBACK_TIMELINE_SCRIPT,
   INLINE_HASHES,
   GPU_HOST_INTEGRITY,
 } from '../scripts/scriptsMin.ts'
@@ -26,12 +27,15 @@ export function executableHashes(scripts: PageScript[]): string[] {
   if (base < 0) throw new Error('Unknown base script.')
   const has = (name: PageScript['name']) => scripts.some(s => s.name === name)
   const gpu = has('gpuLoader')
+  const playback = scripts.some(
+    s => s.name === 'timeline' && s.code === PLAYBACK_TIMELINE_SCRIPT,
+  )
   const hash =
     INLINE_HASHES[
       base +
         (has('states') ? 4 : 0) +
-        (has('timeline') ? 8 : 0) +
-        (gpu ? 16 : 0)
+        (playback ? 32 : has('timeline') ? 8 : 0) +
+        (gpu ? (playback ? 8 : 16) : 0)
     ]
   return gpu ? [hash, GPU_HOST_INTEGRITY] : [hash]
 }

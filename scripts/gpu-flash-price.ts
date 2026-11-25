@@ -7,6 +7,11 @@ import { renderGpuWorker, RELEASE_CHECKED } from './gen-scripts.ts'
 import { DEMO_PLUGIN, node, text } from '../packages/core/__tests__/kit.ts'
 import { mist } from '../packages/tools/__tests__/fixtures/shader.ts'
 import { scenes } from '../packages/tools/__tests__/fixtures/motion-scenes.ts'
+import { BUDGETS } from '../packages/core/src/compile/budgets.ts'
+
+const strict = process.argv.includes('--require-fit')
+const unreviewed = process.argv.includes('--unreviewed')
+const interactive = process.argv.includes('--interactive')
 
 for (const [profile, core, checked] of [
   ['release', shipped, RELEASE_CHECKED],
@@ -14,11 +19,27 @@ for (const [profile, core, checked] of [
 ] as const) {
   const fixture = process.argv.includes('--simple') ? 'control' : 'mixed'
   const doc = await scenes[fixture]()
+  if (interactive)
+    doc.pages[0].root.children!.push(
+      text('pointerclock', 'Field meter', {
+        motion: {
+          trigger: 'pointer-x',
+          steps: [
+            {
+              target: 'self',
+              from: { scale: 1 },
+              to: { scale: 1.25 },
+              durationMs: 200,
+            },
+          ],
+        },
+      }),
+    )
   const registry = core.createRegistry({
     gpu: {
       enabled: true,
       approvedWasmPlugins: [{ name: 'demo', version: 1 }],
-      reviewed: [mist],
+      reviewed: unreviewed ? [] : [mist],
     },
   })
   registry.use({
@@ -39,7 +60,29 @@ for (const [profile, core, checked] of [
       motion: { trigger: 'enter-view', gpu: name },
     })
   const c = core.compilePage(doc, 'home', { registry })
-  assert.ok(c.ok)
+  assert.ok(c.ok, JSON.stringify(c.problems))
+  if (checked) {
+    // A candidate that fits by silently declining custom shaders is not a fit.
+    const payload = JSON.parse(
+      c.html.match(
+        /<script type="application\/json" id="culm-gpu">([^<]*)<\/script>/,
+      )![1],
+    )
+    const index = payload.definitions.findIndex(
+      (d: { name: string }) => d.name === 'mist',
+    )
+    assert.ok(index >= 0)
+    assert.equal(!!payload.definitions[index].reviewed, !unreviewed)
+    const region = payload.regions.find(
+      (r: { definition: number }) => r.definition === index,
+    )
+    assert.ok(
+      region &&
+        [...c.html.matchAll(/<[^<>]+ data-gpu-run="[^"]*"[^<>]*>/g)].some(
+          ([tag]) => tag.includes(`data-culm-gpu="${region.owner}"`),
+        ),
+    )
+  }
   const code = c.assets![0].content,
     host = Buffer.byteLength(code),
     inline = Buffer.byteLength(c.scripts.map(s => s.code).join(';'))
@@ -64,16 +107,19 @@ for (const [profile, core, checked] of [
     JSON.stringify({
       profile,
       fixture,
+      interactive,
+      unreviewed,
       worker: Buffer.byteLength(worker),
       host,
       inline,
       shared: host + inline,
-      hostHeadroom: 6144 - host,
-      mixedHeadroom: 20000 - host - inline,
+      hostHeadroom: BUDGETS.gpuHostScript - host,
+      mixedHeadroom: BUDGETS.sharedScripts - host - inline,
       sha256: hash.copy().digest('hex'),
       sri: 'sha256-' + hash.digest('base64'),
       stats: c.stats,
       refusals: c.problems.map(p => p.path),
     }),
   )
+  if (strict && c.problems.length) process.exitCode = 1
 }

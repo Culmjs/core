@@ -1,5 +1,10 @@
 import { measureText, type TextPlan } from './motionText.ts'
 
+// The compiler selects the smaller build only when every emitted scene is a
+// stationary load/entrance with no SVG draw, pin or input-driven clock.
+// The directly imported editor host always supports the full scene language.
+declare const PLAYBACK_ONLY: boolean
+
 /** Fixed tracks share their keyframes across equal targets (the common stagger
  * case). Token 0 is the owner; other numeric tokens select inside it only. */
 export type PackedTrack = [
@@ -49,6 +54,7 @@ export function hostMotion(
   win: Window,
   signal?: AbortSignal,
 ): void {
+  const interactive = typeof PLAYBACK_ONLY === 'undefined' || !PLAYBACK_ONLY
   const w = win as Window & typeof globalThis
   const { ResizeObserver, IntersectionObserver, MutationObserver } = w
   const fonts = doc.fonts
@@ -103,36 +109,38 @@ export function hostMotion(
   const layouts = new Set<() => void>()
   let managed = false
   let unwatchFlow: () => void
-  const watchFlow = () => {
-    // Shared across mounted neutral clocks. Paint changes neither these
-    // border-box sizes nor the compiler's allowlist of state attributes.
-    const reflow = () => layouts.forEach(schedule)
-    const sizes = ResizeObserver && new ResizeObserver(reflow)
-    const states = MutationObserver && new MutationObserver(reflow)
-    if (sizes)
-      each('.cm-flow>*', el => sizes.observe(el, { box: 'border-box' }))
-    const attr = 'data-cm-watch'
-    if (states)
-      each(`[${attr}]`, el =>
-        states.observe(el, {
-          attributeFilter: el.getAttribute(attr)!.split(' '),
-        }),
-      )
-    return () => {
-      disconnect(sizes)
-      disconnect(states)
-    }
-  }
+  const watchFlow = interactive
+    ? () => {
+        // Shared across mounted neutral clocks. Paint changes neither these
+        // border-box sizes nor the compiler's allowlist of state attributes.
+        const reflow = () => layouts.forEach(schedule)
+        const sizes = ResizeObserver && new ResizeObserver(reflow)
+        const states = MutationObserver && new MutationObserver(reflow)
+        if (sizes)
+          each('.cm-flow>*', el => sizes.observe(el, { box: 'border-box' }))
+        const attr = 'data-cm-watch'
+        if (states)
+          each(`[${attr}]`, el =>
+            states.observe(el, {
+              attributeFilter: el.getAttribute(attr)!.split(' '),
+            }),
+          )
+        return () => {
+          disconnect(sizes)
+          disconnect(states)
+        }
+      }
+    : undefined
   each(`[${attr}]`, owner => {
     const s: Scene = JSON.parse(owner.getAttribute(attr)!)
-    if (s.native && clock('view')) return
-    const { trigger: tr, pin, layout, parts } = s
-    const state = Array.isArray(tr)
-    const pointer = tr === 'pointer-x',
-      scrub = pointer || tr === 'scroll'
+    if (interactive && s.native && clock('view')) return
+    const { trigger: tr, parts, pin, layout } = s
+    const state = interactive && Array.isArray(tr)
+    const pointer = interactive && tr === 'pointer-x',
+      scrub = interactive && (pointer || tr === 'scroll')
     const target = (id?: number) =>
       id ? owner.querySelector(token(id)) : owner
-    const child = target(s.child)
+    const child = interactive ? target(s.child) : owner
     if (!owner.animate || !owner.getBoundingClientRect || !child) return
     managed = true
     const readInput = scrub || layout
@@ -198,7 +206,7 @@ export function hostMotion(
               if (!el) continue
               timing.delay = delay + offset
               const keys = reveal && clock('scroll') ? reveal : frames
-              if ('strokeDashoffset' in keys[0]) {
+              if (interactive && 'strokeDashoffset' in keys[0]) {
                 const path = el as SVGPathElement
                 const length =
                   path.getTotalLength &&
@@ -215,7 +223,8 @@ export function hostMotion(
                 a = el.animate(keys, timing)
                 if (parts && !member) fixed.set(ref, a)
               }
-              if (!id && timing.id) shifts.push(a.effect as KeyframeEffect)
+              if (interactive && !id && timing.id)
+                shifts.push(a.effect as KeyframeEffect)
               // No per-target callbacks/timers: every delay is on the same clock.
               if (origin !== null) a.startTime = origin
               if (scrub || !visible) a.pause()
@@ -268,7 +277,7 @@ export function hostMotion(
           // IO need not cross a threshold when an in-view zero-sized box
           // grows. Borrow the metric watch only until this activation acquires
           // its tracks; stop() also releases it if the predicate turns false.
-          if (state && ResizeObserver && !sizes) {
+          if (interactive && state && ResizeObserver && !sizes) {
             sizes = new ResizeObserver(() => {
               if (active) play()
             })
@@ -277,45 +286,52 @@ export function hostMotion(
           return
         }
         sizes = disconnect(sizes)
-        if (!pin) return start()
-        // Capture every applicable extent before installing the padding.
-        const pinBox = owner as HTMLElement,
-          balance: [HTMLElement, number][] = []
-        const matrix = (el: Element, id: number) =>
-          el.querySelector<SVGSVGElement>(token(id))!.getScreenCTM()!.inverse()
-        const hold = (f: Keyframe, el: Element = owner) =>
-          keep(el.animate([f, f], { fill: 'both' }))
-        let needed
-        try {
-          const m = matrix(owner, s.basis!),
-            y = pin * m.d
-          if (!isFinite(y)) return
-          needed = pinBox.offsetHeight + y
-          let previous = y
-          for (const [id, probe] of s.flow!) {
-            const boundary = owner.closest<HTMLElement>(token(id))!
-            const next = probe
-              ? pin * matrix(boundary.parentElement!, probe).d
-              : pin
-            if (!isFinite(next)) return
-            if (Math.abs(previous - next) > 1e-6)
-              balance.push([boundary, boundary.offsetHeight + next])
-            previous = next
-          }
-          const name = '--p' + s.child
-          hold({ [name]: `${pin * m.c}px ${y}px`, [name + 'y']: y + 'px' })
-        } catch {
-          return
-        } // absent/singular geometry: leave the static box in flow
-        if (!start()) return
-        if (pinBox.offsetHeight < needed) hold({ minHeight: needed + 'px' })
-        // Settle corrections inside out. An inner margin has already affected
-        // the next boundary's actual height by the time it is read here.
-        for (const [el, extent] of balance)
-          hold(
-            { marginBottom: extent - el.offsetHeight + 'px', composite: 'add' },
-            el,
-          )
+        if (interactive && pin) {
+          // Capture every applicable extent before installing the padding.
+          const pinBox = owner as HTMLElement,
+            balance: [HTMLElement, number][] = []
+          const matrix = (el: Element, id: number) =>
+            el
+              .querySelector<SVGSVGElement>(token(id))!
+              .getScreenCTM()!
+              .inverse()
+          const hold = (f: Keyframe, el: Element = owner) =>
+            keep(el.animate([f, f], { fill: 'both' }))
+          let needed
+          try {
+            const m = matrix(owner, s.basis!),
+              y = pin * m.d
+            if (!isFinite(y)) return
+            needed = pinBox.offsetHeight + y
+            let previous = y
+            for (const [id, probe] of s.flow!) {
+              const boundary = owner.closest<HTMLElement>(token(id))!
+              const next = probe
+                ? pin * matrix(boundary.parentElement!, probe).d
+                : pin
+              if (!isFinite(next)) return
+              if (Math.abs(previous - next) > 1e-6)
+                balance.push([boundary, boundary.offsetHeight + next])
+              previous = next
+            }
+            const name = '--p' + s.child
+            hold({ [name]: `${pin * m.c}px ${y}px`, [name + 'y']: y + 'px' })
+          } catch {
+            return
+          } // absent/singular geometry: leave the static box in flow
+          if (!start()) return
+          if (pinBox.offsetHeight < needed) hold({ minHeight: needed + 'px' })
+          // Settle corrections inside out. An inner margin has already affected
+          // the next boundary's actual height by the time it is read here.
+          for (const [el, extent] of balance)
+            hold(
+              {
+                marginBottom: extent - el.offsetHeight + 'px',
+                composite: 'add',
+              },
+              el,
+            )
+        } else return start()
       }
       abort(scope, stop)
       const rebuild = () => {
@@ -355,7 +371,7 @@ export function hostMotion(
       let wake: (e: Event) => boolean = () => false
       const syncView = () => {
         visible = intersecting && !doc.hidden
-        if (readInput) {
+        if (interactive && readInput) {
           if (!doc.hidden) {
             // The layout reference is the original box without this scene's
             // geometry effects. Never replace, wrap or reparent a control.
@@ -366,7 +382,7 @@ export function hostMotion(
             const passage = (dy: number) =>
               clamp((h - r.top + dy) / (h + r.height))
             const progress = passage(0)
-            if (layout) {
+            if (interactive && layout) {
               // Cache the scroll interval swept by the stable box. Native IO
               // watches paint. This second gate handles canonical-only entry
               // without a layout read/frame for distant document scrolls.
@@ -435,16 +451,17 @@ export function hostMotion(
       })
       observer.observe(owner)
       if (layout) {
-        if (!layouts.size) unwatchFlow = watchFlow()
+        if (!layouts.size) unwatchFlow = watchFlow!()
         layouts.add(syncView)
       }
       abort(scope, () => {
         disconnect(observer)
-        if (layouts.delete(syncView) && !layouts.size) unwatchFlow()
+        if (interactive && layouts.delete(syncView) && !layouts.size)
+          unwatchFlow()
         unschedule(syncView)
       })
       on(doc, 'visibilitychange', syncView)
-      if (readInput)
+      if (interactive && readInput)
         on(
           w,
           'scroll resize',
@@ -461,7 +478,7 @@ export function hostMotion(
           },
           true,
         )
-      if (scrub) {
+      if (interactive && scrub) {
         if (pointer)
           on(owner, 'pointermove', e => {
             if ((e as PointerEvent).pointerType === 'touch') return
@@ -470,12 +487,12 @@ export function hostMotion(
           })
         syncView()
       } else if (load) play()
-      else if (tr === 'hover') {
+      else if (interactive && tr === 'hover') {
         const sync = () =>
           owner.matches(':hover,:focus-visible') ? play() : stop()
         on(owner, 'mouseenter mouseleave focus blur', sync)
         sync()
-      } else if (tr === 'press') {
+      } else if (interactive && tr === 'press') {
         // A key and several contacts can hold the same owner. Pointer releases
         // arrive on window, so match the actual contact before stopping it.
         const held = new Set<string | number>()
@@ -506,7 +523,7 @@ export function hostMotion(
         on(w, 'pointerup pointercancel', up)
         on(owner, 'blur', blur, true)
         on(w, 'blur', blur)
-      } else if (state && MutationObserver) {
+      } else if (interactive && state && MutationObserver) {
         const [id, attr, value] = tr
         const holder = owner.closest(token(id))
         if (!holder) return

@@ -26,6 +26,7 @@ import {
 } from '../scripts/index.ts'
 import { checkedSite } from '../validate/validate.ts'
 import { BUDGETS, byteLength, checkBudgets, type PageStats } from './budgets.ts'
+import { PLAYBACK_TIMELINE_SCRIPT } from '../scripts/scriptsMin.ts'
 import { el } from './elementsBase.ts'
 import {
   stateAttrs,
@@ -382,6 +383,9 @@ export function build(
         )
       : undefined
   const scripts: PageScript[] = []
+  const timeline = motion?.playbackOnly
+    ? PLAYBACK_TIMELINE_SCRIPT
+    : TIMELINE_SCRIPT
   if (mode === 'live') {
     const open = anyElement(site, e => e.attrs?.['data-s-open'] !== undefined)
     // Decided from what was written, not from the source trees: a node that is not drawn writes nothing for the script to read.
@@ -404,8 +408,7 @@ export function build(
         (mail.used ? EMAIL_SCRIPT : ''),
     })
     if (states) scripts.push({ name: 'states', code: STATES_SCRIPT })
-    if (motion?.timeline)
-      scripts.push({ name: 'timeline', code: TIMELINE_SCRIPT })
+    if (motion?.timeline) scripts.push({ name: 'timeline', code: timeline })
     if (gpu)
       scripts.push({
         name: 'gpuLoader',
@@ -462,7 +465,7 @@ export function build(
         ? byteLength(scripts[0].code) + scripts.length - 1 - Number(!!gpu)
         : 0,
       states: byteLength(scripts.find(s => s.name === 'states')?.code ?? ''),
-      ...(motion?.timeline && { timeline: byteLength(TIMELINE_SCRIPT) }),
+      ...(motion?.timeline && { timeline: byteLength(timeline) }),
       ...(gpu && {
         gpuLoader: byteLength(GPU_LOADER_SCRIPT) + 1,
         gpuHost: byteLength(GPU_HOST_SCRIPT),

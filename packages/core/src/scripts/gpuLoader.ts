@@ -14,25 +14,23 @@ export function loadGpu(
     connection?: EventTarget & { saveData?: boolean }
   }
   const connection = nav.connection
-  const allowed = () => !motion.matches && !nav.connection?.saveData
+  const allowed = () =>
+    !(motion.matches || (nav.connection && nav.connection.saveData))
   let loaded = false
   const observer = new win.IntersectionObserver(
     entries => {
       if (
+        loaded ||
         !allowed() ||
         !entries.some(
-          e =>
-            e.isIntersecting &&
-            e.boundingClientRect.width > 0 &&
-            e.boundingClientRect.height > 0,
+          ({ isIntersecting, boundingClientRect: r }) =>
+            isIntersecting && r.width > 0 && r.height > 0,
         )
       )
         return
-      observer.disconnect()
-      size?.disconnect()
       loaded = true
-      motion.removeEventListener('change', observe)
-      connection?.removeEventListener?.('change', observe)
+      disconnect()
+      listen('removeEventListener')
       const script = doc.createElement('script')
       script.src = path
       script.integrity = integrity
@@ -52,8 +50,7 @@ export function loadGpu(
         }
     })
   function observe() {
-    observer.disconnect()
-    size?.disconnect()
+    disconnect()
     if (!loaded && allowed()) {
       const runnable = doc.querySelectorAll('[data-gpu-run]')
       const owners = runnable.length
@@ -61,11 +58,19 @@ export function loadGpu(
         : doc.querySelectorAll('[data-culm-gpu]')
       owners.forEach(el => {
         observer.observe(el)
-        size?.observe(el)
+        if (size) size.observe(el)
       })
     }
   }
-  motion.addEventListener('change', observe)
-  connection?.addEventListener?.('change', observe)
+  function disconnect() {
+    observer.disconnect()
+    if (size) size.disconnect()
+  }
+  function listen(action: 'addEventListener' | 'removeEventListener') {
+    motion[action]('change', observe)
+    if (connection && typeof connection[action] === 'function')
+      connection[action]('change', observe)
+  }
+  listen('addEventListener')
   observe()
 }

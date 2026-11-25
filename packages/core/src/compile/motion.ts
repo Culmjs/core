@@ -210,6 +210,7 @@ function timelines(
   const layoutOwners = new Set<HtmlNode>()
   const splitRules = new Set<string>()
   let timeline = false
+  let playbackOnly = true
   let alpha = false
   for (const { w, motion: m, owner, steps, state, pinChild } of programs) {
     const bound: BoundStep[] = []
@@ -313,6 +314,13 @@ function timelines(
     }
     ;(owner.attrs ??= {})['data-culm-motion'] = JSON.stringify(scene)
     timeline = true
+    playbackOnly &&=
+      (trigger === 'enter-view' || trigger === 'load') &&
+      !scene.layout &&
+      !scene.pin &&
+      !scene.child &&
+      !scene.draw &&
+      !scene.native
     const usesReveal = (tracks: Scene['tracks']) => tracks.some(t => !!t[3])
     alpha ||=
       usesReveal(scene.tracks) || !!scene.parts?.some(p => usesReveal(p.tracks))
@@ -327,6 +335,7 @@ function timelines(
       : '')
   return {
     timeline,
+    playbackOnly,
     alpha,
     css: css ? `@media (prefers-reduced-motion:no-preference){${css}}` : '',
   }
@@ -712,6 +721,7 @@ export function motionCss(
         : '') + host.css,
     hostAlpha: host.alpha,
     timeline: host.timeline,
+    playbackOnly: host.playbackOnly,
     problems,
     nativeScroll,
     inlineClasses,

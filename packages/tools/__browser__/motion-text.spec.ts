@@ -1,12 +1,7 @@
 import assert from 'node:assert/strict'
 import test, { after, before } from 'node:test'
 import { buildSync } from 'esbuild'
-import {
-  compilePage,
-  TIMELINE_SCRIPT,
-  type Node,
-  type Step,
-} from '@culmjs/core'
+import { compilePage, type Node, type Step } from '@culmjs/core'
 import {
   node,
   sampleRegistry,
@@ -67,7 +62,7 @@ async function fixture(
   assert.ok(r.ok, JSON.stringify(r.problems))
   const source = preview
     ? r.html.replace(
-        TIMELINE_SCRIPT,
+        r.scripts.find(s => s.name === 'timeline')!.code,
         () =>
           buildSync({
             stdin: {

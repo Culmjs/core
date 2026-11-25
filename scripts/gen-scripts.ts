@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { buildSync, transformSync } from 'esbuild'
+import { shareScriptKeys } from './share-script-keys.ts'
 import {
   CONTOURS_ID,
   CONTOURS_SOURCE,
@@ -45,9 +46,10 @@ function minify(src: string): string {
 }
 
 /** One priced artifact, including the invocation and its text/layout dependencies. */
-export function renderTimeline(): string {
+export function renderTimeline(playbackOnly = false): string {
   return bundle(
     "import {hostMotion} from './motionHost.ts'; hostMotion(document,window)",
+    { PLAYBACK_ONLY: String(playbackOnly) },
   )
 }
 
@@ -71,16 +73,17 @@ function bundle(contents: string, define?: Record<string, string>) {
 // The complete candidate exceeds both approved prices. See flash-analysis.md.
 export const RELEASE_CHECKED: boolean = false
 export function renderGpuWorker(checked = RELEASE_CHECKED): string {
-  return bundle(
+  const worker = bundle(
     `import {acquire} from './${checked ? 'gpuWorker' : 'gpuTrustedWorker'}.ts';onmessage=acquire`,
     {
       CONTOURS: JSON.stringify(CONTOURS_SOURCE),
     },
   )
+  return checked ? shareScriptKeys(worker) : worker
 }
 
 export function renderGpuHost(checked = RELEASE_CHECKED): string {
-  return bundle(
+  const host = bundle(
     `import {hostGpu} from './${checked ? 'gpuHost' : 'gpuTrustedHost'}.ts';hostGpu(document,window)`,
     {
       WORKER_SOURCE: JSON.stringify(renderGpuWorker(checked)),
@@ -88,6 +91,7 @@ export function renderGpuHost(checked = RELEASE_CHECKED): string {
       CHECKED_GEOMETRY: String(checked),
     },
   )
+  return checked ? shareScriptKeys(host) : host
 }
 
 export function render(checked = RELEASE_CHECKED): string {
@@ -107,21 +111,27 @@ export function render(checked = RELEASE_CHECKED): string {
     EMAIL_SCRIPT: minify(EMAIL_SOURCE),
     STATES_SCRIPT: shipHost(),
     TIMELINE_SCRIPT: renderTimeline(),
+    PLAYBACK_TIMELINE_SCRIPT: renderTimeline(true),
     GPU_HOST_PATH,
     GPU_HOST_SCRIPT,
     GPU_HOST_INTEGRITY,
     GPU_LOADER_SCRIPT,
   }
-  // Bit order: open, email, states, timeline, GPU. Hash the exact joined script, including separators.
-  const hashes = Array.from({ length: 32 }, (_, i) =>
+  // 0..31 preserve full/no-timeline selections. 32..47 are playback-only:
+  // bits 0..2 as before, bit 3 for the GPU. Hash the exact joined script.
+  const hashes = Array.from({ length: 48 }, (_, i) =>
     hash(
       [
         scripts.BASE_SCRIPT +
           (i & 1 ? scripts.OPEN_SCRIPT : '') +
           (i & 2 ? scripts.EMAIL_SCRIPT : ''),
         ...(i & 4 ? [scripts.STATES_SCRIPT] : []),
-        ...(i & 8 ? [scripts.TIMELINE_SCRIPT] : []),
-        ...(i & 16 ? [GPU_LOADER_SCRIPT] : []),
+        ...(i >= 32
+          ? [scripts.PLAYBACK_TIMELINE_SCRIPT]
+          : i & 8
+            ? [scripts.TIMELINE_SCRIPT]
+            : []),
+        ...((i >= 32 ? i & 8 : i & 16) ? [GPU_LOADER_SCRIPT] : []),
       ].join(';'),
     ),
   )
