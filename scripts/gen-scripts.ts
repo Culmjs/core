@@ -47,9 +47,11 @@ function minify(src: string): string {
 
 /** One priced artifact, including the invocation and its text/layout dependencies. */
 export function renderTimeline(playbackOnly = false): string {
-  return bundle(
-    "import {hostMotion} from './motionHost.ts'; hostMotion(document,window)",
-    { PLAYBACK_ONLY: String(playbackOnly) },
+  return shareScriptKeys(
+    bundle(
+      "import {hostMotion} from './motionHost.ts'; hostMotion(document,window)",
+      { PLAYBACK_ONLY: String(playbackOnly) },
+    ),
   )
 }
 
@@ -70,7 +72,7 @@ function bundle(contents: string, define?: Record<string, string>) {
 
 // Release selection is build-owned. Both artifacts are independently priced
 // complete bundles; this is not a runtime switch or a compiler option.
-// The complete candidate exceeds both approved prices. See flash-analysis.md.
+// The isolated candidate must fit both limits before selection. See docs/gpu/size-work.md.
 export const RELEASE_CHECKED: boolean = false
 export function renderGpuWorker(checked = RELEASE_CHECKED): string {
   const worker = bundle(

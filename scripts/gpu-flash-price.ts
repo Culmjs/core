@@ -102,6 +102,17 @@ for (const [profile, core, checked] of [
     host + inline,
     Object.values(c.stats.scriptBytes).reduce((a, b) => a + b, 0),
   )
+  const hostHeadroom = BUDGETS.gpuHostScript - host
+  const mixedHeadroom = BUDGETS.sharedScripts - host - inline
+  for (const [path, remaining] of [
+    ['gpuHostScript', hostHeadroom],
+    ['sharedScripts', mixedHeadroom],
+  ] as const)
+    assert.equal(
+      c.problems.some(p => p.path === path),
+      remaining < 0,
+      path,
+    )
   const hash = createHash('sha256').update(code)
   console.log(
     JSON.stringify({
@@ -113,8 +124,8 @@ for (const [profile, core, checked] of [
       host,
       inline,
       shared: host + inline,
-      hostHeadroom: BUDGETS.gpuHostScript - host,
-      mixedHeadroom: BUDGETS.sharedScripts - host - inline,
+      hostHeadroom,
+      mixedHeadroom,
       sha256: hash.copy().digest('hex'),
       sri: 'sha256-' + hash.digest('base64'),
       stats: c.stats,

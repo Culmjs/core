@@ -37,7 +37,7 @@ test('scriptsMin.ts is up to date', () => {
 test('interning DOM keys preserves receivers, nested access, string arguments and directives', () => {
   const c = `(()=>{"use strict";abc.deeplyNestedElement.deeplyNestedElement.getBoundingClientRect("getBoundingClientRect");
 abc.deeplyNestedElement.getBoundingClientRect("deeplyNestedElement");abc.getBoundingClientRect("getBoundingClientRect");
-abc.deeplyNestedElement.getBoundingClientRect("getBoundingClientRect");
+if ("deeplyNestedElement"in abc) abc.deeplyNestedElement.getBoundingClientRect("getBoundingClientRect");
 try{undeclaredVariable=1}catch{abc.getBoundingClientRect("strict")}})()`
   const min = transformSync(c, { target: 'es2017', minify: true }).code.trim()
   const smaller = shareScriptKeys(min)

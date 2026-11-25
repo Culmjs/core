@@ -85,7 +85,8 @@ export function shareScriptKeys(code: string): string {
     const name = prefix + defs.length
     defs.push(`${name}=${quoted}`)
     for (const { lo, hi, property } of sites)
-      edits.push([lo, hi, property ? `[${name}]` : name])
+      // A quoted literal may be adjacent to a word operator (`"key"in obj`).
+      edits.push([lo, hi, property ? `[${name}]` : ` ${name} `])
   }
   if (!defs.length) return code
   edits.push([start, start, `var ${defs.join(',')};`])
