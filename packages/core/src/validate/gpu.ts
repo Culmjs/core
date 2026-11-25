@@ -18,6 +18,39 @@ import { layoutDisplays } from '../layout/display.ts'
 import { add, type Ctx } from './common.ts'
 import { visibleText } from './required.ts'
 
+function shaderOk(
+  source: string,
+  settings: ShaderSettings,
+  path: string,
+  out: Problem[],
+) {
+  const check = checkShader(source, settings)
+  if (check.ok) return true
+  const { rule, line: shaderLine, measured, limit } = check
+  out.push({
+    code: 'INVALID_DOCUMENT',
+    rule,
+    shaderLine,
+    measured,
+    limit,
+    path: `${path}.${rule === 'shader.settings' ? 'settings' : 'source'}`,
+    message: `GPU effect refused by ${rule} at shader line ${shaderLine}: ${measured} (limit: ${limit}).`,
+  })
+  return false
+}
+
+/** Recheck registration snapshots once per build. Attachments only need their checked settings. */
+export function checkedRegisteredSettings(registry: Registry, out: Problem[]) {
+  const byName = new Map<string, ShaderSettings>()
+  for (const d of registry.effects()) {
+    if (d.tier !== 3) continue
+    const { name, source, settings } = d
+    if (shaderOk(source, settings, `registry.effects.${name}`, out))
+      byName.set(name, settings)
+  }
+  return byName
+}
+
 /** A fresh site-local namespace. Never stage document data in the registry. */
 export function checkCustomEffects(
   input: unknown,
@@ -71,19 +104,11 @@ export function checkCustomEffects(
     const settings = (
       Object.hasOwn(d, 'settings') ? d.settings : undefined
     ) as ShaderSettings
-    const check = checkShader(source, settings)
-    if (!check.ok) {
-      const { rule, line: shaderLine, measured, limit } = check
-      out.push({
-        code: 'INVALID_DOCUMENT',
-        rule,
-        shaderLine,
-        measured,
-        limit,
-        path: `${at}.${rule === 'shader.settings' ? 'settings' : 'source'}`,
-        message: `GPU effect refused by ${rule} at shader line ${shaderLine}: ${measured} (limit: ${limit}).`,
-      })
-    } else if (before === out.length && typeof name === 'string')
+    if (
+      shaderOk(source, settings, at, out) &&
+      before === out.length &&
+      typeof name === 'string'
+    )
       defs.set(name, shaderSnapshot({ name, source, settings }))
   }
   return defs
@@ -117,14 +142,8 @@ export function checkGpuMotion(c: Ctx, w: Node, m: Record<string, unknown>) {
       'UNSUPPORTED_CAPABILITY',
     )
   const name = m.gpu
-  const registered = gpuName(name) ? c.reg.effect(name) : undefined
-  const def =
-    registered?.tier === 3
-      ? registered
-      : typeof name === 'string'
-        ? c.customEffects.get(name)
-        : undefined
-  if (!def)
+  const settings = gpuName(name) ? c.gpuSettings.get(name) : undefined
+  if (!settings)
     return say(
       'No GPU effect with that name is defined for this site.',
       'motion.gpu',
@@ -134,10 +153,10 @@ export function checkGpuMotion(c: Ctx, w: Node, m: Record<string, unknown>) {
     return say('GPU settings must be an object.', 'motion.settings')
   for (const [k, value] of Object.entries(m.settings)) {
     const at = `motion.settings.${k.slice(0, 40)}`
-    if (!Object.hasOwn(def.settings, k))
+    if (!Object.hasOwn(settings, k))
       say('This GPU effect has no such setting.', at)
     else {
-      const s = def.settings[k]
+      const s = settings[k]
       if (
         s.type === 'color'
           ? typeof value !== 'string' || !/^#[0-9a-f]{6}$/i.test(value)
@@ -164,16 +183,14 @@ function content(w: Node): boolean {
         (p.runs as Run[]).some(r => !r.bind && visibleText(r.text))
       )
     case 'image':
+      // A file id may not resolve. A literal URL or the image's fallback text
+      // still produces an element. Videos and icons depend on file/glyph resolution.
       return (
-        (!w.bind?.src && (visibleText(p?.src) || visibleText(p?.assetId))) ||
+        (!w.bind?.src && visibleText(p?.src)) ||
         (!w.bind?.fallback && visibleText(p?.fallback))
       )
-    case 'video':
-      return visibleText(p?.assetId)
     case 'button':
       return !w.bind?.label && p?.sample !== true && visibleText(p?.label)
-    case 'icon':
-      return !!p?.link && visibleText(p?.label) && visibleText(p?.name)
     case 'shape':
       return visibleText(p?.label)
     case 'details':
@@ -189,10 +206,10 @@ function content(w: Node): boolean {
  * once even for nested owners. Form membership uses the full composition, including hidden nodes. */
 export function gpuOwnerProblems(tree: Node, scheme: Look['dark']) {
   const problems = new Map<Node, string>()
-  const bearing = new Set<string>()
+  const covered = new Map<string, boolean>()
   const live = dropSamples(tree, 'before-data')
-  // Intersect visibility down each branch: two descendants shown on different layouts
-  // cannot vouch for each other. The fallback doesn't depend on a hover or script.
+  // Intersect visibility down branches and union witnesses across siblings. Compare
+  // with the owner's visible layouts in this scheme before folding in another scheme.
   const visible = (w: Node, dark: boolean, parent: number): number => {
     const at = layoutDisplays(w, dark)
     const mask =
@@ -205,7 +222,8 @@ export function gpuOwnerProblems(tree: Node, scheme: Look['dark']) {
       // An optional child or a zero-row repeat cannot supply its parent's only fallback.
       if (!k.showIf && !k.showIfAny?.length && i < template) found |= contents
     }
-    if (found) bearing.add(w.id)
+    if (mask && w.motion && 'gpu' in w.motion)
+      covered.set(w.id, covered.get(w.id) !== false && found === mask)
     return found
   }
   for (const dark of scheme === 'auto' ? [false, true] : [scheme === 'dark'])
@@ -221,10 +239,10 @@ export function gpuOwnerProblems(tree: Node, scheme: Look['dark']) {
           w,
           'A GPU effect cannot be on, inside or around a form or field.',
         )
-      else if (!layouts.has(w.kind) || !bearing.has(w.id))
+      else if (!layouts.has(w.kind) || !covered.get(w.id))
         problems.set(
           w,
-          'A GPU effect needs a layout container with real static content.',
+          'A GPU effect needs a layout container with real static content on every layout and scheme where it is shown.',
         )
     }
     return containsForm

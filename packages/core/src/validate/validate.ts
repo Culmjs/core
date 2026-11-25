@@ -17,7 +17,7 @@ import { isFontRef } from '../style/fonts.ts'
 import { diagnosticId, fieldsOf, isStr, oneOf } from './common.ts'
 import { checkShown } from './required.ts'
 import { checkTrees } from './tree.ts'
-import { checkCustomEffects } from './gpu.ts'
+import { checkCustomEffects, checkedRegisteredSettings } from './gpu.ts'
 
 export const TOP_KEYS = fieldsOf<SiteDocument>({
   schemaVersion: true,
@@ -131,6 +131,8 @@ export function checkDocument(
   registry: Registry,
   out: Problem[],
 ) {
+  const gpuSettings = checkedRegisteredSettings(registry, out)
+  const beforeDocument = out.length
   const bad = (message: string, path?: string) =>
     void out.push({
       code: 'INVALID_DOCUMENT',
@@ -283,15 +285,16 @@ export function checkDocument(
       })
     }
   }
-  const hasSiteShape = !out.length
+  const hasSiteShape = out.length === beforeDocument
   const custom = checkCustomEffects(doc.customEffects, registry, out)
   if (!hasSiteShape) return
+  for (const [name, d] of custom) gpuSettings.set(name, d.settings)
   const definitionsOk = !out.length
   const projected = checkTrees(
     doc as unknown as SiteDocument,
     registry,
     out,
-    custom,
+    gpuSettings,
   )
   // Even when a definition was refused, the attachment reports on its authored owner.
   if (!definitionsOk) return

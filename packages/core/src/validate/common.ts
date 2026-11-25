@@ -2,11 +2,11 @@ import {
   kindSpec,
   type Code,
   type Component,
-  type CustomEffect,
   type KindSpec,
   type Motion,
   type Node,
   type Problem,
+  type ShaderSettings,
   type SiteStyles,
   type StateDecl,
 } from '../document/index.ts'
@@ -47,7 +47,7 @@ export type Tree = {
 export type Ctx = {
   reg: Registry
   effects: Map<Node, Motion>
-  customEffects: ReadonlyMap<string, CustomEffect>
+  gpuSettings: ReadonlyMap<string, ShaderSettings>
   kinds: ReadonlyMap<string, KindSpec>
   styles: SiteStyles
   fonts: ReadonlySet<string>

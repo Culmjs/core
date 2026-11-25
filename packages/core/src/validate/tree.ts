@@ -240,7 +240,7 @@ export function checkTrees(
   doc: SiteDocument,
   reg: Registry,
   out: Problem[],
-  customEffects: Ctx['customEffects'],
+  gpuSettings: Ctx['gpuSettings'],
 ) {
   const look = doc.look
   let styles: SiteStyles
@@ -257,7 +257,7 @@ export function checkTrees(
   const c: Ctx = {
     reg,
     effects: new Map(),
-    customEffects,
+    gpuSettings,
     kinds: reg.kinds(),
     styles,
     fonts: new Set(doc.fonts),

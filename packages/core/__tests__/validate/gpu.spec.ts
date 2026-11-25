@@ -13,7 +13,7 @@ import {
   type Motion,
   type SiteDocument,
 } from '../../src/index.ts'
-import { DEMO_PLUGIN, node, siteWith, text } from '../kit.ts'
+import { DEMO_PLUGIN, node, siteWith, text, twoPages } from '../kit.ts'
 
 const enabled = () => createRegistry({ gpu: { enabled: true } })
 const mist = (): CustomEffect => ({
@@ -107,6 +107,58 @@ test('recheck unused definitions every time, preserving shader vs folder line an
     )
     assert.ok(!('line' in p))
   }
+})
+
+test('registered shader source is checked once per build, whether used twice or not used', () => {
+  const host = enabled()
+  host.use({
+    ...DEMO_PLUGIN,
+    effects: ['mist', 'spare'].map(name => ({ ...mist(), tier: 3, name })),
+  })
+  const reads: string[] = []
+  let overBudget = false
+  // Observe the registry's build-time view without modifying its frozen registrations.
+  const registry = {
+    ...host,
+    effects: () =>
+      host.effects().map(d =>
+        d.tier === 3
+          ? {
+              ...d,
+              get source() {
+                reads.push(d.name)
+                return d.name === 'spare' && overBudget
+                  ? 'vec4 shade(vec2 uv){\nfor(int i=0;i<65;i++){}\nreturn vec4(1.0);}'
+                  : d.source
+              },
+            }
+          : {
+              ...d,
+              steps: () => assert.fail('An unused step factory must not run.'),
+            },
+      ),
+  }
+  const doc = twoPages(
+    [{ ...owner(), motion: attachment }],
+    [{ ...node('second', 'box', [text('copy', 'More')]), motion: attachment }],
+  )
+  const build = () => compileSite(doc, { registry })
+  const good = build()
+  assert.deepEqual(good.problems, [])
+  assert.equal(good.files.length, 2)
+  assert.deepEqual(reads, ['mist', 'spare'])
+  reads.length = 0
+  overBudget = true
+  const refused = build()
+  assert.deepEqual(refused.files, [])
+  assert.deepEqual(reads, ['mist', 'spare'])
+  assert.equal(refused.problems.length, 1)
+  const [p] = refused.problems
+  assert.deepEqual(
+    [p.path, p.rule, p.shaderLine, p.measured, p.limit],
+    ['registry.effects.spare.source', 'shader.passes', 2, 65, 64],
+  )
+  assert.ok(!('line' in p))
 })
 
 test('closed, uniquely named definitions; declaration limits and values come from the checker', () => {
@@ -287,6 +339,58 @@ test('the static fallback survives absent data, and decorative or invisible runs
     [],
   )
 })
+
+test('fallback covers every visible owner layout, including complementary witnesses', () => {
+  const d = site()
+  const hero = d.pages[0].root.children![0]
+  hero.children![0].hide = { phone: true }
+  at(d, 'motion.gpu', 'hero')
+  hero.hide = { phone: true }
+  assert.deepEqual(validateSite(d, enabled()), [])
+  delete hero.hide
+  hero.children!.push(
+    text('small', 'Phone heading', {
+      style: { base: { hidden: true }, phone: { hidden: false } },
+    }),
+  )
+  assert.deepEqual(validateSite(d, enabled()), [])
+})
+
+test('light content cannot supply the dark scheme fallback on an automatic site', () => {
+  const d = site()
+  const hero = d.pages[0].root.children![0]
+  hero.children![0].style = { dark: { hidden: true } }
+  d.look = { ...d.look, dark: 'auto' }
+  at(d, 'motion.gpu', 'hero')
+  hero.style = { dark: { hidden: true } }
+  assert.deepEqual(validateSite(d, enabled()), [])
+  delete hero.style
+  hero.children!.push(
+    text('night', 'Dark heading', {
+      style: { base: { hidden: true }, dark: { hidden: false } },
+    }),
+  )
+  assert.deepEqual(validateSite(d, enabled()), [])
+})
+
+for (const kind of ['image', 'video', 'icon'] as const)
+  test(`a resolver-dependent ${kind} needs independent static content`, () => {
+    const child = node('media', kind)
+    child.props =
+      kind === 'icon'
+        ? { name: 'unknown:missing', label: 'Home', link: { page: '/' } }
+        : { assetId: 'missing' }
+    const d = site(node('hero', 'box', [child]))
+    at(d, 'motion.gpu', 'hero')
+    if (kind === 'image') child.props.fallback = 'An authored fallback'
+    else
+      d.pages[0].root.children![0].children!.push(
+        text('caption', 'An authored fallback'),
+      )
+    const page = compilePage(d, 'home', { registry: enabled() })
+    assert.ok(page.ok, JSON.stringify(page.problems))
+    assert.match(page.html, />An authored fallback</)
+  })
 
 const moduleDef = (): GpuEffectDef => ({
   ...mist(),
