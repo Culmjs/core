@@ -165,7 +165,21 @@ export function lowerGpu(
     regions.push({
       owner,
       definition,
-      settings,
+      // The checked worker consumes native uniform vectors. Normalize the
+      // already-validated values here; authored declarations stay round-trippable.
+      settings: GPU_CHECKED
+        ? Object.fromEntries(
+            Object.entries(settings).map(([k, v]) => [
+              'set_' + k,
+              typeof v === 'number'
+                ? [v]
+                : v
+                    .slice(1)
+                    .match(/../g)!
+                    .map(hex => parseInt(hex, 16) / 255),
+            ]),
+          )
+        : settings,
       ...(m.poster && { poster: m.poster }),
     })
   }

@@ -16,12 +16,13 @@ export function limitChannel(
 // Maximum slope of inverse sRGB, at white. Ordinary stationary source-over
 // layers are contractions in encoded RGB. Carry fractional *code time*, not
 // unearned steps, so even 120 Hz makes progress while rounding never compounds.
-export const codesPerSecond = (255 * 0.25) / (2.4 / 1.055)
+export const codesPerSecond = 28.0234375 // (255 * .25) / (2.4 / 1.055)
 
 /** Straight RGBA8, fixed presentation grid. Each earned code changes coverage
  * OR straight colour. Both are contractions over an arbitrary stationary
  * background. The ORIGINAL CSS paint is the blend destination. */
-export const finalPass = `uniform highp sampler2D A,B;uniform vec4 S;uniform vec2 size;uniform float D;uniform int K;
-void main(){vec3 b=texture(A,gl_FragCoord.xy/size).rgb;
-vec4 a=texelFetch(B,ivec2(gl_FragCoord.xy),0);
-u_O=K==2?vec4(b,1.):K==0?(S.a>0.?S:vec4(b,0.)):a.a<1.&&(K!=3||all(equal(a.rgb,b)))?vec4(a.rgb,min(1.,a.a+D)):vec4(a.rgb+clamp(b-a.rgb,-D,D),a.a);}`
+// The .033 s cap earns strictly less than one code. K selects unchanged (-1),
+// transparent/solid seed (0/1), reviewed (2), coverage-first (3) or colour-first (4).
+export const finalPass = `uniform highp sampler2D T[2];uniform vec4 u_S;
+void main(){vec2 p=gl_FragCoord.xy/vec2(textureSize(T[1],0));vec4 a=texture(T[1],p),b=texture(T[0],p);int K=int(u_S.a);
+u_O=K==2?b:K==1?u_S:K==0?vec4(b.rgb,0):K<0?a:a+(a.a<1.&&(K==3||a.rgb==b.rgb)?vec4(0,0,0,1):vec4(sign(b.rgb-a.rgb),0))/255.;}`
