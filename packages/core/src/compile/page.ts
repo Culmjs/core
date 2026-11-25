@@ -387,14 +387,20 @@ export function build(
     if (states) scripts.push({ name: 'states', code: STATES_SCRIPT })
     if (motion?.timeline)
       scripts.push({ name: 'timeline', code: TIMELINE_SCRIPT })
-    if (gpu) scripts.push({ name: 'gpuLoader', code: GPU_LOADER_SCRIPT })
+    if (gpu)
+      scripts.push({
+        name: 'gpuLoader',
+        code: GPU_LOADER_SCRIPT,
+        ...(gpu.worker && { worker: true }),
+      })
   }
 
   const css =
     fontFaceCss(fontsOf(doc, p.shell), p.fontBase, p.fonts) +
     BASE_CSS +
     p.sheet(motion?.inlineClasses, motion?.hostAlpha).css +
-    (motion?.css ?? '')
+    (motion?.css ?? '') +
+    (gpu?.css ?? '')
   const body: HtmlNode[] = [site]
   if (gpu) body.push(gpu.element)
   const written = scripts.map(s => s.code).join(';')
@@ -425,7 +431,7 @@ export function build(
   if (mode === 'live') {
     const hashes = executableHashes(scripts)
     if (siteHashes) hashes.forEach(h => siteHashes.add(h))
-    else html = withPolicy(html, scriptPolicy(hashes))
+    else html = withPolicy(html, scriptPolicy(hashes, gpu?.worker))
   }
 
   const stats: PageStats = {

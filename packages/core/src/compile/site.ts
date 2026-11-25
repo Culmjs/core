@@ -59,6 +59,7 @@ export function compileSite(
   const problems: Problem[] = []
   const live = { ...options, mode: 'live' as const }
   const hashes = new Set<string>()
+  let worker = false
   const assets = new Map<string, string>()
   function price(name: string, bytes: number, page: string) {
     const known = manifest.scripts.find(s => s.name === name)
@@ -84,6 +85,7 @@ export function compileSite(
     })
     problems.push(...r.problems.map(at))
     if (!r.ok) continue
+    worker ||= r.scripts.some(s => s.worker)
     // a slug is a validated site path, so distinct slugs are distinct files
     const path =
       page.slug === '/' ? 'index.html' : `${page.slug.slice(1)}/index.html`
@@ -103,7 +105,7 @@ export function compileSite(
     }
   }
   if (files.length) {
-    const policy = scriptPolicy(hashes)
+    const policy = scriptPolicy(hashes, worker)
     for (const page of files) page.content = withPolicy(page.content, policy)
     for (const [path, content] of assets) files.push({ path, content })
     files.push({

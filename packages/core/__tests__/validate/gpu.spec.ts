@@ -59,7 +59,7 @@ test('GPU references are per site, gated by the registry, and preserve the stati
   assert.equal(reg.effect('mist'), undefined)
   assert.deepEqual(
     reg.effects().map(e => e.name),
-    ['rise'],
+    ['rise', 'contours'],
   )
   const plain = siteWith([owner()])
   for (const mode of ['edit', 'live', 'measure'] as const) {
@@ -166,12 +166,12 @@ test('registered shader source is checked once per build, whether used twice or 
         .find(f => f.path === page.path)!
         .content.includes('// checked build view\\n'),
     )
-  assert.deepEqual(reads, ['mist', 'spare'])
+  assert.deepEqual(reads, ['contours', 'mist', 'spare'])
   reads.length = 0
   overBudget = true
   const refused = build()
   assert.deepEqual(refused.files, [])
-  assert.deepEqual(reads, ['mist', 'spare'])
+  assert.deepEqual(reads, ['contours', 'mist', 'spare'])
   assert.equal(refused.problems.length, 1)
   const [p] = refused.problems
   assert.deepEqual(

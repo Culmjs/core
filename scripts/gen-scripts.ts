@@ -5,6 +5,10 @@ import { createHash } from 'node:crypto'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { buildSync, transformSync } from 'esbuild'
 import {
+  CONTOURS_ID,
+  CONTOURS_SOURCE,
+} from '../packages/core/src/registry/gpuBuiltins.ts'
+import {
   BASE_SOURCE,
   EMAIL_SOURCE,
   OPEN_SOURCE,
@@ -42,15 +46,23 @@ function minify(src: string): string {
 
 /** One priced artifact, including the invocation and its text/layout dependencies. */
 export function renderTimeline(): string {
+  return bundle(
+    "import {hostMotion} from './motionHost.ts'; hostMotion(document,window)",
+  )
+}
+
+function bundle(contents: string, define?: Record<string, string>) {
   return buildSync({
     stdin: {
-      contents:
-        "import {hostMotion} from './motionHost.ts'; hostMotion(document,window)",
+      contents,
       resolveDir: fileURLToPath(dir),
     },
+    define,
     bundle: true,
     format: 'iife',
-    target: 'es2017',
+    // The lazy worker lane already requires modern OffscreenCanvas and
+    // checkVisibility. Keep the page loader and existing timeline at ES2017.
+    target: define ? 'es2020' : 'es2017',
     minify: true,
     write: false,
   }).outputFiles[0].text.trim()
@@ -59,7 +71,19 @@ export function renderTimeline(): string {
 export function render(): string {
   const hash = (s: string) =>
     `sha256-${createHash('sha256').update(s).digest('base64')}`
-  const GPU_HOST_SCRIPT = shipHost('gpuHost', 'hostGpu')
+  const worker = bundle(
+    "import {gpuWorker} from './gpuWorker.ts';gpuWorker()",
+    {
+      CONTOURS: JSON.stringify(CONTOURS_SOURCE),
+    },
+  )
+  const GPU_HOST_SCRIPT = bundle(
+    "import {hostGpu} from './gpuHost.ts';hostGpu(document,window)",
+    {
+      WORKER_SOURCE: JSON.stringify(worker),
+      EFFECT_ID: JSON.stringify(CONTOURS_ID),
+    },
+  )
   const GPU_HOST_INTEGRITY = hash(GPU_HOST_SCRIPT)
   const GPU_HOST_PATH = '_culm/gpu.js'
   const GPU_LOADER_SCRIPT = shipHost(

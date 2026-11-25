@@ -10,6 +10,7 @@ import { writeHtml } from './html.ts'
 export type PageScript = {
   name: 'base' | 'states' | 'timeline' | 'gpuLoader'
   code: string
+  worker?: true
 }
 const bases = [
   BASE_SCRIPT,
@@ -35,10 +36,9 @@ export function executableHashes(scripts: PageScript[]): string[] {
   return gpu ? [hash, GPU_HOST_INTEGRITY] : [hash]
 }
 
-export function scriptPolicy(hashes: Iterable<string>) {
+export function scriptPolicy(hashes: Iterable<string>, worker = false) {
   const sources = [...new Set(hashes)].map(h => `'${h}'`).join(' ') || "'none'"
-  // The delivered host does not yet start a worker or execute modules.
-  return `script-src ${sources}; worker-src 'none'`
+  return `script-src ${sources}; worker-src ${worker ? 'blob:' : "'none'"}`
 }
 
 export const policyMeta = (content: string) =>
@@ -47,7 +47,10 @@ export const policyMeta = (content: string) =>
     attrs: { 'http-equiv': 'Content-Security-Policy', content },
   })
 export const pageScriptPolicy = (scripts: PageScript[]) =>
-  scriptPolicy(executableHashes(scripts))
+  scriptPolicy(
+    executableHashes(scripts),
+    scripts.some(s => s.worker),
+  )
 
 /** Insert only in the compiler-owned opening head, before any page-controlled content. */
 export const withPolicy = (html: string, policy: string) =>

@@ -258,7 +258,7 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
     id,
     name: id,
     kind: 'box',
-    motion,
+    motion: { ...motion, gpu: 'contours' },
     children: [
       {
         id: id + 'image',
@@ -279,6 +279,8 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
     .split('Content-Security-Policy: ')[1]
     .trim()
   const html = await readFile(join(built.out, 'index.html'), 'utf8')
+  assert.match(policy, /worker-src blob:/)
+  assert.doesNotMatch(policy, /unsafe-/)
   const checkOwners = (html: string) => {
     assert.match(html, /src="\/assets\/absent.svg"/)
     assert.equal((html.match(/data-culm-gpu="/g) ?? []).length, 1)

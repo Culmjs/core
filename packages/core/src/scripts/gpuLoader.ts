@@ -5,11 +5,17 @@ export function loadGpu(
   path: string,
   integrity: string,
 ) {
-  const allowed = () =>
-    !win.matchMedia('(prefers-reduced-motion: reduce)').matches &&
-    !(win.navigator as Navigator & { connection?: { saveData?: boolean } })
-      .connection?.saveData
-  if (!win.IntersectionObserver || !allowed()) return
+  const data = doc.getElementById('culm-gpu') as
+    (HTMLElement & { observed?: boolean }) | null
+  if (!data || data.observed || !win.IntersectionObserver) return
+  data.observed = true
+  const motion = win.matchMedia('(prefers-reduced-motion: reduce)')
+  const nav = win.navigator as Navigator & {
+    connection?: EventTarget & { saveData?: boolean }
+  }
+  const connection = nav.connection
+  const allowed = () => !motion.matches && !nav.connection?.saveData
+  let loaded = false
   const observer = new win.IntersectionObserver(
     entries => {
       if (
@@ -23,6 +29,10 @@ export function loadGpu(
       )
         return
       observer.disconnect()
+      size?.disconnect()
+      loaded = true
+      motion.removeEventListener('change', observe)
+      connection?.removeEventListener?.('change', observe)
       const script = doc.createElement('script')
       script.src = path
       script.integrity = integrity
@@ -30,5 +40,27 @@ export function loadGpu(
     },
     { rootMargin: '200px' },
   )
-  doc.querySelectorAll('[data-culm-gpu]').forEach(el => observer.observe(el))
+  // An edge-intersecting zero-area box can grow without crossing another
+  // intersection threshold. Ask for a fresh entry after its layout changes.
+  const size =
+    win.ResizeObserver &&
+    new win.ResizeObserver(entries => {
+      if (!loaded && allowed())
+        for (const { target } of entries) {
+          observer.unobserve(target)
+          observer.observe(target)
+        }
+    })
+  function observe() {
+    observer.disconnect()
+    size?.disconnect()
+    if (!loaded && allowed())
+      doc.querySelectorAll('[data-culm-gpu]').forEach(el => {
+        observer.observe(el)
+        size?.observe(el)
+      })
+  }
+  motion.addEventListener('change', observe)
+  connection?.addEventListener?.('change', observe)
+  observe()
 }

@@ -19,6 +19,7 @@ import {
   shaderSnapshot,
 } from '../registry/gpu.ts'
 import type { GpuEffectDef, Registry } from '../registry/index.ts'
+import { contours, CONTOURS_ID } from '../registry/gpuBuiltins.ts'
 import { layoutDisplays } from '../layout/display.ts'
 import { add, type Ctx } from './common.ts'
 import { visibleText } from './required.ts'
@@ -44,7 +45,10 @@ function shaderOk(
   return false
 }
 
-export type CheckedEffect = CustomEffect & Pick<GpuEffectDef, 'wasm'>
+export type CheckedEffect = CustomEffect &
+  Pick<GpuEffectDef, 'wasm'> & {
+    builtin?: typeof CONTOURS_ID
+  }
 
 /** A build consumes the same source that it checked, including for registered effects. */
 export function checkedRegistrations(registry: Registry, out: Problem[]) {
@@ -69,6 +73,7 @@ export function checkedRegistrations(registry: Registry, out: Problem[]) {
     if (valid)
       byName.set(name, {
         ...shaderSnapshot({ name, source, settings }),
+        ...(d === contours && { builtin: CONTOURS_ID }),
         ...(wasm && { wasm }),
       })
   }

@@ -4,6 +4,7 @@ import {
   type ShaderSettings,
 } from '../document/index.ts'
 import { fieldsOf, isRecord, UNSAFE_FIELDS } from '../document/rules.ts'
+import { contours } from './gpuBuiltins.ts'
 
 export type GpuEffectDef = CustomEffect & {
   tier: 3
@@ -122,9 +123,10 @@ export function gpuAuthority(options?: GpuOptions) {
   const approved = (options.approvedWasmPlugins ?? []).map(
     ({ name, version }) => ({ name, version }),
   )
-  const reviewed = (options.reviewed ?? []).map(d =>
-    checkedSnapshot(d, customKeys),
-  )
+  const reviewed = [
+    contours,
+    ...(options.reviewed ?? []).map(d => checkedSnapshot(d, customKeys)),
+  ]
   return {
     capability: Object.freeze({
       enabled: true as const,

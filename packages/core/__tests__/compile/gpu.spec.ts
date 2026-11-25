@@ -71,6 +71,35 @@ const payload = (html: string) =>
     )![1],
   )
 
+test('only the actual registered contours earns a worker, including the deployed union', () => {
+  const doc = twoPages([owner('trusted', 'contours')], [owner('custom')], {
+    customEffects: [def],
+  })
+  const trusted = page(doc)
+  assert.equal(payload(trusted.html).definitions[0].builtin, 'contours-v1')
+  assert.match(policy(trusted.html), /worker-src blob:/)
+  assert.doesNotMatch(policy(trusted.html), /unsafe-/)
+  assert.ok(
+    registry.gpu?.isReviewed(registry.effect('contours') as CustomEffect),
+  )
+  assert.match(policy(page(repeated()).html), /worker-src 'none'/)
+  const stripOnly = siteWith()
+  stripOnly.header.children = [owner('strip', 'contours')]
+  assert.match(policy(page(stripOnly).html), /worker-src 'none'/)
+  const deployed = compileSite(doc, { registry })
+  assert.deepEqual(deployed.problems, [])
+  for (const f of deployed.files.filter(f => f.path.endsWith('.html')))
+    assert.match(policy(f.content), /worker-src blob:/)
+  const copy = page(doc, {
+    registry: {
+      ...registry,
+      effects: () => registry.effects().map(e => ({ ...e })),
+    },
+  })
+  assert.equal(payload(copy.html).definitions[0].builtin, undefined)
+  assert.match(policy(copy.html), /worker-src 'none'/)
+})
+
 test('two rendered copies share one checked definition and fixed lazy asset; JSON round trips', () => {
   const p = page(repeated())
   const tokens = [...p.html.matchAll(/data-culm-gpu="([^"]+)"/g)].map(m => m[1])
@@ -355,7 +384,11 @@ const registryWithModule = (wasm: unknown) => ({
   effects: () =>
     registry
       .effects()
-      .map(e => (e.tier === 3 ? { ...e, wasm: wasm as typeof e.wasm } : e)),
+      .map(e =>
+        e.tier === 3 && e.name === 'field'
+          ? { ...e, wasm: wasm as typeof e.wasm }
+          : e,
+      ),
 })
 test('every build refuses a malformed or oversized module view before emitting files', () => {
   const doc = siteWith([owner('hero', 'field')])
