@@ -13,7 +13,7 @@ import { node, siteWith, text } from '../packages/core/__tests__/kit.ts'
 import { openBrowser } from '../packages/tools/src/measure/browser.ts'
 import { renderGpuWorker } from './gen-scripts.ts'
 
-const root = '.superpowers/gpu-flash/fix-1'
+const root = '.superpowers/gpu-flash/fix-2'
 const sha = (data: string | Uint8Array) =>
   createHash('sha256').update(data).digest('hex')
 const run = (cmd: string, args: string[]) => {

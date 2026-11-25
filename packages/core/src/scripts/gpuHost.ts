@@ -24,14 +24,21 @@ function backdrop(el: HTMLElement, main: Element) {
     )
   )
     return
-  let signature = ''
+  // A covering opaque base hides the whole ancestor paint chain, even
+  // before first exposure. Still check the ancestors' stacking constraints.
+  const opaque =
+    ['border-box', 'padding-box'].includes(style.backgroundClip) &&
+    /^rgb\((\d+), (\d+), (\d+)\)$/.exec(style.backgroundColor)
+  const rgb = style.backgroundImage === 'none' && opaque
+  let signature = rgb ? style.backgroundColor : style.background
   for (let n: Element | null = el; n; n = n.parentElement) {
     const s = getComputedStyle(n)
     if (n !== main && (s.isolation !== 'auto' || s.containerType !== 'normal'))
       return
-    signature += s.background + ';'
+    if (n !== el && !opaque) signature += ';' + s.background
     if (n === main) break
   }
+  const live = el.hasAttribute('data-gpu-painted')
   for (const n of [el, ...el.querySelectorAll('*')]) {
     const s = getComputedStyle(n)
     if (
@@ -48,21 +55,43 @@ function backdrop(el: HTMLElement, main: Element) {
       )
     )
       return
-    if (
-      n !== el &&
-      ((s.position !== 'static' && s.position !== 'relative') ||
-        (n.parentElement === el &&
-          (!['auto', '0px'].includes(s.inset) ||
-            (s.zIndex !== 'auto' &&
-              !(el.hasAttribute('data-gpu-painted') && s.zIndex === '1')))))
-    )
-      return
+    if (n !== el) {
+      const direct = n.parentElement === el
+      if (
+        (s.position !== 'static' && s.position !== 'relative') ||
+        (direct && !['auto', '0px'].includes(s.inset)) ||
+        (live && direct
+          ? s.position !== 'relative' || s.zIndex !== '1'
+          : s.zIndex !== 'auto')
+      )
+        return
+    }
   }
-  const rgb =
-    style.backgroundImage === 'none' &&
-    ['border-box', 'padding-box'].includes(style.backgroundClip) &&
-    /^rgb\((\d+), (\d+), (\d+)\)$/.exec(style.backgroundColor)
+  // The zero-specificity promotion must really win on ordinary children.
+  // Probe synchronously, after validating unpromoted paint and before any
+  // acquisition or reveal; e.g. an explicit position:static remains static.
+  if (!live) {
+    el.setAttribute('data-gpu-probe', '')
+    try {
+      for (const child of el.children) {
+        const s = getComputedStyle(child)
+        if (s.position !== 'relative' || s.zIndex !== '1') return
+      }
+    } finally {
+      el.removeAttribute('data-gpu-probe')
+    }
+  }
   return { signature, seed: rgb ? rgb.slice(1).map(v => +v / 255) : [] }
+}
+
+type Stamp = { layout: string; fallback: string } | undefined
+function matches(prior: Stamp, current: Stamp, live: boolean) {
+  return (
+    prior &&
+    current &&
+    prior.layout === current.layout &&
+    (live || prior.fallback === current.fallback)
+  )
 }
 
 export function hostGpu(doc: Document, win: Window): void {
@@ -126,12 +155,13 @@ export function hostGpu(doc: Document, win: Window): void {
     watchdog = 0,
     last = 0,
     elapsed = 0
-  let acknowledged: string[] = [],
-    submitted: string[] = []
+  let acknowledged: Stamp[] = [],
+    submitted: Stamp[] = []
   // Acknowledgements identify a completed layout, not just a linked program.
   // An old scissor list cannot uncover a poster after a scroll or reflow.
   let quality: Quality = { scale: 0.25, fast: 0, slow: 0 }
-  let participants = ''
+  let previousDraw = new Set<string>(),
+    slowWitnesses = new Set<string>()
   let px = 0,
     py = 0
   function reset(el: HTMLElement) {
@@ -242,30 +272,33 @@ export function hostGpu(doc: Document, win: Window): void {
           }, 500)
         return
       }
-      const group = rects.map(r => Number(!!r)).join('')
-      if (group !== participants) {
-        last = quality.slow = quality.fast = 0
-        participants = group
-      }
-      const shape = rects.map((r, i) =>
-        r
-          ? JSON.stringify([
-              width,
-              height,
-              ...boxes[i],
-              paints[i] && paints[i].signature,
-            ])
-          : '',
+      const shape: Stamp[] = paints.map((p, i) =>
+        p
+          ? {
+              layout: [width, height, ...boxes[i]].join(),
+              fallback: p.signature,
+            }
+          : undefined,
       )
       const dt = last ? Math.min(33, now - last) : 0
       let surface: OffscreenCanvas | undefined
       if (!watchdog) {
         if (last) {
-          quality = nextQuality(quality, now - last)
+          const interval = now - last
+          // Cadence is page-wide, attribution is not. Charge each interval
+          // to the preceding real draw (which has completed at this point).
+          if (interval > 25) {
+            if (!quality.slow) slowWitnesses = new Set(previousDraw)
+            else
+              for (const key of slowWitnesses)
+                if (!previousDraw.has(key)) slowWitnesses.delete(key)
+          }
+          quality = nextQuality(quality, interval)
           if (quality.scale === 'fallback') {
             try {
               rects.forEach((r, i) => {
-                if (r) w.localStorage[keys[i]] = '1'
+                if (r && slowWitnesses.has(keys[i]))
+                  w.localStorage[keys[i]] = '1'
               })
             } catch {
               /* terminal in memory */
@@ -283,13 +316,19 @@ export function hostGpu(doc: Document, win: Window): void {
       const draws: Region[] = []
       rects.forEach((r, i) => {
         const el = owners[i]
-        if (acknowledged[i] && acknowledged[i] !== shape[i]) {
+        if (
+          acknowledged[i] &&
+          !matches(acknowledged[i], shape[i], el.hasAttribute(mark))
+        ) {
           reset(el)
-          acknowledged[i] = ''
+          acknowledged[i] = undefined
         }
-        if (watchdog && submitted[i] !== shape[i]) submitted[i] = ''
+        const live = el.hasAttribute(mark)
+        if (watchdog && !matches(submitted[i], shape[i], live))
+          submitted[i] = undefined
         if (!r) return
-        if (!watchdog && acknowledged[i] === shape[i]) el.setAttribute(mark, '')
+        if (!live && !watchdog && matches(acknowledged[i], shape[i], false))
+          el.setAttribute(mark, '')
         const painted = el.hasAttribute(mark)
         if (painted) {
           const [l, t, right, b] = boxes[i]
@@ -319,6 +358,7 @@ export function hostGpu(doc: Document, win: Window): void {
           ],
           surface ? [surface] : [],
         )
+        previousDraw = new Set(draws.map(r => keys[r[4]]))
       }
       schedule()
     } catch {
@@ -328,7 +368,8 @@ export function hostGpu(doc: Document, win: Window): void {
   function pause() {
     hide()
     last = 0
-    participants = ''
+    previousDraw.clear()
+    slowWitnesses.clear()
     quality.fast = quality.slow = 0
   }
   const io = new w.IntersectionObserver(schedule)

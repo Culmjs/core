@@ -15,6 +15,7 @@ const setup = async (
   source: string,
   poster = false,
   width = 320,
+  extraChildren: (owner: number) => ReturnType<typeof node>[] = () => [],
 ) => {
   const dir = await mkdtemp(join(tmpdir(), 'culm-compose-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
@@ -31,6 +32,7 @@ const setup = async (
             props: { level: 'h1', runs: [{ text: 'Reading the tide' }] },
           }),
           text('caption' + i, 'An illustrated field survey of the riverbank.'),
+          ...extraChildren(i),
         ]),
         style: {
           base: {
@@ -72,13 +74,13 @@ const setup = async (
   await p.setReducedMotion(false)
   assert.ok((await p.goto(pathToFileURL(file).href, 10000)).ok)
   await p.evaluate(`(()=>{
-    window.owners=[...document.querySelectorAll('[data-gpu-run]')];
+    window.owners=[...document.querySelectorAll('[data-culm-gpu]')];
     const raf=requestAnimationFrame;window.paint=()=>new Promise(r=>raf(()=>raf(r)));
     let next,at=100,ack;window.requestAnimationFrame=f=>{next=f;return 1};
-    window.workerCount=0;window.work=[];window.draws=[];window.held=false;
+    window.workerCount=0;window.work=[];window.draws=[];window.members=[];window.held=false;
     window.Worker=class extends Worker{constructor(...a){super(...a);workerCount++;
       this.addEventListener('message',e=>{if(e.data!==1)throw Error('GL failed: '+e.data);if(ack)setTimeout(ack,0)})}
-      postMessage(msg,...a){work.push(msg[0]);draws.push(msg[2].length);super.postMessage(msg,...a)}
+      postMessage(msg,...a){work.push(msg[0]);draws.push(msg[2].length);members.push(msg[2].map(r=>r[4]));super.postMessage(msg,...a)}
       set onmessage(f){super.onmessage=e=>{if(held)window.release=()=>f(e);else f(e)}}};
     window.ticks=async(n,dt=1000/60)=>{for(let i=0;i<n;i++){
       const prev=work.length,cb=next;next=null;if(!cb)return;
@@ -103,6 +105,240 @@ const marked = `owners.map(e=>e.hasAttribute('data-gpu-painted'))`
 const alternating =
   'vec4 shade(vec2 uv){return vec4(vec3(float(int(uv.x*u_resolution.x)%2)),0.0);}'
 const middle = 'vec4 shade(vec2 uv){return vec4(vec3(0.5),0.0);}'
+test('a covered main background change preserves active history and the paint marker', async t => {
+  const { p, start, tick } = await setup(
+    t,
+    'vec4 shade(vec2 uv){return vec4(vec3(u_pointer.x>0.0?1.0:0.8),1.0);}',
+  )
+  const pt: Point[] = [[42, 180]]
+  assert.deepEqual(await samples(p, pt), [153])
+  await p.evaluate('held=true')
+  await start()
+  await tick(1, 20)
+  await p.evaluate(
+    `document.querySelector('main').style.backgroundColor='#112233';held=false;release()`,
+  )
+  await tick(1, 20)
+  assert.deepEqual(await p.evaluate(marked), [true, true])
+  await tick(190, 20)
+  assert.deepEqual(await samples(p, pt), [204])
+  await p.evaluate(
+    `dispatchEvent(new PointerEvent('pointermove',{clientX:42}))`,
+  )
+  let last = 204
+  for (let i = 0; i < 4; i++) {
+    await tick(1, 20)
+    ;[last] = await samples(p, pt)
+  }
+  assert.ok(last > 204 && last < 255)
+  const before = last
+  // Detect even a remove/re-add between observations; setting an existing
+  // empty attribute again does not give it a null oldValue.
+  await p.evaluate(`window.readded=false;new MutationObserver(rs=>{
+    if(rs.some(r=>r.oldValue===null))readded=true
+  }).observe(owners[0],{attributes:true,attributeFilter:['data-gpu-painted'],attributeOldValue:true});
+  document.querySelector('main').style.backgroundColor='#046884'`)
+  assert.deepEqual(await samples(p, pt), [before])
+  for (let i = 0; i < 6; i++) {
+    await tick(1, 20)
+    const [v] = await samples(p, pt)
+    assert.ok(v >= last && v <= last + 1, JSON.stringify({ before, last, v }))
+    assert.deepEqual(await p.evaluate(marked), [true, true])
+    last = v
+  }
+  assert.ok(last > before)
+  // The live layer is opaque now. A change to its own hidden solid seed is
+  // also irrelevant, unlike a change before its first paint acknowledgement.
+  await p.evaluate(`owners[0].style.backgroundColor='#010101'`)
+  await tick(1, 20)
+  const [stillLive] = await samples(p, pt)
+  assert.ok(stillLive >= last && stillLive <= last + 1)
+  assert.deepEqual(await p.evaluate(marked), [true, true])
+  assert.equal(await p.evaluate('readded'), false)
+  t.diagnostic(JSON.stringify({ poster: 153, before, after: last }))
+})
+test('foreground promotion preserves authored negative-z paint or leaves its owner static', async t => {
+  const slab = () => ({ n: 44, unit: 'px' }) as const
+  const { p, start, tick } = await setup(
+    t,
+    'vec4 shade(vec2 uv){return vec4(vec3(u_set_speed>0.0?0.6:239.0/255.0),1.0);}',
+    false,
+    320,
+    i =>
+      i
+        ? [
+            {
+              ...node('conditional', 'box'),
+              style: {
+                base: { bg: '#dedede', height: slab(), position: 'relative' },
+                dark: { z: -1 },
+              },
+            },
+          ]
+        : [
+            {
+              ...node('paper', 'box', [
+                {
+                  ...node('underlay', 'box'),
+                  style: {
+                    base: {
+                      bg: '#e0e0e0',
+                      height: slab(),
+                      position: 'relative',
+                      z: -1,
+                    },
+                  },
+                },
+              ]),
+              style: { base: { bg: '#181818', height: slab() } },
+            },
+          ],
+  )
+  await p.setScheme('light')
+  const pts = await p.evaluate<Point[]>(
+    `owners.map(e=>{const r=e.lastElementChild.getBoundingClientRect();return [Math.floor(r.x+r.width/2),Math.floor(r.y+r.height/2)]})`,
+  )
+  assert.deepEqual(
+    await p.evaluate(
+      `(()=>{const paper=owners[0].lastElementChild,s=getComputedStyle(paper.firstElementChild);return [getComputedStyle(paper).zIndex,s.position,s.zIndex]})()`,
+    ),
+    ['auto', 'relative', '-1'],
+  )
+  const light = await samples(p, pts)
+  assert.deepEqual(light, [24, 222])
+  await p.setScheme('dark')
+  assert.equal(
+    await p.evaluate(`getComputedStyle(owners[1].lastElementChild).zIndex`),
+    '-1',
+  )
+  const dark = await samples(p, pts)
+  assert.deepEqual(dark, [24, 239])
+  await p.setScheme('light')
+  await start()
+  await tick(5)
+  // Shaders match the opaque posters. Any change here is a paint-order change.
+  const liveLight = await samples(p, pts)
+  const lightMarkers = await p.evaluate<boolean[]>(marked)
+  await p.setScheme('dark')
+  await tick(5)
+  const liveDark = await samples(p, pts)
+  assert.deepEqual(
+    { liveLight, liveDark, lightMarkers, marked: await p.evaluate(marked) },
+    {
+      liveLight: light,
+      liveDark: dark,
+      lightMarkers: [false, true],
+      marked: [false, false],
+    },
+  )
+})
+test('continuous slow draws downshift through neighbour churn and remember only the continuous effect', async t => {
+  const { p, start, tick } = await setup(t, middle)
+  const points: Point[] = [
+    [42, 180],
+    [42, 500],
+  ]
+  const fallback = await samples(p, points)
+  await start()
+  await tick(125, 16)
+  assert.deepEqual(await p.evaluate(marked), [true, true])
+  assert.equal(await p.evaluate('work.at(-1)'), 320)
+  await p.evaluate(`window.slowStart=work.length`)
+  for (let group = 0; group < 6; group++) {
+    // Four absent, four present. The intermittent effect is PRESENT on the
+    // final slow opportunity but never participates for eight consecutively.
+    await p.evaluate(`owners[1].style.marginTop='${group % 2 ? '0' : '900px'}'`)
+    assert.equal(
+      await p.evaluate(`owners[1].getBoundingClientRect().top<innerHeight`),
+      !!(group % 2),
+    )
+    await tick(4, 40)
+  }
+  const ids = await p.evaluate<number[][]>('members.slice(slowStart)')
+  assert.ok(ids.length >= 17 && ids.length <= 24, JSON.stringify(ids))
+  ids.forEach((r, i) =>
+    assert.deepEqual(r, Math.floor(i / 4) % 2 ? [0, 1] : [0]),
+  )
+  const widths = await p.evaluate<number[]>(
+    '[...new Set(work.slice(slowStart))]',
+  )
+  assert.deepEqual(widths, [320, 160, 80])
+  assert.equal(
+    await p.evaluate(
+      `document.querySelectorAll('canvas,[data-gpu-painted]').length`,
+    ),
+    0,
+  )
+  assert.deepEqual(await samples(p, points), fallback)
+  const keys = await p.evaluate<string[]>(
+    `Object.keys(localStorage).filter(k=>k.startsWith('culm:slow:')&&localStorage[k]==='1')`,
+  )
+  assert.equal(keys.length, 1)
+  assert.ok(keys[0].includes('"survey_contours"'), JSON.stringify(keys))
+  t.diagnostic(
+    JSON.stringify({ widths, draws: ids.length, flagged: 'survey_contours' }),
+  )
+})
+test('disjoint drawable owners share the device clock but earn no persistent slow identity', async t => {
+  const { p, start, tick } = await setup(t, middle)
+  const solo = (i: number) =>
+    p.evaluate(
+      `owners.forEach((e,j)=>e.style.visibility=j===${i}?'visible':'hidden')`,
+    )
+  await solo(0)
+  await start()
+  for (let g = 0; g < 32; g++) {
+    await solo(g % 2)
+    await tick(4, 16)
+  }
+  assert.deepEqual(await p.evaluate('[...new Set(work)]'), [80, 160, 320])
+  await p.evaluate('window.slowStart=work.length')
+  for (let g = 0; g < 6; g++) {
+    await solo(g % 2)
+    await tick(4, 40)
+  }
+  assert.deepEqual(
+    await p.evaluate('[...new Set(work.slice(slowStart))]'),
+    [320, 160, 80],
+  )
+  assert.ok(
+    await p.evaluate(
+      `draws.every(n=>n===1) && !document.querySelector('canvas') && !Object.keys(localStorage).some(k=>k.startsWith('culm:slow:'))`,
+    ),
+  )
+})
+test('resuming from hidden starts a fresh slow window charged to the preceding completed draws', async t => {
+  const { p, start, tick } = await setup(t, middle)
+  await p.evaluate(`owners[1].style.visibility='hidden'`)
+  await start()
+  await tick(6, 40)
+  await p.evaluate(
+    `Object.defineProperty(document,'hidden',{value:true,configurable:true});document.dispatchEvent(new Event('visibilitychange'))`,
+  )
+  const paused = await p.evaluate<number>('work.length')
+  await tick(1, 60000)
+  assert.equal(await p.evaluate('work.length'), paused)
+  await p.evaluate(
+    `delete document.hidden;document.dispatchEvent(new Event('visibilitychange'))`,
+  )
+  await tick(1, 60000)
+  assert.deepEqual(await p.evaluate('members.at(-1)'), [0])
+  await p.evaluate(`owners[1].style.visibility='visible'`)
+  await tick(7, 40)
+  assert.deepEqual(await p.evaluate(marked), [true, true])
+  assert.ok(
+    await p.evaluate(
+      `members.slice(-7).every(r=>r.join()==='0,1') && !localStorage.length`,
+    ),
+  )
+  // Both are eligible now, but only seven of the eight timed draws included 1.
+  await tick(1, 40)
+  assert.ok(
+    await p.evaluate(
+      `!document.querySelector('canvas') && Object.keys(localStorage).length===1 && Object.keys(localStorage)[0].includes('"survey_contours"')`,
+    ),
+  )
+})
 test('overlapping foreground layers stay static; a clipped background does not seed an opaque padding fringe', async t => {
   const { p, start, tick } = await setup(t, middle)
   await p.evaluate(
