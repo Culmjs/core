@@ -65,6 +65,46 @@ test('bytes count original UTF-8, including comments and CRLF', () => {
   rejects_at_source_line(at + '!', ['shader.bytes', 2, 4097, 4096])
 })
 
+test('WebGL2 token length is inclusive for identifiers and numeric literals', () => {
+  for (const declaration of [
+    (n: number) => `float ${'a'.repeat(n)}=0.;`,
+    (n: number) => `float a=1.${'0'.repeat(n - 2)};`,
+  ]) {
+    const source = (n: number) => shade(`// declaration\r\n${declaration(n)}`)
+    assert.ok(Buffer.byteLength(source(1025)) < SHADER_LIMITS.bytes)
+    assert.equal(cost(source(1024)).ops, 2)
+    rejects_at_source_line(source(1025), ['shader.token', 3, 1025, 1024])
+  }
+})
+
+test('grouping preserves writable locals and component selection costs', () => {
+  for (const lhs of ['p.x', '(p).x', '(p.x)', '((\np\n).x)'])
+    assert.equal(cost(shade(`vec2 p=uv;\n${lhs}=0.;`)).ops, 4)
+})
+
+test('grouped writes retain the counter or read-only input source line', () => {
+  for (const write of [
+    '(\ni\n)=0;',
+    '((\ni\n))+=1;',
+    '(\ni\n)++;',
+    '++(\ni\n);',
+  ])
+    rejects_at_source_line(shade(loop(1, write)), [
+      'shader.loop',
+      3,
+      'i',
+      'read-only counter',
+    ])
+  rejects_at_source_line(shade('(\nu_resolution\n).x=0.;'), [
+    'shader.assignment',
+    3,
+    'u_resolution',
+    'writable local',
+  ])
+  assert.equal(checkShader(shade('(uv.xx)=uv;'), {}).ok, false)
+  assert.equal(checkShader(shade('(uv+uv).x=0.;'), {}).ok, false)
+})
+
 test('rejects_at_source_line: closed syntax and calls, including unused helpers', () => {
   const cases: [string, Parameters<typeof rejects_at_source_line>[1]][] = [
     [

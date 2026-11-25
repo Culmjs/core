@@ -17,6 +17,7 @@ const end = '<end>'
 const identifier = /^[A-Za-z_][A-Za-z_0-9]*$/
 const decimalInt = /^(?:0|[1-9][0-9]*)$/
 const intMax = 2147483647
+const maxTokenChars = 1024 // WebGL 2.0: Maximum GLSL Token Size
 
 /** The byte gate runs first. Normalize line endings only for parsing, not pricing. */
 function tokenize(source: string): Token[] {
@@ -58,6 +59,8 @@ function tokenize(source: string): Token[] {
     }
     lex.lastIndex = i
     const text = lex.exec(s)?.[0] ?? s[i]
+    if (text.length > maxTokenChars)
+      refuse('token', line, text.length, maxTokenChars)
     if (text === '#') refuse('directive', line, text, 'no directives')
     tokens.push({ text, line })
     i += text.length
@@ -111,11 +114,16 @@ const precedence = new Map(
   bands.flatMap((ops, i) => ops.map(op => [op, i + 1] as const)),
 )
 type Binding = { type: Type; counter?: boolean }
-type Expr = { type: Type; cost: Work; writable?: boolean }
+type Target = { token: Token; access: 'writable' | 'readonly' | 'counter' }
+type Expr = { type: Type; cost: Work; target?: Target }
 type Flow = { cost: Work; returns?: boolean }
 type Helper = { type: Value; params: Value[]; cost: Work }
 const matchType = (t: Token, got: Type, want: Type) => {
   if (got !== want) refuse('type', t.line, got, want)
+}
+function rejectCounterWrite(target?: Target) {
+  if (target?.access === 'counter')
+    refuse('loop', target.token.line, target.token.text, 'read-only counter')
 }
 const writes = new Set([
   '=',
@@ -330,7 +338,10 @@ class Parser {
     const lhs = this.expr()
     let cost = lhs.cost
     if (this.eat('=')) {
-      if (!lhs.writable) refuse('assignment', t.line, t.text, 'writable local')
+      if (lhs.target?.access !== 'writable') {
+        const at = lhs.target?.token ?? t
+        refuse('assignment', at.line, at.text, 'writable local')
+      }
       const first = this.token
       const rhs = this.expr()
       matchType(first, rhs.type, lhs.type)
@@ -391,10 +402,14 @@ class Parser {
   }
   private unary(): Expr {
     const t = this.token
-    if (['+', '-', '!'].includes(t.text)) {
+    if (['+', '-', '!', '++', '--'].includes(t.text)) {
       this.at++
       return this.nested(t, () => {
         const e = this.unary()
+        if (t.text === '++' || t.text === '--') {
+          rejectCounterWrite(e.target)
+          refuse('syntax', t.line, t.text, 'simple assignment')
+        }
         if (t.text === '!') matchType(t, e.type, 'bool')
         else if (!isValue(e.type) || e.type === 'bool')
           refuse('type', t.line, e.type, 'numeric operand')
@@ -418,18 +433,22 @@ class Parser {
       e = {
         type,
         cost: plus(e.cost, work(1)),
-        writable: e.writable && new Set(s).size === s.length,
+        target:
+          e.target && new Set(s).size !== s.length
+            ? { token: e.target.token, access: 'readonly' }
+            : e.target,
       }
     }
+    if (writes.has(this.token.text)) rejectCounterWrite(e.target)
     return e
   }
   private primary(): Expr {
     const t = this.token
     if (this.eat('('))
       return this.nested(t, () => {
-        const { type, cost } = this.expr()
+        const e = this.expr()
         this.want(')')
-        return { type, cost }
+        return e
       })
     if (/^[0-9.]/.test(t.text) && t.text !== '.') {
       this.at++
@@ -449,23 +468,23 @@ class Parser {
     }
     if (this.eat('true') || this.eat('false'))
       return { type: 'bool', cost: work() }
-    if (['++', '--'].includes(t.text)) {
-      const next = this.tokens[this.at + 1]
-      if (this.local(next.text)?.counter)
-        refuse('loop', next.line, next.text, 'read-only counter')
-    }
     const name = this.name()
     if (this.eat('(')) return this.nested(name, () => this.call(name))
     const local = this.local(name.text)
-    if (local?.counter && writes.has(this.token.text))
-      refuse('loop', name.line, name.text, 'read-only counter')
     const type = local?.type ?? this.inputs.get(name.text)
     if (!type) {
       if (name.text.startsWith('u_'))
         refuse('input', name.line, name.text, 'declared input')
       refuse('name', name.line, name.text, 'declared variable')
     }
-    return { type, cost: work(), writable: !!local && !local.counter }
+    return {
+      type,
+      cost: work(),
+      target: {
+        token: name,
+        access: local?.counter ? 'counter' : local ? 'writable' : 'readonly',
+      },
+    }
   }
   private call(t: Token): Expr {
     const args: Type[] = []

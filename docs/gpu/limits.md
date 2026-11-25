@@ -96,6 +96,10 @@ For **each** metric (`passes`, `reads`, `ops`):
 
 The language has `bool`/`int`/`float` and float vectors, explicit scalar conversions, vector splat/packing, and swizzles within one of `xyzw`, `rgba`, `stpq`. Types must match for initialization, assignment, helper arguments and returns. Variables are local or value parameters (`in` is optional); assignments can target writable locals/parameters or their distinct components. Counters cannot be shadowed or written in the body. Inputs are read-only: `u_time` and `u_scroll` are `float`; `u_resolution` and `u_pointer` are `vec2`; `u_noise` is the only `sampler2D`. `u_set_<key>` is `float` for a finite number setting or `vec3` for a `#rrggbb` colour. Keys match `[a-z][a-z0-9_]{0,31}`, excluding unsafe fields and GLSL's reserved double underscore. The spike's `u_field` is private to a future trusted built-in.
 
+### WebGL 2 lexical rule
+
+The [WebGL 2.0 specification](https://registry.khronos.org/webgl/specs/2.0.0/) (“Maximum GLSL Token Size”) allows tokens of up to **1,024 characters** in both ESSL 1 and ESSL 3 shaders; longer tokens must fail to compile. The checker enforces this for each token, including identifiers and numeric literals. All tokens in the subset are ASCII. Comments and whitespace are not tokens, but still count toward the separate 4,096-byte source cap. A `shader.token` refusal gives the token's authored line, actual character count and limit of 1,024. Token length adds no per-pixel cost.
+
 ## Browser evidence
 
 - **Composition.** `insertBlock('hero','plain',…)` and `compilePage` produced the heading, art and link. Two 1,280 × 400 hero regions occupied y=0–400 and 400–800 in a 1,280 × 900 viewport at DPR 1. Both `.s-site` and `main` kept their opaque `rgb(246,243,232)` backgrounds. One transferred 320 × 225 canvas, one worker context, separate raw and previous/next RGBA8 targets per region. The negative-z, pointer-transparent canvas is inside an isolated `main`, above its background, below the content.
