@@ -2,24 +2,32 @@
 
 The limits are **6,144 raw minified UTF-8 bytes for the GPU host, worker included**, and **20,000 for the page's shared JS**, including joins and lazy assets. The starting checkpoint `6850661` cost **11,570 / 23,593** on the mixed fixture; its release cost **6,070 / 18,093**. Pricing an isolated candidate does not enable it in production.
 
+**Result:** Both checked mixed pages fit the aggregate. The standalone GPU-host limit is the remaining byte blocker. These are [actual compiler outputs](evidence/size-work/final-bytes.json), including the SRI-bound lazy asset.
+
+| Final raw JS                                  | Trusted release | Checked candidate | Ceiling | Candidate headroom |
+| --------------------------------------------- | --------------: | ----------------: | ------: | -----------------: |
+| GPU host, including worker                    |           6,070 |         **9,012** |   6,144 |         **−2,868** |
+| Standard mixed page                           |          14,542 |        **17,484** |  20,000 |             +2,516 |
+| Mixed page with a pointer-controlled timeline |          17,055 |        **19,997** |  20,000 |                 +3 |
+
 ## What the page pays for
 
 The compiler now inspects the **emitted** timeline scenes, including shared roots and expanded instances. If every timeline is a stationary load or entrance with no pin, SVG draw, native fallback or interactive clock, it selects playback code without those unused branches. Text splitting, font readiness, remounting, reduced motion and animation restoration still run. A single scene needing the full timeline selects it for the whole page. Both variants come from the same source; there is no late download. The page policy grants the hash of the exact joined bytes.
 
-On the mixed fixture the playback timeline costs **5,294 bytes**, down from 8,177; the full timeline for a richer page costs **7,941** (limit 8,192). Sharing observer teardown in the lazy loader brings its cost including the join from **1,195 to 1,052**. The mixed fixture therefore pays **8,997** inline JS bytes, vs 12,023 before. Its states, text entrance, email and open-layer features are still present.
+On the mixed fixture the playback timeline costs **4,769 bytes**, down from 8,177; the full timeline for a richer page costs **7,282** (limit 8,192). Sharing observer teardown in the lazy loader brings its cost including the join from **1,195 to 1,052**. The standard mixed fixture now pays **8,472** inline JS bytes, vs 12,023 before. The pointer-controlled fixture pays **10,985** inline bytes. The states, text entrance, email and open-layer features are still present.
 
 | Mixed fixture: release, raw JS |        Before |         After |
 | ------------------------------ | ------------: | ------------: |
 | Base / states                  |   688 / 1,963 |   688 / 1,963 |
-| Timeline / GPU loader          | 8,177 / 1,195 | 5,294 / 1,052 |
+| Timeline / GPU loader          | 8,177 / 1,195 | 4,769 / 1,052 |
 | GPU host (worker included)     |         6,070 |         6,070 |
-| Page total                     |        18,093 |    **15,067** |
+| Page total                     |        18,093 |    **14,542** |
 
 The timeline and checked GPU build also share repeated literal DOM property names as ordinary lexical variables. An access such as `element[key]()` stays bound to `element`; every key and all executable code remain in the artifact. No runtime decoder or additional resource is involved.
 
 ## Checked renderer
 
-At GPU checkpoint `dddaa47`, the host and worker measured **8,963** and **2,972** bytes, down from **11,570** and **3,858**. The normal unreviewed mixed fixture measured **17,960 / 20,000**. Adding a pointer-controlled clock selected the full timeline; that fixture measured **20,607 / 20,000** at this checkpoint.
+At interim GPU checkpoint `dddaa47`, the host and worker measured **8,963** and **2,972** bytes, down from **11,570** and **3,858**. The page results above include the final timeline compaction (`5195403`) and scroll fix.
 
 Review found a real wakeup regression: merely touching an intersection edge can count as intersecting, so moving into view need not trigger another observer callback. `396f76e` restored coalesced scroll and viewport resize wakeups (including nested scroll capture) at a cost of **49 bytes**. The host is now **9,012 bytes**: **2,979** for the quoted worker including delimiters and escaping, **6,033** for the rest. It still exceeds the **6,144** host ceiling by **2,868** and remains isolated.
 
@@ -41,3 +49,5 @@ node --conditions=source --import tsx scripts/gpu-flash-price.ts --unreviewed --
 ```
 
 The second command adds a real pointer-controlled timeline to the mixed fixture so the fully interactive build is priced as well. Add `--require-fit` to make any compiler budget finding fail the command. Both cases check actual emitted code lengths; the checked custom attachment must still exist and have the requested review status. The [compositor and analyzer evidence](flash-analysis.md) is versioned separately.
+
+`scripts/__tests__/gpu-page-budget.spec.ts` guards the full interactive fixture's 3-byte margin. Both price checks still report `gpuHostScript`, as they should. Full verification: 2,080 unit passes and 230 browser passes, six pre-existing skips across the two suites, zero failures; the new page-budget regression also passed separately. Typecheck, lint, formatting, layer and vocabulary checks passed.

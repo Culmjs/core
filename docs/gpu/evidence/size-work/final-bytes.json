@@ -1,0 +1,142 @@
+[
+  {
+    "profile": "release",
+    "fixture": "mixed",
+    "interactive": false,
+    "unreviewed": true,
+    "worker": 1343,
+    "embeddedWorker": 1349,
+    "hostExcludingWorker": 4721,
+    "host": 6070,
+    "inline": 8472,
+    "shared": 14542,
+    "hostHeadroom": 74,
+    "mixedHeadroom": 5458,
+    "sha256": "737ca3bd752c31af3ffd8ff11b76ccb226b9dce5d135411fe134a7b00bd90fe0",
+    "sri": "sha256-c3yjvXUsMa8//Y/xG3bMsia53OXRNUEf4TSnsAvZD+A=",
+    "stats": {
+      "bytes": 18091,
+      "styleBytes": 6458,
+      "scriptBytes": {
+        "base": 688,
+        "states": 1963,
+        "timeline": 4769,
+        "gpuLoader": 1052,
+        "gpuHost": 6070
+      },
+      "elements": 26,
+      "depth": 4,
+      "gpuData": {
+        "shaderBytes": 247,
+        "wasmBytes": 2,
+        "wasmTransportBytes": 4
+      }
+    },
+    "refusals": []
+  },
+  {
+    "profile": "candidate",
+    "fixture": "mixed",
+    "interactive": false,
+    "unreviewed": true,
+    "worker": 2972,
+    "embeddedWorker": 2979,
+    "hostExcludingWorker": 6033,
+    "host": 9012,
+    "inline": 8472,
+    "shared": 17484,
+    "hostHeadroom": -2868,
+    "mixedHeadroom": 2516,
+    "sha256": "2844a4b873444f705f173749aa722da0d6a0cb1c9e653a7f38ae58e6d8d8e597",
+    "sri": "sha256-KESkuHNET3BfFzdJqnItoNagyxyeZTp/OK5Y5tjY5Zc=",
+    "stats": {
+      "bytes": 18243,
+      "styleBytes": 6441,
+      "scriptBytes": {
+        "base": 688,
+        "states": 1963,
+        "timeline": 4769,
+        "gpuLoader": 1052,
+        "gpuHost": 9012
+      },
+      "elements": 26,
+      "depth": 4,
+      "gpuData": {
+        "shaderBytes": 247,
+        "wasmBytes": 2,
+        "wasmTransportBytes": 4
+      }
+    },
+    "refusals": ["gpuHostScript"]
+  },
+  {
+    "profile": "release",
+    "fixture": "mixed",
+    "interactive": true,
+    "unreviewed": true,
+    "worker": 1343,
+    "embeddedWorker": 1349,
+    "hostExcludingWorker": 4721,
+    "host": 6070,
+    "inline": 10985,
+    "shared": 17055,
+    "hostHeadroom": 74,
+    "mixedHeadroom": 2945,
+    "sha256": "737ca3bd752c31af3ffd8ff11b76ccb226b9dce5d135411fe134a7b00bd90fe0",
+    "sri": "sha256-c3yjvXUsMa8//Y/xG3bMsia53OXRNUEf4TSnsAvZD+A=",
+    "stats": {
+      "bytes": 21018,
+      "styleBytes": 6458,
+      "scriptBytes": {
+        "base": 688,
+        "states": 1963,
+        "timeline": 7282,
+        "gpuLoader": 1052,
+        "gpuHost": 6070
+      },
+      "elements": 27,
+      "depth": 4,
+      "gpuData": {
+        "shaderBytes": 247,
+        "wasmBytes": 2,
+        "wasmTransportBytes": 4
+      }
+    },
+    "refusals": []
+  },
+  {
+    "profile": "candidate",
+    "fixture": "mixed",
+    "interactive": true,
+    "unreviewed": true,
+    "worker": 2972,
+    "embeddedWorker": 2979,
+    "hostExcludingWorker": 6033,
+    "host": 9012,
+    "inline": 10985,
+    "shared": 19997,
+    "hostHeadroom": -2868,
+    "mixedHeadroom": 3,
+    "sha256": "2844a4b873444f705f173749aa722da0d6a0cb1c9e653a7f38ae58e6d8d8e597",
+    "sri": "sha256-KESkuHNET3BfFzdJqnItoNagyxyeZTp/OK5Y5tjY5Zc=",
+    "stats": {
+      "bytes": 21170,
+      "styleBytes": 6441,
+      "scriptBytes": {
+        "base": 688,
+        "states": 1963,
+        "timeline": 7282,
+        "gpuLoader": 1052,
+        "gpuHost": 9012
+      },
+      "elements": 27,
+      "depth": 4,
+      "gpuData": {
+        "shaderBytes": 247,
+        "wasmBytes": 2,
+        "wasmTransportBytes": 4
+      }
+    },
+    "refusals": ["gpuHostScript"]
+  }
+]
