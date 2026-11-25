@@ -13,11 +13,15 @@ export function limitChannel(
   return a + Math.min(d, Math.max(-d, b - a))
 }
 
-/** Integer RGBA8 display history. Explicit sRGB transfer in both directions;
- * dithering is disabled and the final texture is blitted without conversion. */
-export const finalPass = `uniform sampler2D A,B;uniform vec4 S;uniform float D;
-vec3 lin(vec3 c){return mix(c/12.92,pow((c+.055)/1.055,vec3(2.4)),greaterThan(c,vec3(.04045)));}
-void main(){vec3 a=lin(S.a>0.?texture(B,gl_FragCoord.xy/vec2(textureSize(A,0))).rgb:S.rgb);
-vec3 b=lin(texelFetch(A,ivec2(gl_FragCoord.xy),0).rgb);
-vec3 c=a+clamp(b-a,-D,D);
-u_O=vec4(mix(c*12.92,1.055*pow(c,vec3(1./2.4))-.055,greaterThan(c,vec3(.0031308))),1.);}`
+// Maximum slope of inverse sRGB, at white. Ordinary stationary source-over
+// layers are contractions in encoded RGB. Carry fractional *code time*, not
+// unearned steps, so even 120 Hz makes progress while rounding never compounds.
+export const codesPerSecond = (255 * 0.25) / (2.4 / 1.055)
+
+/** Straight RGBA8, fixed presentation grid. Each earned code changes coverage
+ * OR straight colour. Both are contractions over an arbitrary stationary
+ * background. The ORIGINAL CSS paint is the blend destination. */
+export const finalPass = `uniform highp sampler2D A,B;uniform vec4 S;uniform vec2 size;uniform float D;uniform int K;
+void main(){vec3 b=texture(A,gl_FragCoord.xy/size).rgb;
+vec4 a=texelFetch(B,ivec2(gl_FragCoord.xy),0);
+u_O=K==2?vec4(b,1.):K==0?(S.a>0.?S:vec4(b,0.)):a.a<1.&&(K!=3||all(equal(a.rgb,b)))?vec4(a.rgb,min(1.,a.a+D)):vec4(a.rgb+clamp(b-a.rgb,-D,D),a.a);}`

@@ -1,4 +1,4 @@
-import { finalPass } from './gpuLimiter.ts'
+import { codesPerSecond, finalPass } from './gpuLimiter.ts'
 
 export type Rect = [number, number, number, number]
 export type Region = [...Rect, number, number[], boolean]
@@ -13,6 +13,8 @@ type Frame = [
   number?,
   number?,
   number?,
+  number?,
+  number?,
 ]
 
 /** All effect draws (including reviewed draws) go to private storage. The
@@ -21,7 +23,11 @@ export const acquire = (first: MessageEvent<Frame>) => {
   const canvas = first.data[4]!
   const fail = () => postMessage(-1)
   canvas.addEventListener('webglcontextlost', fail)
-  const gl = canvas.getContext('webgl2', { antialias: false, depth: false })!
+  const gl = canvas.getContext('webgl2', {
+    antialias: false,
+    depth: false,
+    premultipliedAlpha: false,
+  })!
   if (!gl) return fail()
   const shader = (kind: number, src: string) => {
     const s = gl.createShader(kind)!
@@ -34,6 +40,7 @@ export const acquire = (first: MessageEvent<Frame>) => {
     'void main(){gl_Position=vec4(vec2((gl_VertexID<<1)&2,gl_VertexID&2)*2.-1.,0,1);}',
   )
   const programs = new Map<string, WebGLProgram>()
+  const pending: WebGLProgram[] = []
   function program(body: string) {
     let p = programs.get(body)
     if (!p) {
@@ -43,13 +50,16 @@ export const acquire = (first: MessageEvent<Frame>) => {
       gl.attachShader(p, s)
       gl.deleteShader(s)
       gl.linkProgram(p)
+      pending.push(p)
       programs.set(body, p)
     }
     return p
   }
   const bindings = first.data[5]!
-  const effects = bindings.map(([source, settings]) =>
-    program(
+  const effects: WebGLProgram[] = []
+  function effect(i: number) {
+    const [source, settings] = bindings[i]
+    return (effects[i] ||= program(
       'uniform vec4 u_R;uniform float u_time,u_scroll;uniform vec2 u_resolution,u_pointer;uniform sampler2D u_noise;' +
         Object.entries(settings)
           .map(
@@ -60,10 +70,9 @@ export const acquire = (first: MessageEvent<Frame>) => {
         '\n' +
         source +
         '\nvoid main(){vec3 c=shade((gl_FragCoord.xy-u_R.xy)/u_R.zw).rgb;u_O=vec4(clamp(mix(mix(c,vec3(0),isnan(c)),vec3(0),isinf(c)),0.,1.),1.);}',
-    ),
-  )
+    ))
+  }
   const last = program(finalPass)
-  gl.deleteShader(vertex)
   const ext = gl.getExtension('KHR_parallel_shader_compile')
   const bind = (tex: WebGLTexture | null) => gl.bindTexture(3553, tex)
   const fb = gl.createFramebuffer()
@@ -105,34 +114,46 @@ export const acquire = (first: MessageEvent<Frame>) => {
     next: Target | undefined,
     raw: Target | undefined
   let previousTime = 0
+  const credit: number[] = []
+  const turn: number[] = []
   let p: WebGLProgram
   const use = (program: WebGLProgram) => gl.useProgram((p = program))
   const u = (k: string) => gl.getUniformLocation(p, k)
   const draw = () => gl.drawArrays(4, 0, 3)
   const render = ({
-    data: [w, h, regions, t, , , scroll, px, py],
+    data: [rw, rh, regions, t, , , scroll, px, py, w = rw, h = rh],
   }: MessageEvent<Frame>) => {
     gl.activeTexture(33984)
-    prev ||= target(1, 1)
+    prev = fit(prev, w, h)
     next = fit(next, w, h)
-    raw = fit(raw, w, h)
+    raw = fit(raw, rw, rh)
     gl.viewport(0, 0, w, h)
     gl.scissor(0, 0, w, h)
     frame(next.tex)
     gl.clear(16384)
     for (const [x, y, dx, dy, i, seed, keep] of regions) {
       const r: Rect = [x, y, dx, dy]
+      const X = (x * rw) / w,
+        Y = (y * rh) / h,
+        W = (dx * rw) / w,
+        H = (dy * rh) / h
       const [, settings, bypass] = bindings[i]
-      gl.scissor(...r)
-      frame(bypass ? next.tex : raw.tex)
+      gl.viewport(0, 0, rw, rh)
+      gl.scissor(
+        Math.floor(X),
+        Math.floor(Y),
+        Math.ceil(X + W) - Math.floor(X),
+        Math.ceil(Y + H) - Math.floor(Y),
+      )
+      frame(raw.tex)
       gl.activeTexture(33984)
       bind(noise)
       use(effects[i])
-      gl.uniform4fv(u('u_R'), r)
+      gl.uniform4fv(u('u_R'), [X, Y, W, H])
       gl.uniform1f(u('u_time'), t)
       gl.uniform1f(u('u_scroll'), scroll!)
       gl.uniform2f(u('u_pointer'), px!, py!)
-      gl.uniform2f(u('u_resolution'), dx, dy)
+      gl.uniform2f(u('u_resolution'), W, H)
       for (const [key, v] of Object.entries(settings)) {
         const loc = u('u_set_' + key)
         if (typeof v === 'number') gl.uniform1f(loc, v)
@@ -146,21 +167,26 @@ export const acquire = (first: MessageEvent<Frame>) => {
           )
       }
       draw()
-      if (!bypass) {
+      {
         use(last)
+        gl.viewport(0, 0, w, h)
+        gl.scissor(...r)
         frame(next.tex)
         bind(raw.tex)
         gl.activeTexture(33985)
         bind(prev.tex)
         gl.uniform1i(u('B'), 1)
-        // The host keeps a placement only at identical CSS bounds and
-        // viewport dimensions. Nearest screen-space resampling is therefore
-        // owner-local even when the backing resolution changes.
-        gl.uniform4fv(u('S'), [...seed, +keep])
-        gl.uniform1f(
-          u('D'),
-          keep ? 0.25 * Math.min(0.033, Math.max(0, t - previousTime)) : 0,
-        )
+        gl.uniform2f(u('size'), w, h)
+        gl.uniform4fv(u('S'), seed.length ? [...seed, 1] : [0, 0, 0, 0])
+        const earned = keep
+          ? (credit[i] || 0) +
+            codesPerSecond * Math.min(0.033, Math.max(0, t - previousTime))
+          : 0
+        const step = Math.floor(earned)
+        credit[i] = earned - step
+        turn[i] = keep ? ((turn[i] || 0) + step) % 4 : 0
+        gl.uniform1i(u('K'), bypass ? 2 : !keep ? 0 : turn[i] === 0 ? 3 : 1)
+        gl.uniform1f(u('D'), step / 255)
         draw()
       }
     }
@@ -177,22 +203,21 @@ export const acquire = (first: MessageEvent<Frame>) => {
     previousTime = t
     postMessage(gl.isContextLost() || gl.getError() ? -1 : 1)
   }
-  function poll() {
+  function poll(msg: MessageEvent<Frame>) {
+    for (const r of msg.data[2]) effect(r[4])
     if (
       ext &&
-      [...programs.values()].some(
-        p => !gl.getProgramParameter(p, ext.COMPLETION_STATUS_KHR),
-      )
+      pending.some(p => !gl.getProgramParameter(p, ext.COMPLETION_STATUS_KHR))
     ) {
-      setTimeout(poll, 8)
+      setTimeout(() => poll(msg), 8)
       return
     }
-    if ([...programs.values()].some(p => !gl.getProgramParameter(p, 35714)))
-      return fail()
-    gl.enable(3089)
-    gl.disable(3024)
-    onmessage = render
-    render(first)
+    if (pending.some(p => !gl.getProgramParameter(p, 35714))) return fail()
+    pending.length = 0
+    render(msg)
   }
-  poll()
+  gl.enable(3089)
+  gl.disable(3024)
+  onmessage = poll
+  poll(first)
 }

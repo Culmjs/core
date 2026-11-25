@@ -175,10 +175,10 @@ export function lowerGpu(
     raw: { kind: 'json', content: JSON.stringify({ definitions, regions }) },
   }
   const css = worker
-    ? 'main:has(>.culm-plane:not([hidden])){isolation:isolate}.culm-plane{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:-1;image-rendering:pixelated}[data-gpu-painted]{background-color:transparent!important;background-image:none!important}' +
+    ? 'main:has(>.culm-plane:not([hidden])){isolation:isolate}.culm-plane{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:' +
       (GPU_CHECKED
-        ? '[data-gpu-run]:not([data-gpu-painted])[style*="--culm-veil"]{box-shadow:inset 0 0 0 100vmax rgba(0,0,0,var(--culm-veil))!important}'
-        : '')
+        ? '0;image-rendering:pixelated}[data-gpu-painted]>*{position:relative!important;z-index:1!important}'
+        : '-1;image-rendering:pixelated}[data-gpu-painted]{background-color:transparent!important;background-image:none!important}')
     : ''
   return {
     element,

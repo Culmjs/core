@@ -12,9 +12,8 @@ import { candidateCompiler } from './gpu-flash/compiler.ts'
 import { node, siteWith, text } from '../packages/core/__tests__/kit.ts'
 import { openBrowser } from '../packages/tools/src/measure/browser.ts'
 import { renderGpuWorker } from './gen-scripts.ts'
-import { limitChannel } from '../packages/core/src/scripts/gpuLimiter.ts'
 
-const root = '.superpowers/gpu-flash'
+const root = '.superpowers/gpu-flash/fix-1'
 const sha = (data: string | Uint8Array) =>
   createHash('sha256').update(data).digest('hex')
 const run = (cmd: string, args: string[]) => {
@@ -52,7 +51,7 @@ const payload = JSON.parse(
 )
 assert.equal(payload.definitions[0].source, source)
 const worker = renderGpuWorker(true)
-const clamp = 'a+clamp(b-a,-D,D)'
+const clamp = 'u_O=K==2?'
 assert.equal(worker.split(clamp).length, 2)
 const b = await openBrowser()
 assert.ok(b.ok, JSON.stringify(b))
@@ -63,7 +62,7 @@ const scene = join(tmp, 'static.html')
 await writeFile(scene, compiled.html.replace(/<script>[^]*?<\/script>/g, ''))
 const toolchain = {
   browser: b.browser.version,
-  worker: sha(worker),
+  workerBodySha256: sha(worker),
   host: sha(compiled.assets![0].content),
   ffmpeg: run('ffmpeg', ['-version']).split('\n')[0],
   ffprobe: run('ffprobe', ['-version']).split('\n')[0],
@@ -79,15 +78,17 @@ try {
       await p.setScheme('light')
       await p.setReducedMotion(false)
       assert.ok((await p.goto(pathToFileURL(scene).href, 10000)).ok)
-      const code = variant === 'control' ? worker.replace(clamp, 'b') : worker
+      const code =
+        variant === 'control' ? worker.replace(clamp, 'u_O=true?') : worker
+      const observer =
+        "const get=OffscreenCanvas.prototype.getContext;OffscreenCanvas.prototype.getContext=function(...args){const g=get.apply(this,args),ext=g.getExtension('WEBGL_debug_renderer_info');postMessage({gl:g.getParameter(g.VERSION),renderer:ext&&g.getParameter(ext.UNMASKED_RENDERER_WEBGL)});return g};"
       await p.evaluate(`(()=>{
         const raf=requestAnimationFrame.bind(window);let tick,worker,template,resolve,reject;
         window.requestAnimationFrame=f=>{tick=f;return 1};
-        const observer="const get=OffscreenCanvas.prototype.getContext;OffscreenCanvas.prototype.getContext=function(...args){const g=get.apply(this,args),ext=g.getExtension('WEBGL_debug_renderer_info');postMessage({gl:g.getParameter(g.VERSION),renderer:ext&&g.getParameter(ext.UNMASKED_RENDERER_WEBGL)});return g};";
         window.Blob=class extends Blob{constructor(parts,opts){
           if(opts?.type==='text/javascript'){
             if(parts.length!==1||parts[0]!==${JSON.stringify(worker)})throw Error('embedded worker drift');
-            parts=[observer,${JSON.stringify(code)}]
+            parts=[${JSON.stringify(observer)},${JSON.stringify(code)}]
           }super(parts,opts)}};
         window.Worker=class extends Worker{constructor(...args){super(...args);worker=this;
           this.addEventListener('error',e=>reject(Error(e.message)));this.addEventListener('message',e=>{
@@ -196,24 +197,18 @@ try {
         ]),
       )
       let previous = 0
+      let remainder = 0
       const log = frames.map((f, i) => {
         const fields = hashes[i].split(',').map(v => v.trim())
         assert.equal(Number(fields[2]), i)
         const code = colors.get(fields.at(-1)!)
         assert.notEqual(code, undefined, 'nonuniform captured frame ' + i)
-        const a = previous / 255
-        const linear = limitChannel(
-          a <= 0.04045 ? a / 12.92 : ((a + 0.055) / 1.055) ** 2.4,
-          f.requestedCode / 255,
-          i ? 1000 / 30 : 0,
-          0.25,
-        )
-        const expected = Math.round(
-          255 *
-            (linear <= 0.0031308
-              ? 12.92 * linear
-              : 1.055 * linear ** (1 / 2.4) - 0.055),
-        )
+        if (i) remainder += (0.25 * 0.033 * 255 * 1.055) / 2.4
+        const steps = Math.floor(remainder)
+        remainder -= steps
+        const expected =
+          previous +
+          Math.max(-steps, Math.min(steps, f.requestedCode - previous))
         assert.equal(
           code,
           variant === 'control' ? f.requestedCode : expected,
@@ -228,7 +223,8 @@ try {
         driver: await p.evaluate('driver'),
         variant,
         shader: source,
-        fixtureWorker: sha(code),
+        fixtureWorkerBodySha256: sha(code),
+        instrumentedBlobSha256: sha(observer + code),
         argv: encode,
         clipSha256: await fileHash(clip),
         probe,

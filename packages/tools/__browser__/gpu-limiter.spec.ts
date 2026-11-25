@@ -25,14 +25,6 @@ const changed = {
   source:
     'vec4 shade(vec2 uv){float n=texture(u_noise,vec2(0.1)).r;if(u_pointer.x>0.0){return vec4(vec3(float(n>0.0 && u_pointer.x<2.0 && u_resolution.x>0.0 && u_scroll==0.0)),0.0);}return vec4(u_set_tint+u_set_bias*n,0.0);}',
 }
-const decode = (code: number) =>
-  code / 255 <= 0.04045
-    ? code / 255 / 12.92
-    : ((code / 255 + 0.055) / 1.055) ** 2.4
-const encode = (v: number) =>
-  Math.round(
-    255 * (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055),
-  )
 
 async function sample(p: Page) {
   const png = Buffer.from(await p.screenshot()).toString('base64')
@@ -120,13 +112,15 @@ test('changed reviewed shader: independently limited composited owners, resume a
         const colors = frame ? await sample(p) : first
         for (const [i, rgba] of colors.entries()) {
           for (let k = 0; k < 3; k++) {
-            const a = decode(prev[i][k]),
+            const a = prev[i][k],
               target =
-                frame >= 4 ? Number(frame === 4) : Number(i === 0 && k === 0)
-            const cap = (0.25 * Math.min(33, 1000 / hz)) / 1000
-            const expected = encode(
-              a + Math.max(-cap, Math.min(cap, target - a)),
-            )
+                255 *
+                (frame >= 4 ? Number(frame === 4) : Number(i === 0 && k === 0))
+            const codes =
+              (((0.25 * Math.min(33, 1000 / hz)) / 1000) * 255 * 1.055) / 2.4
+            const step =
+              Math.floor((frame + 1) * codes) - Math.floor(frame * codes)
+            const expected = a + Math.max(-step, Math.min(step, target - a))
             assert.equal(
               rgba[k],
               expected,
@@ -322,7 +316,7 @@ test('patterned first exposure, mixed trusted regions, nonfinite channels, alloc
       await p.evaluate('ticks(3)')
       assert.equal(
         await p.evaluate(`hero.hasAttribute('data-gpu-painted')`),
-        false,
+        true,
       )
       const early = await sample(p)
       assert.notDeepEqual(early[1], poster[1])
@@ -330,10 +324,10 @@ test('patterned first exposure, mixed trusted regions, nonfinite channels, alloc
         .slice(0, 3)
         .forEach((v, k) => assert.ok(Math.abs(v - poster[0][k]) <= 2))
       await p.evaluate('ticks(548)')
-      const dark = await sample(p)
+      const blended = await sample(p)
       assert.ok(
-        dark[0].slice(0, 3).every(c => c <= 2),
-        JSON.stringify(dark),
+        blended[0][0] <= 3 && blended[0][1] <= 3 && blended[0][2] >= 250,
+        JSON.stringify(blended),
       )
       await p.evaluate('ticks(12)')
       assert.equal(
@@ -342,24 +336,21 @@ test('patterned first exposure, mixed trusted regions, nonfinite channels, alloc
       )
       const active = await sample(p)
       assert.deepEqual(active[0].slice(0, 2), [0, 0])
-      assert.ok(active[0][2] > 0 && active[0][2] < 100, JSON.stringify(active))
+      assert.equal(active[0][2], 255)
       // Force a backing resolution change without changing the CSS layout.
       await p.evaluate(
         `void Object.defineProperty(window,'devicePixelRatio',{value:2,configurable:true});`,
       )
       await p.evaluate('ticks(1)')
       const resized = await sample(p)
-      assert.equal(resized[0][2], encode(decode(active[0][2]) + 0.25 / 60))
+      assert.deepEqual(resized[0], active[0])
       // A blocked neighbour does not reset this displayed history, and should
       // not inherit the slow decision for the only remaining visible effect.
       await p.evaluate(
         `hero.nextElementSibling.style.transform='translateX(1px)'`,
       )
       await p.evaluate('ticks(1)')
-      assert.equal(
-        (await sample(p))[0][2],
-        encode(decode(resized[0][2]) + 0.25 / 60),
-      )
+      assert.deepEqual((await sample(p))[0], resized[0])
       await p.evaluate('ticks(24,120)')
       assert.equal(
         await p.evaluate(
@@ -386,7 +377,7 @@ test('patterned first exposure, mixed trusted regions, nonfinite channels, alloc
       const remembered = await sample(p)
       assert.deepEqual(remembered[0], poster[0])
       assert.notDeepEqual(remembered[1], poster[1])
-      t.diagnostic(JSON.stringify({ poster, early, dark, active, resized }))
+      t.diagnostic(JSON.stringify({ poster, early, blended, active, resized }))
       assert.deepEqual(p.errors, [])
     } finally {
       await p.close()
