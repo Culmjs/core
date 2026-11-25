@@ -1,4 +1,4 @@
-/** Offline, single-step PEAT inputs. No HTTP listener, page timer or demo.
+/** Offline, single-step flash-analyzer inputs. No HTTP listener, page timer or demo.
  * The only bypass is a test-only substitution in the control's local worker. */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -8,10 +8,11 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { join } from 'node:path'
+import * as shipped from '@culmjs/core'
 import { candidateCompiler } from './gpu-flash/compiler.ts'
 import { node, siteWith, text } from '../packages/core/__tests__/kit.ts'
 import { openBrowser } from '../packages/tools/src/measure/browser.ts'
-import { renderGpuWorker } from './gen-scripts.ts'
+import { renderGpuWorker, RELEASE_CHECKED } from './gen-scripts.ts'
 
 const sha = (data: string | Uint8Array) =>
   createHash('sha256').update(data).digest('hex')
@@ -25,9 +26,12 @@ const fileHash = async (file: string) => {
   for await (const part of createReadStream(file)) h.update(part)
   return h.digest('hex')
 }
-const source =
-  'vec4 shade(vec2 uv){return vec4(vec3(float(int(u_time*30.0+0.5)/3%2)),1.0);}'
-const { compilePage, createRegistry } = await candidateCompiler()
+const red = process.argv.includes('--red')
+const channel = 'float(int(u_time*30.0+0.5)/3%2)'
+const source = `vec4 shade(vec2 uv){return vec4(${red ? channel + ',0.0,0.0' : `vec3(${channel})`},1.0);}`
+const { compilePage, createRegistry } = RELEASE_CHECKED
+  ? shipped
+  : await candidateCompiler()
 const compiled = compilePage(
   siteWith(
     [
@@ -50,6 +54,7 @@ assert.ok(compiled.ok, JSON.stringify(compiled.problems))
 const root = join(
   '.superpowers/gpu-flash',
   'host-' + sha(compiled.assets![0].content).slice(0, 16),
+  ...(red ? ['saturated-red'] : []),
 )
 const payload = JSON.parse(
   compiled.html.match(/id="culm-gpu">([^<]+)<\/script>/)![1],
@@ -197,7 +202,7 @@ try {
         .filter(s => /^\d+,/.test(s))
       const colors = new Map(
         Array.from({ length: 256 }, (_, i) => [
-          sha(Buffer.alloc(1024 * 768 * 3, i)),
+          sha(Buffer.alloc(1024 * 768 * 3, red ? Buffer.from([0, 0, i]) : i)),
           i,
         ]),
       )
@@ -225,6 +230,7 @@ try {
       assert.ok(new Set(log.map(f => f.displayedCode)).size > 1)
       const summary = {
         ...toolchain,
+        fixture: red ? 'saturated-red' : 'achromatic',
         driver: await p.evaluate('driver'),
         variant,
         shader: source,

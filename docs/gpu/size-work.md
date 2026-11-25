@@ -2,7 +2,7 @@
 
 The limits are **6,144 raw minified UTF-8 bytes for the GPU host, worker included**, and **20,000 for the page's shared JS**, including joins and lazy assets. The starting checkpoint `6850661` cost **11,570 / 23,593** on the mixed fixture; its release cost **6,070 / 18,093**. Pricing an isolated candidate does not enable it in production.
 
-**Status: optimization pass and visitor-speed benchmark complete; production promotion pending.** Both checked mixed pages fit the aggregate. The standalone GPU-host limit is the only compiler budget refusal, but the [required PEAT reports and final limiter rate](flash-analysis.md) are still outstanding. The [conditional host-limit decision](limits.md) therefore has not taken effect. The table shows [actual compiler outputs](evidence/size-work/final-bytes.json), including the SRI-bound lazy asset.
+**Status: optimization pass and visitor-speed benchmark complete.** Both checked mixed pages fit the aggregate; at the original ceilings the only compiler refusal was the GPU-host limit. The table shows the [actual compiler outputs at that point](evidence/size-work/final-bytes.json), including the SRI-bound lazy asset. See the subsequent [flash-analysis result](flash-analysis.md) and [production limit decision](limits.md).
 
 [Visitor speed after optimization](astro-speed-optimized.md) compares these builds with the pre-optimization renderer and matched Astro pages in the same run.
 

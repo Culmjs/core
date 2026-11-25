@@ -1,0 +1,31 @@
+[08:01:51] [72144542] [trace]: Created results dir at Results/
+[08:01:51] [72144542] [warning]: This output report is for informational purposes only and should not be used as certification or validation of compliance with any legal, regulatory or other requirements
+[08:01:51] [72144542] [debug]: r_frame_rate: 30/1
+[08:01:51] [72144542] [debug]: avg_frame_rate: 30/1
+[08:01:51] [72144542] [info]: Video: clip.avi opened successful
+[08:01:51] [72144542] [info]: Video FPS: 30
+[08:01:51] [72144542] [info]: Total frames: 180
+[08:01:51] [72144542] [info]: Video resolution: 1024x768
+[08:01:51] [72144542] [info]: Duration: 6s
+[08:01:51] [72144542] [info]: Flash Area in pixels: 196608
+[08:01:51] [72144542] [info]: Number of pixels in frame: 786432
+[08:01:51] [72144542] [info]: Flash Area in pixels: 196608
+[08:01:51] [72144542] [info]: Number of pixels in frame: 786432
+[08:01:51] [72144542] [info]: Pattern Detection: false
+[08:01:51] [72144542] [info]: Frame Resize: false
+[08:01:51] [72144542] [info]: Safe Area Proportion: 0.25
+[08:01:51] [72144542] [info]: Write json file: false
+[08:01:51] [72144542] [info]: Number of threads used: 6
+[08:01:51] [72144542] [info]: Video analysis started
+[08:01:51] [72144542] [debug]: Analysed 10%
+[08:01:51] [72144542] [debug]: Analysed 20%
+[08:01:51] [72144542] [debug]: Analysed 30%
+[08:01:51] [72144542] [debug]: Analysed 40%
+[08:01:51] [72144542] [debug]: Analysed 50%
+[08:01:51] [72144542] [debug]: Analysed 60%
+[08:01:51] [72144542] [debug]: Analysed 70%
+[08:01:51] [72144542] [debug]: Analysed 80%
+[08:01:51] [72144542] [debug]: Analysed 90%
+[08:01:51] [72144542] [info]: Video analysis ended
+[08:01:51] [72144542] [info]: Elapsed time: 239 ms
+[08:01:51] [72144542] [info]: Video Overall Result: PASS
