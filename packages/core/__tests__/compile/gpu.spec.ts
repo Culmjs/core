@@ -373,6 +373,83 @@ test('exact 1,999 and 2,000 body-element boundaries include the live canvas rese
   assert.equal(plain.stats.elements, 2000)
 })
 
+test('a contours + pin page budgets the final pin measurement nodes before granting its canvas', () => {
+  const pin = node('pin', 'box', [text('visual', 'Pinned title')])
+  pin.motion = { trigger: 'scroll', pinPx: 500, effect: 'rise' }
+  const gpu = owner('hero', 'contours')
+  const fill = node('fill', 'column', [])
+  const doc = siteWith([pin, gpu, fill])
+  const parsed = (html: string) =>
+    DomUtils.getElementsByTagName(
+      '*',
+      DomUtils.getElementsByTagName('body', parseDocument(html))[0].children,
+    )
+  const small = page(doc)
+  assert.ok(
+    parsed(small.html).filter(e => e.name === 'svg' && e.attribs.width === '0')
+      .length >= 2,
+    'pin really adds measurement elements',
+  )
+  for (let i = parsed(small.html).length; i < 1999; i++)
+    fill.children!.push(node(`n${i}`, 'box'))
+  for (const n of [1999, 2000, 2001, 2002]) {
+    if (n > 1999) fill.children!.push(node(`more${n}`, 'box'))
+    const p = compilePage(doc, 'home', { registry })
+    assert.ok(p.ok)
+    const count = parsed(p.html).length
+    const active = n === 1999
+    assert.equal(count, active ? n : n - 1)
+    assert.equal(p.stats.elements, count + Number(active))
+    assert.equal(!!p.assets, active)
+    assert.equal(policy(p.html).includes('worker-src blob:'), active)
+    assert.deepEqual(
+      p.problems.map(x => x.path),
+      n === 2002 ? ['elements'] : [],
+    )
+  }
+  delete gpu.motion
+  const motionOnly = compilePage(doc, 'home', { registry })
+  assert.ok(motionOnly.ok)
+  assert.equal(motionOnly.stats.elements, parsed(motionOnly.html).length)
+  assert.deepEqual(
+    motionOnly.problems.map(x => x.path),
+    ['elements'],
+  )
+  delete pin.motion
+  const plain = page(doc)
+  assert.equal(plain.stats.elements, parsed(plain.html).length)
+})
+
+test('an inventory-confirmed poster overrides the ordinary image; a known-missing poster does not', () => {
+  const hero = owner('hero', 'contours')
+  hero.style = { base: { bgImage: 'ordinary' } }
+  const doc = siteWith([hero])
+  const url = '/local/selected%3f%23.png?v=3#picture'
+  const links = {
+    page: (s: string) => s,
+    file: (s: string) => (s === 'static.png' ? url : '/local/base.png'),
+  }
+  for (const [availableMedia, expected] of [
+    [new Set(['/local/base.png']), false],
+    [new Set(['/local/base.png', '/local/selected%3F%23.png']), true],
+    [undefined, true],
+  ] as const) {
+    for (const mode of ['live', 'measure', 'edit'] as const) {
+      const p = page(doc, { mode, links, availableMedia })
+      assert.equal(p.html.includes(url), expected, mode)
+      assert.match(p.css, /\/local\/base.png/)
+    }
+    const sub = compileSubtree(doc, 'home', 'hero', {
+      registry,
+      links,
+      availableMedia,
+    })
+    assert.ok(sub.ok)
+    assert.equal(sub.html.includes(url), expected, 'subtree')
+    assert.match(sub.css, /\/local\/base.png/)
+  }
+})
+
 const hideWhen = (...values: string[]) => ({
   when: values.map(is => ({ state: 'panel', is, decl: { hidden: true } })),
 })

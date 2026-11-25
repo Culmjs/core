@@ -31,7 +31,7 @@ import { formElement } from './elementsForm.ts'
 import { shapeElement } from './elementsShape.ts'
 import { textElement } from './elementsText.ts'
 import { type HtmlNode } from './html.ts'
-import { href } from './links.ts'
+import { href, knownMedia } from './links.ts'
 
 export type { ElementCtx } from './elementsBase.ts'
 
@@ -195,7 +195,13 @@ function build(
     // when no GPU program is delivered. Leave other background properties alone.
     const id = w.motion && 'poster' in w.motion && w.motion.poster
     const url = id && ctx.links.file(id)
-    if (url && urlOk(url) && url.startsWith('/') && !url.startsWith('//')) {
+    if (
+      url &&
+      urlOk(url) &&
+      url.startsWith('/') &&
+      !url.startsWith('//') &&
+      (!ctx.availableMedia || knownMedia(url, ctx.availableMedia))
+    ) {
       const attrs = (element.attrs ??= {})
       const quoted = url.replace(/["<>\s]/gu, c => encodeURIComponent(c))
       attrs.style = `${attrs.style ? attrs.style + ';' : ''}background-image:url("${quoted}");background-size:cover`

@@ -68,13 +68,19 @@ export function gpuRect(
   if (!visible) return false // outside: wait for intersection/resize, no polling
   if (forms.some(f => intersection(f, visible)) || !main.contains(el)) return
   const [left, top, right, bottom] = visible
-  // Conservatively require exposed owner paint at its leading corner. Don't try to
-  // infer transparency through foreground layout, decoration or replaced media.
+  // Text can cover one edge while the rest of the background is exposed.
+  // Require at least one direct owner hit within the visible box.
+  const samples = [0.01, 0.5, 0.99]
   if (
-    el.ownerDocument.elementFromPoint(
-      (left + min(left + 2, right)) / 2,
-      (top + min(top + 2, bottom)) / 2,
-    ) !== el
+    !samples.some(x =>
+      samples.some(
+        y =>
+          el.ownerDocument.elementFromPoint(
+            left + (right - left) * x,
+            top + (bottom - top) * y,
+          ) === el,
+      ),
+    )
   )
     return
   let inside = true
@@ -124,10 +130,6 @@ export function gpuRect(
     y = ceil(((h - r[3]) * bh) / h)
   const dx = floor((r[2] * bw) / w) - x,
     dy = floor(((h - r[1]) * bh) / h) - y
-  if (
-    max(dx, dy) <= 2048 &&
-    min(dx, dy, bw - x, bh - y, x + dx, y + dy) > 0 &&
-    content(el, visible)
-  )
+  if (min(dx, dy, bw - x, bh - y, x + dx, y + dy) > 0 && content(el, visible))
     return [x, y, dx, dy, speed]
 }

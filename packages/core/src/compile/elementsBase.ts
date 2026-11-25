@@ -16,6 +16,7 @@ export type ElementCtx = {
   classOf: ReadonlyMap<string, string>
   doc: Pick<SiteDocument, 'pages'>
   links: Links
+  availableMedia?: ReadonlySet<string>
   /** The icons the site's folder holds (`set:name`), read by the tools; core opens no file. */
   icons?: SiteIcons
   mode: 'edit' | 'live'

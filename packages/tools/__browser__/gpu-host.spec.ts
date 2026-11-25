@@ -14,7 +14,7 @@ import {
 import starter, { STYLES } from '@culmjs/starter'
 import { scenes } from '../__tests__/fixtures/motion-scenes.ts'
 import { openBrowser, type Page } from '../src/measure/browser.ts'
-import { DEMO_PLUGIN, node, text } from '../../core/__tests__/kit.ts'
+import { DEMO_PLUGIN, node, siteWith, text } from '../../core/__tests__/kit.ts'
 import { mist } from '../__tests__/fixtures/shader.ts'
 import { sources } from '../../../scripts/gpu-spike/shaders.ts'
 import { DomUtils, parseDocument } from 'htmlparser2'
@@ -42,6 +42,11 @@ function probe(mode: string) {
       gl=${mode === 'acquire' ? 'null' : 'get.apply(this,args)'};
       const ext=gl?.getExtension('WEBGL_debug_renderer_info');
       postMessage({context:gl?gl.getParameter(gl.VERSION):'absent',renderer:ext&&gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)});
+      if(gl && ${mode === 'fast'}){
+        const set=gl.viewport.bind(gl);let previous='';
+        gl.viewport=(...args)=>{set(...args);const vp=Array.from(gl.getParameter(gl.VIEWPORT));
+          if(previous!==vp.join()){previous=vp.join();postMessage({viewport:vp})}}
+      }
       if(gl && ${mode === 'stall'}){
         const extension=gl.getExtension.bind(gl),param=gl.getProgramParameter.bind(gl);
         gl.getExtension=k=>k==='KHR_parallel_shader_compile'?{COMPLETION_STATUS_KHR:37297}:extension(k);
@@ -57,8 +62,8 @@ function probe(mode: string) {
     if(mode==='missing')window.WebGL2RenderingContext=undefined;
     if(mode==='save')Object.defineProperty(navigator.connection,'saveData',{value:true,writable:true});
     if(mode==='denied')Object.defineProperty(window,'localStorage',{get(){throw Error('unavailable')}});
-    if(mode==='slow'||mode==='denied'){
-      const raf=requestAnimationFrame.bind(window);let t=100;window.interval=mode==='slow'?1:120;
+    if(mode==='slow'||mode==='denied'||mode==='fast'){
+      const raf=requestAnimationFrame.bind(window);let t=100;window.interval=mode==='denied'?120:1;
       window.requestAnimationFrame=f=>raf(()=>{
         if(mode==='slow' && interval===120){
           window.dispatchEvent(new Event('scroll'));
@@ -77,8 +82,8 @@ function probe(mode: string) {
     }};
     window.Worker=class extends Worker{constructor(...args){
       obs.workers++;if(mode==='constructor')throw Error();super(...args);window.lastWorker=this;obs.start=performance.now();
-      this.addEventListener('message',e=>{if(e.data?.context){e.stopImmediatePropagation();obs.contexts.push(e.data.context);obs.renderer=e.data.renderer}else if(e.data===1 && !obs.ready)obs.ready=performance.now()-obs.start})
-    } postMessage(msg,...args){if(mode==='post')throw Error();if(Array.isArray(msg)){obs.widths.push(msg[0]);obs.frames++}super.postMessage(msg,...args)}
+      this.addEventListener('message',e=>{if(e.data?.viewport){e.stopImmediatePropagation();(obs.viewports??=[]).push(e.data.viewport)}else if(e.data?.context){e.stopImmediatePropagation();obs.contexts.push(e.data.context);obs.renderer=e.data.renderer}else if(e.data===1 && !obs.ready)obs.ready=performance.now()-obs.start})
+    } postMessage(msg,...args){if(mode==='post')throw Error();if(Array.isArray(msg)){obs.widths.push(msg[0]);obs.frames++;obs.regions=msg[2]}super.postMessage(msg,...args)}
       terminate(){obs.terminated++;obs.end=performance.now();super.terminate()}
     };
   })()`
@@ -128,17 +133,24 @@ test('two production starter heroes share one worker context behind the unchange
   const competing = structuredClone(doc)
   competing.pages[0].root.children![0].style!.base!.bgImage = 'ordinary'
   const posterPages = new Map<string, string>()
-  for (const mode of ['live', 'edit'] as const) {
-    const c = compilePage(competing, 'home', { ...options, mode })
-    assert.ok(c.ok, JSON.stringify(c.problems))
-    posterPages.set('/poster-' + mode, c.html)
+  for (const [suffix, availableMedia] of [
+    ['', undefined],
+    ['-present', new Set(['/local/ordinary', '/local/poster.svg'])],
+    ['-missing', new Set(['/local/ordinary'])],
+  ] as const) {
+    const resolved = { ...options, availableMedia }
+    for (const mode of ['live', 'edit'] as const) {
+      const c = compilePage(competing, 'home', { ...resolved, mode })
+      assert.ok(c.ok, JSON.stringify(c.problems))
+      posterPages.set('/poster-' + mode + suffix, c.html)
+    }
+    const sub = compileSubtree(competing, 'home', heroes[0].id, resolved)
+    assert.ok(sub.ok)
+    posterPages.set(
+      '/poster-sub' + suffix,
+      `<style>${sub.pageCss}${sub.css}</style><main class="s-site">${sub.html}</main>`,
+    )
   }
-  const sub = compileSubtree(competing, 'home', heroes[0].id, options)
-  assert.ok(sub.ok)
-  posterPages.set(
-    '/poster-sub',
-    `<style>${sub.pageCss}${sub.css}</style><main class="s-site">${sub.html}</main>`,
-  )
   doc.pages[0].root.children!.unshift({
     ...node('spacer', 'box'),
     style: { base: { height: { n: 1800, unit: 'px' } } },
@@ -256,9 +268,25 @@ test('two production starter heroes share one worker context behind the unchange
             await p.evaluate<string>(
               `getComputedStyle(${first}).backgroundImage`,
             ),
-            /\/local\/poster.svg\?v=2/,
+            route.endsWith('-missing')
+              ? /\/local\/ordinary\?v=2/
+              : /\/local\/poster.svg\?v=2/,
           )
-          if (route === '/poster-live')
+          const loaded = await p.evaluate<string[]>(
+            `performance.getEntriesByType('resource').filter(e=>e.name.includes('/local/')).map(e=>new URL(e.name).pathname)`,
+          )
+          assert.ok(
+            loaded.includes(
+              route.endsWith('-missing')
+                ? '/local/ordinary'
+                : '/local/poster.svg',
+            ),
+          )
+          if (route.endsWith('-missing'))
+            assert.ok(!loaded.includes('/local/poster.svg'))
+          if (route === '/poster-live-missing')
+            assert.ok((await pixels(p))[0].startsWith('255,0,0,255,'))
+          else if (route.startsWith('/poster-live'))
             assert.deepEqual(await pixels(p), poster)
         }
       } finally {
@@ -270,6 +298,9 @@ test('two production starter heroes share one worker context behind the unchange
     'real body count respects the display slot at the ceiling',
     async () => {
       const edge = structuredClone(competing)
+      const pin = node('pin', 'box', [text('pintext', 'Pinned note')])
+      pin.motion = { trigger: 'scroll', pinPx: 400, effect: 'rise' }
+      edge.pages[0].root.children!.push(pin)
       const filler = node('filler', 'column', [])
       edge.pages[0].root.children!.push(filler)
       const page = () => {
@@ -326,6 +357,158 @@ test('two production starter heroes share one worker context behind the unchange
         [2000, 0],
       )
       assert.equal(requests, 0)
+    },
+  )
+  await t.test(
+    'a heading covering the leading corner leaves drawable exposed background below',
+    async () => {
+      const hero = node('unpad', 'box', [
+        text('caption', 'Ordinary heading', {
+          props: { level: 'h1', runs: [{ text: 'Ordinary heading' }] },
+        }),
+        text('blurb', 'A short paragraph.'),
+      ])
+      hero.motion = { trigger: 'enter-view', gpu: 'contours' }
+      hero.style = {
+        base: {
+          height: { n: 400, unit: 'px' },
+          bg: '#c8aa90',
+          position: 'relative',
+        },
+      }
+      const c = compilePage(siteWith([hero]), 'home', options)
+      assert.ok(c.ok, JSON.stringify(c.problems))
+      assert.deepEqual(c.problems, [])
+      posterPages.set('/unpad', c.html)
+      await p.setReducedMotion(true)
+      assert.ok((await p.goto(origin + '/unpad', 10000)).ok)
+      await p.evaluate(`window.hero=document.querySelector('[data-gpu-run]')`)
+      const pt = await p.evaluate<{ x: number; y: number }>(
+        `(()=>{const r=hero.getBoundingClientRect();return {x:r.left+25,y:r.top+250}})()`,
+      )
+      const clip = { ...pt, w: 20, h: 10 }
+      assert.ok(
+        await p.evaluate(
+          `(()=>{const r=hero.getBoundingClientRect();return r.height===400 && document.elementFromPoint(r.x+1,r.y+1)!==hero && document.elementFromPoint(r.x+25,r.y+250)===hero})()`,
+        ),
+      )
+      const plain = Buffer.from(await p.screenshot(clip))
+      await p.setReducedMotion(false)
+      await wait(p, `${active}===1`)
+      assert.notDeepEqual(Buffer.from(await p.screenshot(clip)), plain)
+      await p.evaluate(
+        `hero.firstElementChild.style.cssText='position:absolute;inset:0;background:#568877;z-index:1;margin:0'`,
+      )
+      await wait(p, `${active}===0`)
+      const covered = Buffer.from(await p.screenshot(clip))
+      await p.setReducedMotion(true)
+      assert.deepEqual(Buffer.from(await p.screenshot(clip)), covered)
+      await p.setReducedMotion(false)
+    },
+  )
+  await t.test(
+    'a tall owner on a DPR 2 phone keeps its coordinates and frames after quality rises',
+    async () => {
+      const spacer = node('space', 'box')
+      spacer.style = { base: { height: { n: 1800, unit: 'px' } } }
+      const section = (id: string, height: number) => {
+        const h = node(id, 'column', [
+          text(id + 'start', 'Start'),
+          text(id + 'end', 'End'),
+        ])
+        h.style = {
+          base: {
+            height: { n: height, unit: 'px' },
+            padding: [16, 16, 16, 16],
+            justify: 'between',
+            bg: '#c8aa90',
+          },
+        }
+        h.motion = {
+          gpu: 'contours',
+          trigger: 'enter-view',
+          settings: { speed: 0 },
+        }
+        return h
+      }
+      const c = compilePage(
+        siteWith([
+          spacer,
+          section('tall', 1800),
+          section('short', 400),
+          { ...spacer, id: 'tail' },
+        ]),
+        'home',
+        options,
+      )
+      assert.ok(c.ok, JSON.stringify(c.problems))
+      assert.deepEqual(c.problems, [])
+      posterPages.set('/tall', c.html)
+      await p.setViewport(390, 844, 2)
+      try {
+        assert.ok((await p.goto(origin + '/tall', 10000)).ok)
+        await p.evaluate(probe('fast'))
+        await p.evaluate(
+          `window.tall=document.querySelector('[data-gpu-run]');tall.scrollIntoView()`,
+        )
+        assert.deepEqual(
+          await p.evaluate(
+            `[innerWidth,innerHeight,devicePixelRatio,tall.getBoundingClientRect().height]`,
+          ),
+          [390, 844, 2, 1800],
+        )
+        await wait(p, `obs.widths.includes(390)`)
+        const full = (width: number) =>
+          Math.floor(Math.sqrt((1048576 * width) / 844))
+        await wait(p, `obs.widths.includes(${full(390)}) && ${active}===1`)
+        const frames = await p.evaluate<number>('obs.frames')
+        await wait(
+          p,
+          `obs.frames>=${frames + 10} && obs.widths.slice(-10).every(w=>w===${full(390)})`,
+        )
+        // Sample the actually displayed shader against owner-local UV (speed=0).
+        async function verifySample(x: number, y: number) {
+          const png = Buffer.from(await p.screenshot()).toString('base64')
+          const [r, g, b, expected] = await p.evaluate<number[]>(`(async()=>{
+          const image=await createImageBitmap(new Blob([Uint8Array.from(atob('${png}'),c=>c.charCodeAt(0))]));
+          const ctx=new OffscreenCanvas(image.width,image.height).getContext('2d');ctx.drawImage(image,0,0);
+          const [r,g,b]=ctx.getImageData(${x}*2,${y}*2,1,1).data, rect=tall.getBoundingClientRect();
+          const u=(${x}-rect.left)/rect.width,v=(rect.bottom-${y})/rect.height;
+          return [r,g,b,255*(.6+.2*Math.sin(24*u+Math.sin(9*v)))]
+        })()`)
+          assert.ok(
+            r === g && g === b && Math.abs(r - expected) < 3,
+            JSON.stringify([r, g, b, expected]),
+          )
+        }
+        await verifySample(120, 620)
+        await p.evaluate(`scrollBy(0,1450)`)
+        await wait(p, `obs.regions.length===2 && ${active}===2`)
+        await verifySample(120, 150)
+        await p.evaluate(`tall.style.height='1900px'`)
+        await p.setViewport(430, 844, 2)
+        await wait(
+          p,
+          `obs.widths.at(-1)===${full(430)} && obs.regions.length===2 && ${active}===2`,
+        )
+        await verifySample(120, 150)
+        await p.setViewport(2800, 320, 2)
+        await p.evaluate('tall.scrollIntoView()')
+        await wait(p, `obs.viewports.at(-1)[2]===2048 && ${active}===1`)
+        assert.ok(
+          await p.evaluate(
+            `obs.viewports.every(([x,y,w,h])=>x===0&&y===0&&w<=2048&&h<=2048&&w*h<=1048576)`,
+          ),
+        )
+        assert.equal(await p.evaluate('obs.contexts.length'), 1)
+        t.diagnostic(
+          JSON.stringify(
+            await p.evaluate(`({viewports:obs.viewports,regions:obs.regions})`),
+          ),
+        )
+      } finally {
+        await p.setViewport(1280, 900)
+      }
     },
   )
   await t.test(

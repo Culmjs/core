@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import test from 'node:test'
 import { compilePage, compileSite, createRegistry } from '@culmjs/core'
-import { node, twoPages } from '../../core/__tests__/kit.ts'
+import { node, siteWith, text, twoPages } from '../../core/__tests__/kit.ts'
 import { parse } from 'jsonc-parser'
 import { DomUtils, parseDocument } from 'htmlparser2'
 import { buildSite } from '../src/build/bundle.ts'
@@ -253,13 +253,20 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
   const svg =
     '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><circle cx="5" cy="5" r="4"/></svg>'
   await writeFile(join(dir, 'assets', filename), svg)
+  await writeFile(join(dir, 'assets/scene.svg'), svg)
+  await writeFile(join(dir, 'assets/ordinary'), svg)
   const path = join(dir, 'pages/home.json'),
     home = parse(await readFile(path, 'utf8'))
   home.root.children = ['figure', 'absent'].map(id => ({
     id,
     name: id,
     kind: 'box',
-    motion: { ...motion, gpu: 'contours' },
+    motion: {
+      ...motion,
+      gpu: 'contours',
+      poster: id === 'figure' ? 'scene.svg' : 'missingposter.svg',
+    },
+    style: { base: { bgImage: 'ordinary', height: { n: 64, unit: 'px' } } },
     children: [
       {
         id: id + 'image',
@@ -284,6 +291,8 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
   assert.doesNotMatch(policy, /unsafe-/)
   const checkOwners = (html: string) => {
     assert.match(html, /src="\/assets\/absent.svg"/)
+    assert.match(html, /\/assets\/scene.svg/)
+    assert.doesNotMatch(html, /\/assets\/missingposter.svg/)
     const owners = DomUtils.findAll(
       e => 'data-culm-gpu' in e.attribs,
       parseDocument(html).children,
@@ -328,6 +337,7 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
         html: string
         headers: string[]
         imageWidth: number
+        backgrounds: string[]
       }[] = []
       try {
         const result = await runMeasure({
@@ -350,7 +360,7 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
                   const r = await page.goto(url, timeout)
                   seen.push(
                     await page.evaluate(
-                      `(async()=>({meta:document.querySelector('[http-equiv]').content,html:document.body.innerHTML,imageWidth:document.querySelector('img[src="${figure}"]').naturalWidth,headers:await Promise.all(${JSON.stringify(['/', ...paths])}.map(async path=>(await fetch(path)).headers.get('content-security-policy')))}))()`,
+                      `(async()=>({meta:document.querySelector('[http-equiv]').content,html:document.body.innerHTML,imageWidth:document.querySelector('img[src="${figure}"]').naturalWidth,backgrounds:['figure','absent'].map(id=>getComputedStyle(document.querySelector('[data-id="'+id+'"]')).backgroundImage),headers:await Promise.all(${JSON.stringify(['/', ...paths])}.map(async path=>(await fetch(path)).headers.get('content-security-policy')))}))()`,
                     ),
                   )
                   return r
@@ -363,6 +373,8 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
         assert.equal(seen.length, 1)
         assert.equal(seen[0].meta, policy)
         assert.equal(seen[0].imageWidth, 10)
+        assert.match(seen[0].backgrounds[0], /\/assets\/scene.svg"\)/)
+        assert.match(seen[0].backgrounds[1], /\/assets\/ordinary"\)/)
         for (const h of seen[0].headers)
           assert.equal(h?.split(', ').at(-1), policy)
         assert.match(seen[0].headers[0], /sandbox allow-scripts/)
@@ -372,6 +384,38 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
       }
     },
   )
+})
+
+test('memory measurement distinguishes an omitted inventory from a known empty inventory', async t => {
+  const hero = node('hero', 'box', [text('title', 'Field')])
+  hero.motion = { trigger: 'enter-view', gpu: 'contours', poster: 'cover.svg' }
+  const doc = siteWith([hero])
+  const registry = createRegistry({ gpu: { enabled: true } })
+  const b = await openBrowser()
+  assert.ok(b.ok)
+  t.after(() => b.browser.close())
+  for (const files of [undefined, []]) {
+    const requested: string[] = []
+    const r = await runMeasure({
+      doc,
+      registry,
+      files,
+      revision: 0,
+      data: { rows: {} },
+      pages: ['home'],
+      widths: [1280],
+      themes: ['light'],
+      browser: b.browser,
+      assets: async path => {
+        requested.push(path)
+        return new TextEncoder().encode(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>',
+        )
+      },
+    })
+    assert.deepEqual(r.incomplete, [])
+    assert.deepEqual(requested, files ? [] : ['assets/cover.svg'])
+  }
 })
 
 test('an explicitly measured draft runs its own joined state script under its page policy and sandbox', async () => {

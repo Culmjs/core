@@ -52,7 +52,8 @@ export type CompileOptions = {
   /** `measure` is live plus a `data-id` on every node, for the probe; it is never written to a site. */
   mode?: 'live' | 'edit' | 'measure'
   links?: Links
-  /** Confirmed local media pathnames, without query or fragment. Does not change emitted URLs. */
+  /** Confirmed local media pathnames. A missing poster keeps the authored background.
+   * Without an inventory, posters use the checked local Links.file result. */
   availableMedia?: ReadonlySet<string>
   lang?: string
   fontBase?: string
@@ -148,6 +149,7 @@ export function resolve(doc: SiteDocument, o: CompileOptions) {
     // measure is live in every branch; `ids` is the one place it differs
     mode: o.mode === 'edit' ? ('edit' as const) : ('live' as const),
     ids: o.mode === 'measure',
+    availableMedia: o.availableMedia,
     links: {
       // wrapped, not spread: a class instance keeps its prototype methods and their `this`
       page: (slug: string) => (L ? L.page(slug) : slug),
@@ -284,6 +286,7 @@ export function siteElement(
     rendered,
     doc,
     links: p.links,
+    availableMedia: p.availableMedia,
     ...(p.icons ? { icons: p.icons } : {}),
     mode,
     ...(p.ids ? { ids: true } : {}),
@@ -358,6 +361,13 @@ export function build(
       })
   const rendered = hasGpu || hasSteps ? new Map<Node, HtmlNode>() : undefined
   const site = siteElement(doc, page, p, mail, rendered)
+  const motion =
+    hasSteps && rendered
+      ? motionCss(p.trees, site, rendered, options.registry, p)
+      : undefined
+  if (motion?.problems.length) return { ok: false, problems: motion.problems }
+  // Pin meters, their table/list wrappers and compound path geometry are now
+  // in the emitted tree. GPU lowering only adds attributes to this subtree.
   const siteCount = countElements(site, hasGpu)
   const gpu =
     hasGpu && rendered && effects
@@ -370,12 +380,6 @@ export function build(
           options.availableMedia,
         )
       : undefined
-  const motion =
-    hasSteps && rendered
-      ? motionCss(p.trees, site, rendered, options.registry, p)
-      : undefined
-  if (motion?.problems.length) return { ok: false, problems: motion.problems }
-
   const scripts: PageScript[] = []
   if (mode === 'live') {
     const open = anyElement(site, e => e.attrs?.['data-s-open'] !== undefined)

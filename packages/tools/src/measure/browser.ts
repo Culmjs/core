@@ -23,7 +23,11 @@ export type Answer = {
 export type Page = {
   /** Requests the page's answer refused, in order. */
   blocked: string[]
-  setViewport(width: number, height: number): Promise<void>
+  setViewport(
+    width: number,
+    height: number,
+    deviceScaleFactor?: number,
+  ): Promise<void>
   setScheme(scheme: 'light' | 'dark'): Promise<void>
   setReducedMotion(reduce: boolean): Promise<void>
   /** Emulate a touch device's primary (coarse) pointer. */
@@ -611,11 +615,11 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
       s('Page.removeScriptToEvaluateOnNewDocument', {
         identifier: guard.identifier,
       }).then(() => {}),
-    setViewport: (width, height) =>
+    setViewport: (width, height, deviceScaleFactor = 1) =>
       s('Emulation.setDeviceMetricsOverride', {
         width,
         height,
-        deviceScaleFactor: 1,
+        deviceScaleFactor,
         mobile: false,
       }),
     setScheme: value => {

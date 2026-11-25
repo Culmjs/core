@@ -366,7 +366,7 @@ async function measureAll(input: MeasureInput): Promise<Report> {
       registry: input.registry,
       data: input.data,
       links: { page: slug => slug, file: id => `/assets/${id}` },
-      availableMedia: mediaAddresses(input.files ?? []),
+      availableMedia: input.files && mediaAddresses(input.files),
       fonts: input.fonts,
       icons: input.icons,
     }

@@ -112,6 +112,7 @@ export function hostGpu(doc: Document, win: Window): void {
       const { clientWidth: width, clientHeight: height } = doc.documentElement
       const scale = Math.min(
         Math.min(w.devicePixelRatio, 2) * +quality.scale,
+        2048 / Math.max(width, height),
         Math.sqrt(1048576 / (width * height)),
       )
       const bw = Math.floor(width * scale),
