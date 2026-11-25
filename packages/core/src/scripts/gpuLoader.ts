@@ -54,11 +54,16 @@ export function loadGpu(
   function observe() {
     observer.disconnect()
     size?.disconnect()
-    if (!loaded && allowed())
-      doc.querySelectorAll('[data-culm-gpu]').forEach(el => {
+    if (!loaded && allowed()) {
+      const runnable = doc.querySelectorAll('[data-gpu-run]')
+      const owners = runnable.length
+        ? runnable
+        : doc.querySelectorAll('[data-culm-gpu]')
+      owners.forEach(el => {
         observer.observe(el)
         size?.observe(el)
       })
+    }
   }
   motion.addEventListener('change', observe)
   connection?.addEventListener?.('change', observe)

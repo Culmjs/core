@@ -9,7 +9,7 @@ import {
 } from '../document/index.ts'
 import { LAYERS } from '../document/kinds.ts'
 import { orderedChildren, targetOf } from '../document/tree.ts'
-import { isObj } from '../document/rules.ts'
+import { isObj, urlOk } from '../document/rules.ts'
 import { isSample } from '../document/samples.ts'
 import { tabInfo } from '../document/tabs.ts'
 import { shownOn } from '../layout/placement.ts'
@@ -189,7 +189,18 @@ function build(
   head: boolean,
 ): HtmlNode | null {
   const element = draw(w, ctx, parent, grand, head)
-  if (element) ctx.rendered?.set(w, element)
+  if (element) {
+    ctx.rendered?.set(w, element)
+    // The poster is authored content, including in edit/fragment output and
+    // when no GPU program is delivered. Leave other background properties alone.
+    const id = w.motion && 'poster' in w.motion && w.motion.poster
+    const url = id && ctx.links.file(id)
+    if (url && urlOk(url) && url.startsWith('/') && !url.startsWith('//')) {
+      const attrs = (element.attrs ??= {})
+      const quoted = url.replace(/["<>\s]/gu, c => encodeURIComponent(c))
+      attrs.style = `${attrs.style ? attrs.style + ';' : ''}background-image:url("${quoted}");background-size:cover`
+    }
+  }
   return element
 }
 

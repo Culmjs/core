@@ -1,4 +1,4 @@
-import { bounds, gpuRect, overlap } from './gpuGeometry.ts'
+import { bounds, gpuRect } from './gpuGeometry.ts'
 import { nextQuality, type Quality } from './gpuQuality.ts'
 
 declare const WORKER_SOURCE: string
@@ -6,34 +6,28 @@ declare const EFFECT_ID: string
 
 export function hostGpu(doc: Document, win: Window): void {
   const w = win as Window & typeof globalThis
-  const data = doc.getElementById('culm-gpu') as
-    (HTMLElement & { hosted?: boolean }) | null
-  if (!data || data.hosted) return
-  data.hosted = true
+  const page = doc as Document & { culmGpu?: true }
+  if (page.culmGpu) return
+  page.culmGpu = true
+  const main = doc.querySelector('main')
+  if (!main) return
   const key = 'culm:slow:' + EFFECT_ID
   try {
     if (w.localStorage[key] === '1') return
   } catch {
     /* An unavailable store does not prevent this page's attempt. */
   }
-  const main = doc.querySelector('main')!
+  const owners = Array.from(
+    main.querySelectorAll<HTMLElement>('[data-gpu-run]'),
+  )
   if (
     !w.OffscreenCanvas ||
     !w.WebGL2RenderingContext ||
     !w.Worker ||
-    !w.ResizeObserver
+    !w.ResizeObserver ||
+    !owners.length
   )
     return
-  const payload = JSON.parse(data.textContent!)
-  const owners = Array.from(
-    main.querySelectorAll<HTMLElement>('[data-culm-gpu]'),
-  ).flatMap(el => {
-    const r = payload.regions[+el.dataset.culmGpu!]
-    return payload.definitions[r.definition].builtin === EFFECT_ID
-      ? [{ el, speed: r.settings.speed as number }]
-      : []
-  })
-  if (!owners.length) return
   const motion = w.matchMedia('(prefers-reduced-motion: reduce)')
   const connection = (
     w.navigator as Navigator & {
@@ -46,6 +40,7 @@ export function hostGpu(doc: Document, win: Window): void {
     worker: Worker | undefined,
     url = ''
   let raf = 0,
+    retry = 0,
     watchdog = 0,
     last = 0,
     elapsed = 0
@@ -57,7 +52,7 @@ export function hostGpu(doc: Document, win: Window): void {
   function hide() {
     if (canvas && !canvas.hidden) {
       canvas.hidden = true
-      for (const { el } of owners) el.removeAttribute(mark)
+      for (const el of owners) el.removeAttribute(mark)
     }
     acknowledged = ''
   }
@@ -65,33 +60,21 @@ export function hostGpu(doc: Document, win: Window): void {
     if (url) w.URL.revokeObjectURL(url)
     url = ''
   }
-  function release() {
-    invalidateArea()
-    w.clearTimeout(watchdog)
-    worker?.terminate()
-    worker = undefined
-    revoke()
-    canvas?.remove()
-    canvas = undefined
-    watchdog = 0
-  }
   function stop() {
-    release()
+    events.abort()
+    hide()
+    w.clearTimeout(watchdog)
+    w.clearTimeout(retry)
+    if (worker) worker.terminate()
+    revoke()
+    if (canvas) canvas.remove()
     w.cancelAnimationFrame(raf)
     io.disconnect()
     resize.disconnect()
-    events.abort()
   }
   function schedule() {
-    if (!events.signal.aborted && !raf && !doc.hidden)
+    if (!events.signal.aborted && !raf && !retry && !doc.hidden)
       raf = w.requestAnimationFrame(frame)
-  }
-  function invalidate() {
-    invalidateArea()
-    schedule()
-  }
-  function arm() {
-    watchdog = w.setTimeout(stop, 1500)
   }
   function start(width: number, height: number) {
     canvas = doc.createElement('canvas')
@@ -104,31 +87,29 @@ export function hostGpu(doc: Document, win: Window): void {
     url = w.URL.createObjectURL(
       new w.Blob([WORKER_SOURCE], { type: 'text/javascript' }),
     )
-    const current = (worker = new w.Worker(url))
+    worker = new w.Worker(url)
     worker.onerror = e => {
       e.preventDefault()
       stop()
     }
     worker.onmessage = ({ data }) => {
-      if (worker !== current) return
+      if (events.signal.aborted) return
       if (data === -1) return stop()
       w.clearTimeout(watchdog)
       watchdog = 0
-      if (data === 0) revoke()
-      else acknowledged = submitted
+      revoke()
+      acknowledged = submitted
       schedule()
     }
-    main.prepend(canvas)
-    arm()
-    worker.postMessage(surface, [surface])
+    main!.prepend(canvas)
+    return surface
   }
   function frame(now: number) {
     raf = 0
-    if (doc.hidden) return
-    if (motion.matches || connection?.saveData) return release()
+    if (doc.hidden || motion.matches || (connection && connection.saveData))
+      return pause()
     try {
       const { clientWidth: width, clientHeight: height } = doc.documentElement
-      if (!width || !height) return invalidateArea()
       const scale = Math.min(
         Math.min(w.devicePixelRatio, 2) * +quality.scale,
         Math.sqrt(1048576 / (width * height)),
@@ -136,30 +117,28 @@ export function hostGpu(doc: Document, win: Window): void {
       const bw = Math.floor(width * scale),
         bh = Math.floor(height * scale)
       const forms = Array.from(
-        doc.querySelectorAll('form,input,select,textarea'),
+        doc.querySelectorAll('form,form *,[form],input,select,textarea'),
         bounds,
       )
-      const rects = owners.map(({ el, speed }) =>
-        gpuRect(el, main, forms, width, height, bw, bh, speed),
+      const rects = owners.map(el =>
+        gpuRect(el, main!, forms, width, height, bw, bh, +el.dataset.gpuRun!),
       )
       const visible = rects.filter(Boolean)
       if (!visible.length) {
-        invalidateArea()
-        // CSS animation, clipping or a hidden witness can change while an
-        // owner stays in view. Offscreen/zero-area pages sleep until notified.
-        if (
-          owners.some(({ el }) =>
-            overlap(new DOMRect(0, 0, width, height), bounds(el)),
-          )
-        )
-          schedule()
+        pause()
+        // Offscreen owners sleep until observed. A visible but unsafe box can
+        // change even through CSS alone: coalesce all wakeups to at most 2 Hz.
+        if (rects.includes(undefined))
+          retry = w.setTimeout(() => {
+            retry = 0
+            schedule()
+          }, 500)
         return
       }
       const shape = JSON.stringify([bw, bh, rects])
       if (acknowledged !== shape) hide()
-      if (!worker) start(bw, bh)
       if (acknowledged === shape && canvas!.hidden) {
-        owners.forEach(({ el }, i) => el.toggleAttribute(mark, !!rects[i]))
+        owners.forEach((el, i) => el.toggleAttribute(mark, !!rects[i]))
         canvas!.hidden = false
       }
       if (!watchdog) {
@@ -177,35 +156,42 @@ export function hostGpu(doc: Document, win: Window): void {
         }
         last = now
         submitted = shape
-        arm()
-        worker!.postMessage([bw, bh, visible, elapsed])
+        if (!worker && doc.body.querySelectorAll('*').length >= 2000)
+          return stop()
+        const surface = worker ? undefined : start(bw, bh)
+        watchdog = w.setTimeout(stop, 1500)
+        worker!.postMessage(
+          [bw, bh, visible, elapsed, surface],
+          surface ? [surface] : [],
+        )
       }
       schedule()
     } catch {
       stop()
     }
   }
-  function invalidateArea() {
+  function pause() {
     hide()
     last = 0
     quality.fast = quality.slow = 0
   }
   const io = new w.IntersectionObserver(schedule)
-  const resize = new w.ResizeObserver(invalidate)
-  for (const { el } of owners) {
+  const resize = new w.ResizeObserver(schedule)
+  for (const el of owners) {
     io.observe(el)
     resize.observe(el)
   }
-  const on = (target: EventTarget | undefined, event: string, fn: () => void) =>
-    target?.addEventListener?.(event, fn, {
-      capture: event === 'scroll',
+  const on = (target: EventTarget, event: string, fn: () => void) =>
+    target.addEventListener(event, fn, {
+      capture: target === w,
       signal: events.signal,
     })
-  on(w, 'resize', invalidate)
-  on(w, 'scroll', invalidate)
-  on(doc, 'visibilitychange', invalidate)
+  on(w, 'resize', schedule)
+  on(w, 'scroll', schedule)
+  on(doc, 'visibilitychange', () => (doc.hidden ? pause() : schedule()))
   on(motion, 'change', schedule)
-  on(connection, 'change', schedule)
+  if (connection && typeof connection.addEventListener === 'function')
+    on(connection, 'change', schedule)
   on(w, 'pagehide', stop)
   schedule()
 }

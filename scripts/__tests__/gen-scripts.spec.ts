@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { transformSync } from 'esbuild'
-import { render, renderProbe } from '../gen-scripts.ts'
+import { render, renderProbe, renderGpuWorker } from '../gen-scripts.ts'
 import { byteLength } from '../../packages/core/src/compile/budgets.ts'
 import { PROBE_SCRIPT } from '../../packages/core/src/measure/probeMin.ts'
 import {
@@ -36,6 +36,17 @@ test('each script is within its ceiling, all appendices included', () => {
   assert.ok(byteLength(base) <= 10_000)
   assert.ok(byteLength(STATES_SCRIPT) <= 6_193)
   assert.ok(byteLength(base + STATES_SCRIPT) <= 20_000)
+  assert.ok(byteLength(GPU_HOST_SCRIPT) <= 6_144)
+})
+
+test('the production GPU executable is already ES2017', () => {
+  for (const code of [GPU_HOST_SCRIPT, GPU_LOADER_SCRIPT, renderGpuWorker()]) {
+    const emit = (target: string) => transformSync(code, { target }).code
+    assert.ok(
+      emit('es2017') === emit('esnext'),
+      'newer syntax in the shipped GPU script',
+    )
+  }
 })
 
 test('all 32 joined inline selections authorize exactly the executable bytes they deliver', () => {

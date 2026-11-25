@@ -8,6 +8,7 @@ import test from 'node:test'
 import { compilePage, compileSite, createRegistry } from '@culmjs/core'
 import { node, twoPages } from '../../core/__tests__/kit.ts'
 import { parse } from 'jsonc-parser'
+import { DomUtils, parseDocument } from 'htmlparser2'
 import { buildSite } from '../src/build/bundle.ts'
 import { startDev } from '../src/dev/server.ts'
 import { openProject } from '../src/folder/project.ts'
@@ -283,9 +284,15 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
   assert.doesNotMatch(policy, /unsafe-/)
   const checkOwners = (html: string) => {
     assert.match(html, /src="\/assets\/absent.svg"/)
-    assert.equal((html.match(/data-culm-gpu="/g) ?? []).length, 1)
+    const owners = DomUtils.findAll(
+      e => 'data-culm-gpu' in e.attribs,
+      parseDocument(html).children,
+    )
+    assert.equal(owners.length, 1)
+    assert.equal(owners[0].attribs['data-culm-gpu'], '0')
+    assert.equal(owners[0].attribs['data-gpu-run'], '1')
     assert.equal(
-      html.match(/data-culm-gpu="0"><img[^>]*src="([^"]+)"/)?.[1],
+      DomUtils.getElementsByTagName('img', owners[0].children)[0].attribs.src,
       figure,
     )
   }

@@ -64,9 +64,9 @@ export function lowerGpu(
     trees: Node[]
     classOf: ReadonlyMap<string, string>
     scheme: Look['dark']
-    links: { file(id: string): string | undefined }
   },
   effects: ReadonlyMap<string, CheckedEffect>,
+  canvasSlot: boolean,
   availableMedia?: ReadonlySet<string>,
 ) {
   const { trees, classOf, scheme } = view
@@ -81,7 +81,7 @@ export function lowerGpu(
   )
   const source = new Map([...rendered].map(([w, e]) => [e, w]))
   const owners = new Map<HtmlNode, GpuMotion>()
-  const witnesses = new Set<HtmlNode>()
+  const witnesses = new Map<HtmlNode, string>()
   function visit(
     el: HtmlNode | string,
     parent: number,
@@ -104,11 +104,16 @@ export function lowerGpu(
     if (!mask) return 0
     if (motion && 'gpu' in motion) owners.set(el, motion)
     let found = inside && mediaWitness(el, w, availableMedia) ? mask : 0
-    if (
+    if (found) {
+      const glyph =
+        el.tag === 'a' &&
+        el.children?.find(c => typeof c !== 'string' && c.tag === 'svg')
+      witnesses.set(glyph && typeof glyph !== 'string' ? glyph : el, '')
+    } else if (
       inside &&
-      (found || el.children?.some(c => typeof c === 'string' && visibleText(c)))
+      el.children?.some(c => typeof c === 'string' && visibleText(c))
     )
-      witnesses.add(el)
+      witnesses.set(el, 't')
     for (const child of el.children ?? []) found |= visit(child, mask, inside)
     if (found !== mask) owners.delete(el)
     return found
@@ -124,20 +129,27 @@ export function lowerGpu(
   const definitions: CheckedEffect[] = []
   const indices = new Map<string, number>()
   const regions = []
-  const styles: string[] = []
-  let worker = false
-  // Only main participates in the display plane. Header/footer strips keep
-  // their authored stacking and cannot earn the deployment's worker grant.
-  function markContent(el: HtmlNode, inside: boolean) {
-    const owner = owners.get(el)
-    if (owner && effects.get(owner.gpu)?.builtin) inside = worker = true
-    if (inside && witnesses.has(el)) (el.attrs ??= {})['data-gpu-content'] = ''
+  // A strip or an enclosing GPU owner's box cannot use the main plane.
+  // Make this selection once; loader, host and policy all consume its result.
+  const runnable = new Set<HtmlNode>()
+  function select(el: HtmlNode): boolean {
+    let nested = false
     for (const child of el.children ?? [])
-      if (typeof child !== 'string') markContent(child, inside)
+      if (typeof child !== 'string' && select(child)) nested = true
+    const m = owners.get(el)
+    if (!nested && m && effects.get(m.gpu)?.builtin) runnable.add(el)
+    return nested || !!m
+  }
+  function markContent(el: HtmlNode) {
+    if (witnesses.has(el))
+      (el.attrs ??= {})['data-gpu-content'] = witnesses.get(el)
+    for (const child of el.children ?? [])
+      if (typeof child !== 'string') markContent(child)
   }
   for (const strip of site.children ?? [])
-    if (typeof strip !== 'string' && strip.tag === 'main')
-      markContent(strip, false)
+    if (typeof strip !== 'string' && strip.tag === 'main') select(strip)
+  const worker = runnable.size > 0
+  if (worker && !canvasSlot) return // keep the complete static page
   const stats = { shaderBytes: 0, wasmBytes: 0, wasmTransportBytes: 0 }
   for (const [el, m] of owners) {
     const def = effects.get(m.gpu)
@@ -155,19 +167,16 @@ export function lowerGpu(
     }
     const owner: string = String(regions.length)
     ;(el.attrs ??= {})['data-culm-gpu'] = owner
-    const url = m.poster && view.links.file(m.poster)
-    // A quoted, local URL (retain the resolver's percent escapes and suffix).
-    // Low specificity lets authored image styles win; no layout/foreground change.
-    if (url?.startsWith('/') && !url.startsWith('//'))
-      styles.push(
-        `:where([data-culm-gpu="${owner}"]){background-image:url("${url.replace(/["<>\s]/gu, c => encodeURIComponent(c))}");background-size:cover}`,
-      )
     const settings = Object.fromEntries(
       Object.entries(def.settings).map(([k, s]) => [
         k,
         m.settings?.[k] ?? s.default,
       ]),
     )
+    if (runnable.has(el)) {
+      el.attrs['data-gpu-run'] = settings.speed
+      markContent(el)
+    }
     regions.push({
       owner,
       definition,
@@ -180,15 +189,14 @@ export function lowerGpu(
     attrs: { type: 'application/json', id: 'culm-gpu' },
     raw: { kind: 'json', content: JSON.stringify({ definitions, regions }) },
   }
-  if (worker)
-    styles.push(
-      'main:has(>.culm-plane:not([hidden])){isolation:isolate}.culm-plane{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:-1;image-rendering:pixelated}[data-gpu-painted]{background-color:transparent!important;background-image:none!important}',
-    )
+  const css = worker
+    ? 'main:has(>.culm-plane:not([hidden])){isolation:isolate}.culm-plane{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:-1;image-rendering:pixelated}[data-gpu-painted]{background-color:transparent!important;background-image:none!important}'
+    : ''
   return {
     element,
     stats,
     worker,
-    css: styles.join(''),
+    css,
     usesWasm: stats.wasmBytes > 0,
   }
 }

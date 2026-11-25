@@ -14,6 +14,7 @@ import {
   type SiteDocument,
 } from '../../src/index.ts'
 import { DEMO_PLUGIN, node, siteWith, text, twoPages } from '../kit.ts'
+import { DomUtils, parseDocument } from 'htmlparser2'
 
 const def: CustomEffect = {
   name: 'mist',
@@ -77,6 +78,7 @@ test('only the actual registered contours earns a worker, including the deployed
   })
   const trusted = page(doc)
   assert.equal(payload(trusted.html).definitions[0].builtin, 'contours-v1')
+  assert.match(trusted.html, / data-gpu-run="1"/)
   assert.match(policy(trusted.html), /worker-src blob:/)
   assert.doesNotMatch(policy(trusted.html), /unsafe-/)
   assert.ok(
@@ -97,6 +99,7 @@ test('only the actual registered contours earns a worker, including the deployed
     },
   })
   assert.equal(payload(copy.html).definitions[0].builtin, undefined)
+  assert.doesNotMatch(copy.html, / data-gpu-run=/)
   assert.match(policy(copy.html), /worker-src 'none'/)
 })
 
@@ -270,8 +273,15 @@ test('a rendered owner can lose its last visible descendant during data/sample a
     ]),
     { ...node('image', 'image'), props: { assetId: 'unresolved' } },
   ]
-  const p = page(doc, { mode: 'measure' })
+  const p = page(doc, {
+    mode: 'measure',
+    links: {
+      page: s => s,
+      file: id => (id === 'static.png' ? '/local/confirmed.png' : undefined),
+    },
+  })
   assert.match(p.html, /data-id="hero~\d+"/)
+  assert.match(p.html, /\/local\/confirmed.png/)
   assert.doesNotMatch(p.html, /Real heading|data-culm-gpu|application\/json/)
   assert.equal(p.assets, undefined)
 })
@@ -290,6 +300,77 @@ test('host and joined shared limits are inclusive; shader and module bytes are n
   assert.deepEqual(findings(6144, 6), [])
   assert.deepEqual(findings(6145, 5), ['gpuHostScript'])
   assert.deepEqual(findings(6144, 7), ['sharedScripts'])
+})
+
+test('an explicit local poster belongs to the emitted owner even without a runnable leaf', () => {
+  const hero = owner('hero', 'contours')
+  hero.children = [
+    { ...node('opt', 'image'), props: { src: '/unconfirmed.png', alt: '' } },
+  ]
+  hero.style = { base: { bgImage: 'ordinary' } }
+  const doc = siteWith([hero])
+  const links = {
+    page: (v: string) => v,
+    file: (v: string) =>
+      v === 'static.png'
+        ? '/local/p%23.png?v=1#image'
+        : v === 'ordinary'
+          ? '/local/bg.png'
+          : undefined,
+  }
+  for (const mode of ['live', 'edit'] as const) {
+    const p = page(doc, { links, mode })
+    assert.match(p.html, /\/local\/p%23\.png\?v=1#image/)
+    assert.match(p.css, /\/local\/bg.png/)
+    assert.equal(p.assets, undefined)
+  }
+  const sub = compileSubtree(doc, 'home', 'hero', { registry, links })
+  assert.ok(sub.ok)
+  assert.match(sub.html + sub.css, /\/local\/p%23\.png\?v=1#image/)
+  for (const url of [
+    '//elsewhere.invalid/p.png',
+    'https://elsewhere.invalid/p.png',
+  ]) {
+    const p = page(doc, {
+      links: { ...links, file: id => (id === 'static.png' ? url : undefined) },
+    })
+    assert.doesNotMatch(p.html, /elsewhere/)
+  }
+})
+
+test('exact 1,999 and 2,000 body-element boundaries include the live canvas reservation', () => {
+  const doc = siteWith([owner('hero', 'contours')])
+  const count = (html: string) =>
+    DomUtils.getElementsByTagName(
+      '*',
+      DomUtils.getElementsByTagName('body', parseDocument(html))[0].children,
+    ).length
+  const small = page(doc)
+  const kids = doc.pages[0].root.children!
+  for (let i = count(small.html); i < 1999; i++)
+    kids.push(node(`fill${i}`, 'box'))
+  const fits = page(doc)
+  assert.equal(count(fits.html), 1999)
+  assert.match(policy(fits.html), /worker-src blob:/)
+  assert.equal(fits.stats.elements, 2000)
+  // Replacing two boxes by this SVG + its two path elements costs a net +1.
+  const glyph = siteWith([
+    ...kids.slice(0, -2),
+    { ...node('glyph', 'icon'), props: { name: 'home' } },
+  ])
+  const withGlyph = page(glyph)
+  assert.match(policy(withGlyph.html), /worker-src 'none'/)
+  assert.equal(count(withGlyph.html), withGlyph.stats.elements)
+  kids.push(node('onemore', 'box'))
+  const full = page(doc)
+  assert.match(policy(full.html), /worker-src 'none'/)
+  assert.equal(full.assets, undefined)
+  assert.equal(full.stats.elements, count(full.html))
+  delete kids[0].motion
+  kids.push(node('plainonly', 'box'))
+  const plain = page(doc)
+  assert.equal(count(plain.html), 2000)
+  assert.equal(plain.stats.elements, 2000)
 })
 
 const hideWhen = (...values: string[]) => ({

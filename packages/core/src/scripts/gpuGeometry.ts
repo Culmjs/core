@@ -1,84 +1,80 @@
 import type { Region } from './gpuWorker.ts'
 
-export const bounds = (e: Element) => e.getBoundingClientRect()
-export const overlap = (a: DOMRect, b: DOMRect) =>
-  b.width > 0 &&
-  b.height > 0 &&
-  a.left < b.right &&
-  b.left < a.right &&
-  a.top < b.bottom &&
-  b.top < a.bottom
+type Box = [number, number, number, number]
+const box = (r: DOMRect): Box => [r.left, r.top, r.right, r.bottom]
+export const bounds = (e: Element) => box(e.getBoundingClientRect())
+const { min, max, ceil, floor } = Math
+function intersection([l, t, r, b]: Box, [x, y, s, h]: Box): Box | undefined {
+  l = max(l, x)
+  t = max(t, y)
+  r = min(r, s)
+  b = min(b, h)
+  if (l < r && t < b) return [l, t, r, b]
+}
+const clear = (s: CSSStyleDeclaration) =>
+  s.backgroundImage === 'none' && s.backgroundColor === 'rgba(0, 0, 0, 0)'
 
-/** Require a visible compiler-identified content leaf, not just the owner's box. */
-function content(el: Element) {
-  for (const leaf of el.querySelectorAll('[data-gpu-content]')) {
-    if (
-      ('naturalWidth' in leaf && !leaf.naturalWidth) ||
-      ('readyState' in leaf && Number(leaf.readyState) < 2)
-    )
-      continue
+/** Sample a rendered text fragment (or confirmed media box) *inside* the
+ * visible part of this owner. A leaf elsewhere on the screen proves nothing. */
+function content(el: Element, visible: Box) {
+  const doc = el.ownerDocument
+  const range = doc.createRange()
+  for (const leaf of el.querySelectorAll<HTMLElement>('[data-gpu-content]')) {
     if (
       !leaf.checkVisibility({ opacityProperty: true, visibilityProperty: true })
     )
       continue
-    const r = bounds(leaf)
-    if (
-      r.width &&
-      r.height &&
-      leaf.contains(
-        el.ownerDocument.elementFromPoint(
-          r.x + r.width / 2,
-          r.y + r.height / 2,
-        ),
+    const hit = (r: DOMRect) => {
+      const b = intersection(box(r), visible)
+      return (
+        b &&
+        leaf.contains(
+          doc.elementFromPoint((b[0] + b[2]) / 2, (b[1] + b[3]) / 2),
+        )
       )
+    }
+    if (leaf.dataset.gpuContent) {
+      for (const n of leaf.childNodes)
+        if (n.nodeType === 3 && n.textContent!.trim()) {
+          range.selectNodeContents(n)
+          if (Array.from(range.getClientRects()).some(hit)) return true
+        }
+    } else if (
+      !(
+        ('naturalWidth' in leaf && !leaf.naturalWidth) ||
+        ('readyState' in leaf && Number(leaf.readyState) < 2)
+      ) &&
+      hit(leaf.getBoundingClientRect())
     )
       return true
   }
   return false
 }
 
-/** The negative-z canvas lives inside isolated main. It can replace the
- * owner's rectangular background only across an otherwise clear paint path. */
+/** Only paint a rectangular background with a clear path to isolated main.
+ * Reject ambiguous clip/overlap cases instead of reconstructing CSS paint. */
 export function gpuRect(
   el: Element,
   main: Element,
-  forms: DOMRect[],
+  forms: Box[],
   w: number,
   h: number,
   bw: number,
   bh: number,
   speed: number,
-): Region | undefined {
-  const r = bounds(el)
-  const l = Math.max(0, r.left),
-    t = Math.max(0, r.top),
-    right = Math.min(w, r.right),
-    bottom = Math.min(h, r.bottom)
+): Region | undefined | false {
+  const r = bounds(el),
+    visible = intersection(r, [0, 0, w, h])
+  if (!visible) return false // outside: wait for intersection/resize, no polling
+  if (forms.some(f => intersection(f, visible)) || !main.contains(el)) return
+  const [left, top, right, bottom] = visible
+  // Conservatively require exposed owner paint at its leading corner. Don't try to
+  // infer transparency through foreground layout, decoration or replaced media.
   if (
-    l >= right ||
-    t >= bottom ||
-    !main.contains(el) ||
-    el.querySelector('[data-culm-gpu]') ||
-    forms.some(f => overlap(r, f))
-  )
-    return
-  // If a foreground plate covers the entire visible background, keep it static.
-  // Require one exposed sample of the owner's own paint box.
-  const clear = (s: CSSStyleDeclaration) =>
-    s.backgroundImage === 'none' && s.backgroundColor === 'rgba(0, 0, 0, 0)'
-  if (
-    ![l + 1, right - 1].some(x =>
-      [t + 1, bottom - 1].some(y => {
-        let hit = el.ownerDocument.elementFromPoint(x, y)
-        while (
-          hit !== el &&
-          hit?.matches('div,section,p,span,h1,h2,h3,h4,h5,h6') &&
-          clear(getComputedStyle(hit))
-        )
-          hit = hit.parentElement
-        return hit === el
-      }),
-    )
+    el.ownerDocument.elementFromPoint(
+      (left + min(left + 2, right)) / 2,
+      (top + min(top + 2, bottom)) / 2,
+    ) !== el
   )
     return
   let inside = true
@@ -105,13 +101,13 @@ export function gpuRect(
     )
       return
     if (n !== el && (s.overflowX !== 'visible' || s.overflowY !== 'visible')) {
-      const box = bounds(n)
+      const [l, t, r, b] = bounds(n)
       if (
         s.borderWidth !== '0px' ||
-        l < box.left ||
-        right > box.right ||
-        t < box.top ||
-        bottom > box.bottom
+        left < l ||
+        right > r ||
+        top < t ||
+        bottom > b
       )
         return
     }
@@ -120,22 +116,18 @@ export function gpuRect(
         if (
           sibling !== n &&
           !sibling.matches('.culm-plane') &&
-          overlap(r, bounds(sibling))
+          intersection(visible, bounds(sibling))
         )
           return
   }
-  const x = Math.ceil((r.left * bw) / w),
-    y = Math.ceil(((h - r.bottom) * bh) / h)
-  const dx = Math.floor((r.right * bw) / w) - x,
-    dy = Math.floor(((h - r.top) * bh) / h) - y
+  const x = ceil((r[0] * bw) / w),
+    y = ceil(((h - r[3]) * bh) / h)
+  const dx = floor((r[2] * bw) / w) - x,
+    dy = floor(((h - r[1]) * bh) / h) - y
   if (
-    dx > 0 &&
-    dy > 0 &&
-    x < bw &&
-    y < bh &&
-    x + dx > 0 &&
-    y + dy > 0 &&
-    content(el)
+    max(dx, dy) <= 2048 &&
+    min(dx, dy, bw - x, bh - y, x + dx, y + dy) > 0 &&
+    content(el, visible)
   )
     return [x, y, dx, dy, speed]
 }

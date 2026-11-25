@@ -60,27 +60,25 @@ function bundle(contents: string, define?: Record<string, string>) {
     define,
     bundle: true,
     format: 'iife',
-    // The lazy worker lane already requires modern OffscreenCanvas and
-    // checkVisibility. Keep the page loader and existing timeline at ES2017.
-    target: define ? 'es2020' : 'es2017',
+    target: 'es2017',
     minify: true,
     write: false,
   }).outputFiles[0].text.trim()
 }
 
+export function renderGpuWorker(): string {
+  return bundle("import {acquire} from './gpuWorker.ts';onmessage=acquire", {
+    CONTOURS: JSON.stringify(CONTOURS_SOURCE),
+  })
+}
+
 export function render(): string {
   const hash = (s: string) =>
     `sha256-${createHash('sha256').update(s).digest('base64')}`
-  const worker = bundle(
-    "import {gpuWorker} from './gpuWorker.ts';gpuWorker()",
-    {
-      CONTOURS: JSON.stringify(CONTOURS_SOURCE),
-    },
-  )
   const GPU_HOST_SCRIPT = bundle(
     "import {hostGpu} from './gpuHost.ts';hostGpu(document,window)",
     {
-      WORKER_SOURCE: JSON.stringify(worker),
+      WORKER_SOURCE: JSON.stringify(renderGpuWorker()),
       EFFECT_ID: JSON.stringify(CONTOURS_ID),
     },
   )

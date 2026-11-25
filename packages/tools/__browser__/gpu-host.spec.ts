@@ -5,6 +5,9 @@ import test from 'node:test'
 import {
   applySetting,
   compilePage,
+  compileSubtree,
+  checkShader,
+  type ShaderSettings,
   createRegistry,
   insertBlock,
 } from '@culmjs/core'
@@ -13,6 +16,8 @@ import { scenes } from '../__tests__/fixtures/motion-scenes.ts'
 import { openBrowser, type Page } from '../src/measure/browser.ts'
 import { DEMO_PLUGIN, node, text } from '../../core/__tests__/kit.ts'
 import { mist } from '../__tests__/fixtures/shader.ts'
+import { sources } from '../../../scripts/gpu-spike/shaders.ts'
+import { DomUtils, parseDocument } from 'htmlparser2'
 
 const active = `document.querySelectorAll('[data-gpu-painted]').length`
 const first = `document.querySelector('section')`
@@ -47,13 +52,20 @@ function probe(mode: string) {
     addEventListener('message',e=>{if(e.data==='lose'){e.stopImmediatePropagation();gl.getExtension('WEBGL_lose_context').loseContext()}});`
   return `(()=>{
     const mode=${JSON.stringify(mode)},prefix=${JSON.stringify(worker)};
-    window.obs={workers:0,urls:0,revoked:0,transfers:0,terminated:0,contexts:[],widths:[],main:0,frames:0,start:0,end:0};
+    window.obs={workers:0,canvases:0,urls:0,revoked:0,transfers:0,terminated:0,contexts:[],widths:[],main:0,frames:0,start:0,end:0};
+    const createElement=Document.prototype.createElement;Document.prototype.createElement=function(tag,...args){if(tag==='canvas')obs.canvases++;return createElement.call(this,tag,...args)};
     if(mode==='missing')window.WebGL2RenderingContext=undefined;
     if(mode==='save')Object.defineProperty(navigator.connection,'saveData',{value:true,writable:true});
     if(mode==='denied')Object.defineProperty(window,'localStorage',{get(){throw Error('unavailable')}});
     if(mode==='slow'||mode==='denied'){
       const raf=requestAnimationFrame.bind(window);let t=100;window.interval=mode==='slow'?1:120;
-      window.requestAnimationFrame=f=>raf(()=>f(t+=interval))
+      window.requestAnimationFrame=f=>raf(()=>{
+        if(mode==='slow' && interval===120){
+          window.dispatchEvent(new Event('scroll'));
+          document.querySelector('section').style.paddingBottom=(obs.frames%2?40:41)+'px'
+        }
+        f(t+=interval)
+      })
     }
     const transfer=HTMLCanvasElement.prototype.transferControlToOffscreen;
     HTMLCanvasElement.prototype.transferControlToOffscreen=function(){obs.transfers++;if(mode==='transfer')throw Error();return transfer.call(this)};
@@ -113,6 +125,20 @@ test('two production starter heroes share one worker context behind the unchange
   const built = compilePage(doc, 'home', options)
   assert.ok(built.ok, JSON.stringify(built.problems))
   assert.deepEqual(built.problems, [])
+  const competing = structuredClone(doc)
+  competing.pages[0].root.children![0].style!.base!.bgImage = 'ordinary'
+  const posterPages = new Map<string, string>()
+  for (const mode of ['live', 'edit'] as const) {
+    const c = compilePage(competing, 'home', { ...options, mode })
+    assert.ok(c.ok, JSON.stringify(c.problems))
+    posterPages.set('/poster-' + mode, c.html)
+  }
+  const sub = compileSubtree(competing, 'home', heroes[0].id, options)
+  assert.ok(sub.ok)
+  posterPages.set(
+    '/poster-sub',
+    `<style>${sub.pageCss}${sub.css}</style><main class="s-site">${sub.html}</main>`,
+  )
   doc.pages[0].root.children!.unshift({
     ...node('spacer', 'box'),
     style: { base: { height: { n: 1800, unit: 'px' } } },
@@ -120,6 +146,19 @@ test('two production starter heroes share one worker context behind the unchange
   const far = compilePage(doc, 'home', options)
   assert.ok(far.ok)
   assert.deepEqual(far.problems, [])
+  const mixed = structuredClone(doc)
+  mixed.customEffects = [mist]
+  const near = mixed.pages[0].root.children![0]
+  near.children = [text('neartitle', 'Static scene')]
+  near.motion = { trigger: 'enter-view', gpu: 'mist' }
+  mixed.header.children = [
+    {
+      ...node('strip', 'column', [text('striptitle', 'Strip')]),
+      motion: { trigger: 'enter-view', gpu: 'contours' },
+    },
+  ]
+  const mixedPage = compilePage(mixed, 'home', options)
+  assert.ok(mixedPage.ok, JSON.stringify(mixedPage.problems))
   let requests = 0
   const server = createServer((req, res) => {
     if (req.url === '/_culm/gpu.js') {
@@ -133,11 +172,24 @@ test('two production starter heroes share one worker context behind the unchange
         .end(
           '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="#123456"/></svg>',
         )
+    else if (req.url === '/local/ordinary?v=2')
+      res
+        .setHeader('content-type', 'image/svg+xml')
+        .end(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>',
+        )
     else if (req.url === '/favicon.ico') res.writeHead(204).end()
     else
       res
         .setHeader('content-type', 'text/html')
-        .end(req.url === '/far' ? far.html : built.html)
+        .end(
+          posterPages.get(req.url!) ??
+            (req.url === '/mixed'
+              ? mixedPage.html
+              : req.url === '/far'
+                ? far.html
+                : built.html),
+        )
   })
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r))
   t.after(() => new Promise<void>(r => server.close(() => r())))
@@ -193,6 +245,162 @@ test('two production starter heroes share one worker context behind the unchange
   assert.deepEqual(p.errors, [])
 
   const scroll = `${first}.scrollIntoView()`
+  await t.test(
+    'explicit poster beats an ordinary bgImage in live, edit and a fragment',
+    async () => {
+      await p.setScripts(false)
+      try {
+        for (const route of posterPages.keys()) {
+          assert.ok((await p.goto(origin + route, 10000)).ok)
+          assert.match(
+            await p.evaluate<string>(
+              `getComputedStyle(${first}).backgroundImage`,
+            ),
+            /\/local\/poster.svg\?v=2/,
+          )
+          if (route === '/poster-live')
+            assert.deepEqual(await pixels(p), poster)
+        }
+      } finally {
+        await p.setScripts(true)
+      }
+    },
+  )
+  await t.test(
+    'real body count respects the display slot at the ceiling',
+    async () => {
+      const edge = structuredClone(competing)
+      const filler = node('filler', 'column', [])
+      edge.pages[0].root.children!.push(filler)
+      const page = () => {
+        const c = compilePage(edge, 'home', options)
+        assert.ok(c.ok)
+        assert.deepEqual(c.problems, [])
+        return c
+      }
+      const count = (html: string) =>
+        DomUtils.getElementsByTagName(
+          '*',
+          DomUtils.getElementsByTagName('body', parseDocument(html))[0]
+            .children,
+        ).length
+      for (let i = count(page().html); i < 1999; i++)
+        filler.children!.push(node(`fill${i}`, 'box'))
+      const fits = page()
+      posterPages.set('/edge', fits.html)
+      assert.equal(count(fits.html), 1999)
+      assert.ok((await p.goto(origin + '/edge', 10000)).ok)
+      await wait(p, `${active}===2`)
+      assert.equal(
+        await p.evaluate(`document.body.querySelectorAll('*').length`),
+        2000,
+      )
+      // Even a reserved slot may have been consumed by another live feature.
+      await p.setReducedMotion(true)
+      assert.ok((await p.goto(origin + '/edge', 10000)).ok)
+      await p.evaluate(probe('slot'))
+      await p.evaluate(`document.body.append(document.createElement('div'))`)
+      await p.setReducedMotion(false)
+      await wait(
+        p,
+        `performance.getEntriesByName(location.origin+'/_culm/gpu.js').length===1`,
+      )
+      await p.evaluate(paint)
+      assert.deepEqual(
+        await p.evaluate(
+          `[document.body.querySelectorAll('*').length,obs.canvases,obs.workers]`,
+        ),
+        [2000, 0, 0],
+      )
+      filler.children!.push(node('fulla', 'box'), node('fullb', 'box'))
+      const full = page()
+      posterPages.set('/full', full.html)
+      assert.equal(count(full.html), 2000)
+      requests = 0
+      assert.ok((await p.goto(origin + '/full', 10000)).ok)
+      await p.evaluate(paint)
+      assert.deepEqual(
+        await p.evaluate(
+          `[document.body.querySelectorAll('*').length,document.querySelectorAll('canvas').length]`,
+        ),
+        [2000, 0],
+      )
+      assert.equal(requests, 0)
+    },
+  )
+  await t.test(
+    'near static header and custom owners cannot load the distant runnable hero',
+    async () => {
+      requests = 0
+      assert.ok((await p.goto(origin + '/mixed', 10000)).ok)
+      await p.evaluate(paint)
+      assert.equal(requests, 0)
+      await p.evaluate(scroll)
+      await wait(
+        p,
+        `performance.getEntriesByName(location.origin+'/_culm/gpu.js').length===1`,
+      )
+    },
+  )
+  for (const issue of ['pinned', 'witness', 'blocked']) {
+    await t.test(issue, async () => {
+      await p.setReducedMotion(false)
+      assert.ok((await p.goto(origin, 10000)).ok)
+      await wait(p, `${active}===2`)
+      if (issue === 'pinned') {
+        await p.evaluate(
+          `const f=document.createElement('form');f.style.cssText='position:absolute;top:2400px';const b=document.createElement('button');b.type='submit';b.textContent='Submit';b.style.cssText='position:fixed;top:100px;left:320px;width:120px;height:48px;background:transparent;z-index:5';f.append(b);document.body.append(f)`,
+        )
+        assert.ok(
+          await p.evaluate(
+            `document.querySelector('form').getBoundingClientRect().top>innerHeight && document.elementFromPoint(330,110).type==='submit'`,
+          ),
+        )
+        await wait(
+          p,
+          `${active}===1 && !${first}.hasAttribute('data-gpu-painted')`,
+        )
+        const clip = { x: 320, y: 100, w: 120, h: 48 }
+        const actual = Buffer.from(await p.screenshot(clip))
+        await p.setReducedMotion(true)
+        await wait(p, `${active}===0`)
+        assert.deepEqual(actual, Buffer.from(await p.screenshot(clip)))
+      } else if (issue === 'witness') {
+        await p.evaluate(
+          `const s=${first};s.style.overflow='visible';const heading=s.querySelector('h1');for(const e of s.querySelectorAll('[data-gpu-content]'))if(e!==heading)e.style.visibility='hidden';heading.style.cssText='position:fixed;left:16px;top:410px;font-size:16px;line-height:20px;z-index:5';`,
+        )
+        await wait(p, `!${first}.hasAttribute('data-gpu-painted')`)
+        await p.evaluate(`heading.style.top='395px'`)
+        assert.ok(
+          await p.evaluate(
+            `(()=>{const r=document.createRange();r.selectNodeContents(heading);const b=r.getBoundingClientRect(),end=${first}.getBoundingClientRect().bottom;return b.top<end && (b.top+b.bottom)/2>end})()`,
+          ),
+        )
+        await wait(p, `${first}.hasAttribute('data-gpu-painted')`)
+        await p.evaluate(`heading.style.top='100px'`)
+        await wait(p, `${first}.hasAttribute('data-gpu-painted')`)
+      } else {
+        await p.evaluate(`${first}.parentElement.style.opacity='.5'`)
+        await wait(p, `${active}===0`)
+        await p.evaluate(
+          `window.scans=0;const rect=Element.prototype.getBoundingClientRect;Element.prototype.getBoundingClientRect=function(){if(this.matches('section'))scans++;return rect.call(this)}`,
+        )
+        await p.evaluate(
+          `(async()=>{for(let i=0;i<90;i++){document.body.dataset.unrelated=String(i);await new Promise(r=>requestAnimationFrame(r))}})()`,
+        )
+        const scans = await p.evaluate<number>('scans')
+        assert.ok(
+          scans <= 20,
+          `${scans} blocked owner measurements across 90 unrelated mutations`,
+        )
+        t.diagnostic(
+          `${scans} blocked owner measurements across 90 display opportunities`,
+        )
+        await p.evaluate(`${first}.parentElement.style.opacity='1'`)
+        await wait(p, `${active}===2`)
+      }
+    })
+  }
   for (const mode of [
     'compose',
     'resize',
@@ -225,12 +433,12 @@ test('two production starter heroes share one worker context behind the unchange
         await p.evaluate(paint)
         assert.equal(requests, 0)
         await p.evaluate(
-          `for(const e of document.querySelectorAll('section'))e.style.cssText='height:0;min-height:0;padding:0;overflow:hidden';${scroll}`,
+          `for(const e of document.querySelectorAll('section')){e.dataset.saved=e.style.cssText;e.style.cssText+=';height:0;min-height:0;padding:0;overflow:hidden'};${scroll}`,
         )
         await p.evaluate(paint)
         assert.equal(requests, 0)
         await p.evaluate(
-          `for(const e of document.querySelectorAll('section'))e.style.cssText=''`,
+          `for(const e of document.querySelectorAll('section'))e.style.cssText=e.dataset.saved`,
         )
       }
       await p.evaluate(scroll)
@@ -250,7 +458,7 @@ test('two production starter heroes share one worker context behind the unchange
             `navigator.connection.saveData=true;navigator.connection.dispatchEvent(new Event('change'))`,
           )
         else await p.setReducedMotion(true)
-        await wait(p, `obs.terminated===1`)
+        await wait(p, `${active}===0`)
       } else {
         await wait(
           p,
@@ -341,7 +549,7 @@ test('two production starter heroes share one worker context behind the unchange
               }),
             )
             await p.setReducedMotion(true)
-            await wait(p, 'obs.terminated===1')
+            await wait(p, `${active}===0`)
             assert.deepEqual(
               Buffer.from(
                 await p.screenshot({
@@ -358,6 +566,13 @@ test('two production starter heroes share one worker context behind the unchange
             )
             await p.setReducedMotion(false)
             await wait(p, `${active}===2`)
+            assert.deepEqual(
+              await p.evaluate(
+                '[obs.canvases,obs.transfers,obs.workers,obs.contexts.length]',
+              ),
+              [1, 1, 1, 1],
+            )
+            const saved = await p.evaluate<string>(`${first}.style.cssText`)
             for (const style of [
               'opacity:.5',
               'transform:translateX(5px)',
@@ -365,10 +580,12 @@ test('two production starter heroes share one worker context behind the unchange
               'height:0;min-height:0;padding:0;overflow:hidden',
             ]) {
               await p.evaluate(
-                `${first}.style.cssText=${JSON.stringify(style)}`,
+                `${first}.style.cssText+=${JSON.stringify(';' + style)}`,
               )
               await wait(p, `!${first}.hasAttribute('data-gpu-painted')`)
-              await p.evaluate(`${first}.style.cssText=''`)
+              await p.evaluate(
+                `${first}.style.cssText=${JSON.stringify(saved)}`,
+              )
               await wait(p, `${active}===2`)
             }
             await p.evaluate(
@@ -396,16 +613,7 @@ test('two production starter heroes share one worker context behind the unchange
           }
         }
         if (
-          [
-            'acquire',
-            'stall',
-            'loss',
-            'post',
-            'slow',
-            'denied',
-            'compose',
-            'resize',
-          ].includes(mode)
+          ['acquire', 'stall', 'loss', 'post', 'slow', 'denied'].includes(mode)
         )
           await wait(p, 'obs.terminated>0 && !document.querySelector("canvas")')
         await p.evaluate(paint)
@@ -416,15 +624,21 @@ test('two production starter heroes share one worker context behind the unchange
         if (mode === 'missing') assert.equal(await p.evaluate('obs.workers'), 0)
         else if (mode === 'transfer' || mode === 'blob')
           assert.equal(await p.evaluate('obs.transfers'), 1)
-        else if (mode !== 'compose')
-          assert.equal(await p.evaluate('obs.workers'), 1)
+        else assert.equal(await p.evaluate('obs.workers'), 1)
         if (mode === 'stall') {
           const ms = await p.evaluate<number>('obs.end-obs.start')
           assert.ok(ms >= 1480 && ms < 3000, `${ms} ms`)
         }
       }
       assert.equal(await p.evaluate('obs.urls===obs.revoked'), true)
+      if (mode === 'slow') await p.evaluate(`${first}.style.paddingBottom=''`)
       assert.deepEqual(await pixels(p), poster)
+      if (mode === 'compose') {
+        await p.evaluate(`dispatchEvent(new PageTransitionEvent('pagehide'))`)
+        await wait(p, 'obs.terminated===1 && !document.querySelector("canvas")')
+        await p.evaluate(built.assets![0].content)
+        assert.equal(await p.evaluate('obs.canvases'), 1)
+      }
       assert.deepEqual(p.errors, [])
       if (mode === 'slow') {
         assert.deepEqual(await p.evaluate('Object.keys(localStorage)'), [
@@ -493,6 +707,10 @@ test('the real mixed page pays for the entire worker once alongside inert site a
   )
   assert.ok(host <= 6144 && host + inline <= 20000)
   assert.equal(c.html.match(/"builtin":/g)?.length, 1)
+  assert.deepEqual(
+    [...c.html.matchAll(/ data-gpu-run="([^"]+)"/g)].map(m => m[1]),
+    ['1'],
+  )
   assert.doesNotMatch(
     c.assets![0].content,
     /readPixels|fetch\(|WebAssembly|XMLHttpRequest/,
@@ -500,4 +718,38 @@ test('the real mixed page pays for the entire worker once alongside inert site a
   t.diagnostic(
     JSON.stringify({ host, inline, shared: inline + host, stats: c.stats }),
   )
+})
+
+test('checker-approved GLSL links on a real WebGL2 driver with the typed inputs and opaque wrapper', async t => {
+  const fixtures: [string, ShaderSettings][] = [
+    [
+      sources.contours,
+      { speed: { type: 'number', min: 0, max: 2, default: 1 } },
+    ],
+    [sources.mist, {}],
+    [
+      'float tone(vec2 p){return texture(u_noise,p).r;} vec4 shade(vec2 uv){vec2 p=(uv+u_pointer)/u_resolution;return vec4(mix(u_set_tint,vec3(tone(p)),clamp(u_scroll,0.0,1.0)),1.0);}',
+      { tint: { type: 'color', default: '#123456' } },
+    ],
+  ]
+  for (const [source, settings] of fixtures)
+    assert.ok(checkShader(source, settings).ok)
+  const b = await openBrowser()
+  assert.ok(b.ok)
+  t.after(() => b.browser.close())
+  const p = await b.browser.newPage()
+  t.after(() => p.close())
+  // No page host: this independent qualification never draws or admits page programs.
+  const results = await p.evaluate<string[]>(`(()=>{
+    const gl=new OffscreenCanvas(1,1).getContext('webgl2');if(!gl)return ['no WebGL2'];
+    const shader=(type,src)=>{const s=gl.createShader(type);gl.shaderSource(s,'#version 300 es\\n'+src);gl.compileShader(s);return s};
+    const vs=shader(gl.VERTEX_SHADER,'out vec2 uv;void main(){uv=vec2(0.0);gl_Position=vec4(0,0,0,1);}');
+    return ${JSON.stringify(fixtures)}.map(([source,settings])=>{
+      const uniforms=Object.entries(settings).map(([key,s])=>'uniform '+(s.type==='number'?'float':'vec3')+' u_set_'+key+';').join('');
+      const fs=shader(gl.FRAGMENT_SHADER,'precision highp float;in vec2 uv;out vec4 c;uniform float u_time,u_scroll;uniform vec2 u_resolution,u_pointer;uniform sampler2D u_noise;'+uniforms+source+'\\nvoid main(){c=vec4(shade(uv).rgb,1.0);}');
+      const program=gl.createProgram();gl.attachShader(program,vs);gl.attachShader(program,fs);gl.linkProgram(program);
+      return gl.getProgramParameter(program,gl.LINK_STATUS)?'linked':gl.getShaderInfoLog(fs)+gl.getProgramInfoLog(program);
+    })
+  })()`)
+  assert.deepEqual(results, Array(fixtures.length).fill('linked'))
 })

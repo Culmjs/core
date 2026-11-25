@@ -252,10 +252,16 @@ const anyElement = (
 ): boolean =>
   typeof e !== 'string' &&
   (f(e) || (e.children ?? []).some(c => anyElement(c, f)))
-const countElements = (e: HtmlNode | string): number =>
+// The GPU reservation counts inside SVG glyphs too. Their checked raw bodies
+// contain only SVG tags and local drawing attributes; never scan script/data.
+const countElements = (e: HtmlNode | string, glyphs: boolean): number =>
   typeof e === 'string'
     ? 0
-    : 1 + (e.children ?? []).reduce((n, c) => n + countElements(c), 0)
+    : 1 +
+      (glyphs && e.raw?.kind === 'icon'
+        ? (e.raw.content.match(/<[a-z]/g)?.length ?? 0)
+        : 0) +
+      (e.children ?? []).reduce((n, c) => n + countElements(c, glyphs), 0)
 
 /** A published header or footer with nothing in it, or hidden, draws no strip. The editor always keeps both, so there is somewhere to drop blocks. */
 const shows = (w: Node, mode: 'edit' | 'live') =>
@@ -352,9 +358,17 @@ export function build(
       })
   const rendered = hasGpu || hasSteps ? new Map<Node, HtmlNode>() : undefined
   const site = siteElement(doc, page, p, mail, rendered)
+  const siteCount = countElements(site, hasGpu)
   const gpu =
     hasGpu && rendered && effects
-      ? lowerGpu(site, rendered, p, effects, options.availableMedia)
+      ? lowerGpu(
+          site,
+          rendered,
+          p,
+          effects,
+          siteCount + 3 <= BUDGETS.elements,
+          options.availableMedia,
+        )
       : undefined
   const motion =
     hasSteps && rendered
@@ -449,7 +463,8 @@ export function build(
         gpuHost: byteLength(GPU_HOST_SCRIPT),
       }),
     },
-    elements: body.reduce((n, e) => n + countElements(e), 0),
+    // Site + inert/executable body scripts, plus one reserved live display slot.
+    elements: siteCount + body.length - 1 + Number(!!gpu?.worker),
     depth: p.depth,
     ...(gpu && { gpuData: gpu.stats }),
   }
