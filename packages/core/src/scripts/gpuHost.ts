@@ -1,323 +1,238 @@
-import { bounds, gpuRect } from './gpuGeometry.ts'
-import { backdrop } from './gpuBackdrop.ts'
-import { nextQuality, type Quality } from './gpuQuality.ts'
+import { bounds, gpuRect } from './gpuCheckedGeometry.ts'
 import type { Binding, Region } from './gpuWorker.ts'
 
 declare const WORKER_SOURCE: string
 
-type Stamp = { layout: string; fallback: string } | undefined
-function matches(prior: Stamp, current: Stamp, live: boolean) {
-  return (
-    prior &&
-    current &&
-    prior.layout === current.layout &&
-    (live || prior.fallback === current.fallback)
-  )
-}
-
-export function hostGpu(doc: Document, win: Window): void {
-  const w = win as Window & typeof globalThis
-  const page = doc as Document & { culmGpu?: true }
-  if (page.culmGpu) return
-  page.culmGpu = true
+export function hostGpu(
+  doc: Document & { culmGpu?: boolean },
+  w: Window & typeof globalThis,
+): void {
+  if (doc.culmGpu) return
+  doc.culmGpu = true
   const main = doc.querySelector('main')
-  const data = doc.getElementById('culm-gpu')
-  if (!main || !data) return
-  let payload
-  try {
-    payload = JSON.parse(data.textContent!)
-  } catch {
+  if (!main || !w.OffscreenCanvas || !w.Worker || !w.WebGL2RenderingContext)
     return
-  }
-  if (!Array.isArray(payload?.definitions) || !Array.isArray(payload.regions))
-    return
-  const { definitions, regions } = payload
-  const keys: string[] = [],
-    bindings: Binding[] = []
-  const owners = Array.from(
-    main.querySelectorAll<HTMLElement>('[data-gpu-run]'),
-  ).filter(el => {
-    const region = regions[+el.dataset.culmGpu!],
-      d = region && definitions[region.definition]
-    if (!d || d.wasm || !region.settings) return false
-    const key =
-      'culm:slow:' +
-      (d.builtin || JSON.stringify([d.name, d.source, d.settings]))
+  // Owner, remembered effect identity, immutable worker binding, last receipt.
+  const rows: [HTMLElement, string, Binding, string][] = []
+  let observers: (ResizeObserver | IntersectionObserver)[]
+  function stored(key: string, write = false) {
     try {
-      if (w.localStorage[key] === '1') return false
+      return write ? (w.localStorage[key] = '1') : w.localStorage[key] === '1'
     } catch {
       /* denied */
     }
-    keys.push(key)
-    bindings.push([d.source, region.settings, d.reviewed === true])
-    return true
-  })
-  if (
-    !w.OffscreenCanvas ||
-    !w.WebGL2RenderingContext ||
-    !w.Worker ||
-    !w.ResizeObserver ||
-    !owners.length
-  )
+  }
+  try {
+    const { definitions, regions } = JSON.parse(
+      doc.querySelector<HTMLScriptElement>('#culm-gpu')!.text,
+    )
+    for (const el of main.querySelectorAll<HTMLElement>('[data-gpu-run]')) {
+      const { definition, settings } = regions[+el.dataset.culmGpu!] || {},
+        d = definitions[definition]
+      if (!d || d.wasm || !settings) continue
+      const key =
+        'culm:slow:' +
+        (d.builtin || JSON.stringify([d.name, d.source, d.settings]))
+      if (!stored(key)) {
+        rows.push([el, key, [d.source, settings, d.reviewed === true], ''])
+      }
+    }
+    if (!rows.length) return
+    observers = [new IntersectionObserver(wake), new ResizeObserver(wake)]
+  } catch {
     return
+  }
   const motion = w.matchMedia('(prefers-reduced-motion: reduce)')
-  const connection = (
+  const conn = (
     w.navigator as Navigator & {
       connection?: EventTarget & { saveData?: boolean }
     }
   ).connection
-  const events = new AbortController()
-  const mark = 'data-gpu-painted'
-  let canvas: HTMLCanvasElement | undefined,
-    worker: Worker | undefined,
-    url = ''
+  const events = new AbortController(),
+    signal = events.signal,
+    mark = 'data-gpu-painted'
+  // Positive: requested display opportunity. Negative: coalesced blocked retry.
   let raf = 0,
-    retry = 0,
-    watchdog = 0,
+    pending = 0,
+    time = 0,
     last = 0,
-    elapsed = 0
-  let acknowledged: Stamp[] = [],
-    submitted: Stamp[] = []
-  // Acknowledgements identify a completed layout, not just a linked program.
-  // An old scissor list cannot uncover a poster after a scroll or reflow.
-  let quality: Quality = { scale: 0.25, fast: 0, slow: 0 }
-  let previousDraw = new Set<string>(),
-    slowWitnesses = new Set<string>()
-  let px = 0,
-    py = 0
-  function reset(el: HTMLElement) {
-    el.removeAttribute(mark)
+    scale = 0.25,
+    streak = 0,
+    point = [0, 0]
+  let canvas: HTMLCanvasElement, worker: Worker
+  // The final slow window can only charge an identity present in each of the
+  // eight preceding submissions. All eight have completed when pending is zero.
+  const history: Set<string>[] = []
+  let slot = 0
+  function hide(row: (typeof rows)[number]) {
+    row[0].removeAttribute(mark)
+    row[3] = ''
   }
-  function hide() {
+  function pause() {
     if (canvas) canvas.hidden = true
-    owners.forEach(reset)
-    acknowledged = []
-    submitted = []
-  }
-  function revoke() {
-    if (url) w.URL.revokeObjectURL(url)
-    url = ''
+    rows.forEach(hide)
+    last = streak = 0
   }
   function stop() {
+    if (signal.aborted) return
     events.abort()
-    hide()
-    w.clearTimeout(watchdog)
-    w.clearTimeout(retry)
+    pause()
     if (worker) worker.terminate()
-    revoke()
     if (canvas) canvas.remove()
-    w.cancelAnimationFrame(raf)
-    io.disconnect()
-    resize.disconnect()
+    clearTimeout(pending)
+    if (raf < 0) clearTimeout(-raf)
+    else cancelAnimationFrame(raf)
+    for (const ob of observers) ob.disconnect()
   }
-  function schedule() {
-    if (!events.signal.aborted && !raf && !retry && !doc.hidden)
-      raf = w.requestAnimationFrame(frame)
-  }
-  function start(width: number, height: number) {
-    canvas = doc.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
-    canvas.className = 'culm-plane'
-    canvas.ariaHidden = 'true' // canvas is natively outside the tab order
-    canvas.hidden = true
-    const surface = canvas.transferControlToOffscreen()
-    url = w.URL.createObjectURL(
-      new w.Blob([WORKER_SOURCE], { type: 'text/javascript' }),
-    )
-    worker = new w.Worker(url)
-    worker.onerror = e => {
-      e.preventDefault()
-      stop()
-    }
-    worker.onmessage = ({ data }) => {
-      if (events.signal.aborted) return
-      if (data === -1) return stop()
-      w.clearTimeout(watchdog)
-      watchdog = 0
-      revoke()
-      acknowledged = submitted
-      schedule()
-    }
-    main!.append(canvas)
-    return surface
+  function wake() {
+    if (doc.hidden) pause()
+    else if (!raf && !signal.aborted) raf = w.requestAnimationFrame(frame)
   }
   function frame(now: number) {
     raf = 0
-    if (doc.hidden || motion.matches || (connection && connection.saveData))
-      return pause()
+    if (signal.aborted) return
+    if (doc.hidden || motion.matches || (conn && conn.saveData)) return pause()
     try {
       const { clientWidth: width, clientHeight: height } = doc.documentElement
-      const cap = Math.min(
-        2048 / Math.max(width, height),
-        Math.sqrt(1048576 / (width * height)),
-      )
-      const scale = Math.min(
-        cap,
-        Math.min(w.devicePixelRatio, 2) * +quality.scale,
-      )
-      const bw = Math.floor(width * scale),
-        bh = Math.floor(height * scale)
-      const dw = Math.floor(width * Math.min(1, cap)),
-        dh = Math.floor(height * Math.min(1, cap))
+      const { min, max } = Math,
+        cap = min(
+          2048 / max(width, height),
+          Math.sqrt(1048576 / (width * height)),
+        )
+      const display = min(1, cap),
+        dw = (width * display) | 0,
+        dh = (height * display) | 0
+      const work = min(cap, scale * min(2, w.devicePixelRatio))
       const forms = Array.from(
         doc.querySelectorAll('form,form *,[form],input,select,textarea'),
         bounds,
       )
-      const boxes = owners.map(bounds)
-      const rects = owners.map((el, i) =>
-        gpuRect(
-          el,
-          boxes[i],
-          main!,
-          forms,
-          width,
-          height,
-          dw,
-          dh,
-          !bindings[i][2],
-        ),
-      )
-      const paints = rects.map((r, i) => r && backdrop(owners[i], main!))
-      paints.forEach((p, i) => {
-        if (!p && rects[i]) rects[i] = undefined
+      const draws: Region[] = []
+      let path = '',
+        blocked = false
+      rows.forEach((row, i) => {
+        const [el, , binding] = row
+        const box = bounds(el),
+          r = gpuRect(el, box, main!, forms, width, height, dw, dh, !binding[2])
+        if (!r) {
+          hide(row)
+          blocked ||= r !== false
+          return
+        }
+        const [l, t, right, b] = box,
+          clip = `M${l} ${t}H${right}V${b}H${l}Z`,
+          shape = width + ',' + height + clip
+        const live = el.hasAttribute(mark)
+        // One outstanding draw: its receipt becomes authoritative at ACK (pending=0).
+        // Until exposed, the actual fallback must match. Once live, only layout
+        // is relevant. Invalidate during flight even if a later change reverts.
+        const seed = shape + ';' + r.signature,
+          valid = row[3] === (live ? shape : seed)
+        const show = valid && (live || !pending)
+        el.toggleAttribute(mark, show)
+        if (!pending) row[3] = show ? shape : seed
+        else if (!valid) row[3] = ''
+        if (show) path += clip
+        const rect: [number, number, number, number] = r
+        draws.push([...rect, i, r.seed, show])
       })
-      if (!rects.some(Boolean)) {
+      if (!draws.length) {
         pause()
-        // Offscreen owners sleep until observed. A visible but unsafe box can
-        // change even through CSS alone: coalesce all wakeups to at most 2 Hz.
-        if (rects.includes(undefined))
-          retry = w.setTimeout(() => {
-            retry = 0
-            schedule()
+        if (blocked)
+          raf = -w.setTimeout(() => {
+            raf = 0
+            wake()
           }, 500)
         return
       }
-      const shape: Stamp[] = paints.map((p, i) =>
-        p
-          ? {
-              layout: [width, height, ...boxes[i]].join(),
-              fallback: p.signature,
-            }
-          : undefined,
-      )
-      const dt = last ? Math.min(33, now - last) : 0
-      let surface: OffscreenCanvas | undefined
-      if (!watchdog) {
+      if (!pending) {
+        // Signed streak keeps fast and slow windows consecutive across owner churn.
+        const active = new Set(draws.map(r => rows[r[4]][1])),
+          dt = last ? now - last : 0
         if (last) {
-          const interval = now - last
-          // Cadence is page-wide, attribution is not. Charge each interval
-          // to the preceding real draw (which has completed at this point).
-          if (interval > 25) {
-            if (!quality.slow) slowWitnesses = new Set(previousDraw)
-            else
-              for (const key of slowWitnesses)
-                if (!previousDraw.has(key)) slowWitnesses.delete(key)
-          }
-          quality = nextQuality(quality, interval)
-          if (quality.scale === 'fallback') {
-            try {
-              rects.forEach((r, i) => {
-                if (r && slowWitnesses.has(keys[i]))
-                  w.localStorage[keys[i]] = '1'
-              })
-            } catch {
-              /* terminal in memory */
+          streak =
+            dt > 25 ? min(0, streak) - 1 : dt <= 16.7 ? max(0, streak) + 1 : 0
+          if (streak === 60 || streak === -8) {
+            scale = streak < 0 ? scale / 2 : min(1, scale * 2)
+            streak = 0
+            if (scale < 0.25) {
+              for (const k of active)
+                if (history.every(h => h.has(k))) stored(k, true)
+              return stop()
             }
-            return stop()
           }
-          elapsed += dt / 1000
         }
+        history[slot++ % 8] = active
         last = now
-        if (!worker && doc.body.querySelectorAll('*').length >= 2000)
-          return stop()
-        surface = worker ? undefined : start(dw, dh)
-      }
-      let path = ''
-      const draws: Region[] = []
-      rects.forEach((r, i) => {
-        const el = owners[i]
-        if (
-          acknowledged[i] &&
-          !matches(acknowledged[i], shape[i], el.hasAttribute(mark))
-        ) {
-          reset(el)
-          acknowledged[i] = undefined
+        time += min(33, dt) / 1000
+        let surface: OffscreenCanvas | undefined
+        if (!worker) {
+          if (doc.body.querySelectorAll('*').length >= 2000) return stop()
+          canvas = doc.createElement('canvas')
+          Object.assign(canvas, {
+            className: 'culm-plane',
+            ariaHidden: 'true',
+            hidden: true,
+            width: dw,
+            height: dh,
+          })
+          surface = canvas.transferControlToOffscreen()
+          const url = URL.createObjectURL(
+            new Blob([WORKER_SOURCE], { type: 'text/javascript' }),
+          )
+          // Worker construction resolves the Blob URL. Revoke the registration
+          // on success or constructor failure; the worker owns the resolved script.
+          try {
+            worker = new Worker(url)
+          } finally {
+            URL.revokeObjectURL(url)
+          }
+          worker.onerror = e => {
+            e.preventDefault()
+            stop()
+          }
+          worker.onmessage = e => {
+            if (e.data !== 1) return stop()
+            clearTimeout(pending)
+            pending = 0
+          }
+          main!.append(canvas)
         }
-        const live = el.hasAttribute(mark)
-        if (watchdog && !matches(submitted[i], shape[i], live))
-          submitted[i] = undefined
-        if (!r) return
-        if (!live && !watchdog && matches(acknowledged[i], shape[i], false))
-          el.setAttribute(mark, '')
-        const painted = el.hasAttribute(mark)
-        if (painted) {
-          const [l, t, right, b] = boxes[i]
-          path += `M${l} ${t}H${right}V${b}H${l}Z`
-        }
-        const paint = paints[i]
-        if (paint) draws.push([...r, i, paint.seed, painted])
-      })
-      canvas!.hidden = !path
-      if (path) canvas!.style.clipPath = `path('${path}')`
-      if (!watchdog) {
-        submitted = shape
-        watchdog = w.setTimeout(stop, 1500)
-        worker!.postMessage(
+        pending = w.setTimeout(stop, 1500)
+        worker.postMessage(
           [
-            bw,
-            bh,
+            (width * work) | 0,
+            (height * work) | 0,
             draws,
-            elapsed,
+            time,
             surface,
-            surface ? bindings : undefined,
+            surface && rows.map(r => r[2]),
             w.scrollY,
-            px,
-            py,
+            ...point,
             dw,
             dh,
           ],
           surface ? [surface] : [],
         )
-        previousDraw = new Set(draws.map(r => keys[r[4]]))
       }
-      schedule()
+      canvas.hidden = !path
+      if (path) canvas.style.clipPath = `path('${path}')`
+      wake()
     } catch {
       stop()
     }
   }
-  function pause() {
-    hide()
-    last = 0
-    previousDraw.clear()
-    slowWitnesses.clear()
-    quality.fast = quality.slow = 0
-  }
-  const io = new w.IntersectionObserver(schedule)
-  const resize = new w.ResizeObserver(schedule)
-  for (const el of owners) {
-    io.observe(el)
-    resize.observe(el)
-  }
-  const on = (target: EventTarget, event: string, fn: () => void) =>
-    target.addEventListener(event, fn, {
-      capture: target === w,
-      signal: events.signal,
-    })
-  on(w, 'resize', schedule)
-  on(w, 'scroll', schedule)
-  w.addEventListener(
-    'pointermove',
-    e => {
-      px = e.clientX
-      py = e.clientY
-    },
-    { signal: events.signal },
-  )
-  on(doc, 'visibilitychange', () => (doc.hidden ? pause() : schedule()))
-  on(motion, 'change', schedule)
-  if (connection && typeof connection.addEventListener === 'function')
-    on(connection, 'change', schedule)
+  // Geometry is recomputed on every active display opportunity. When asleep,
+  // intersection/size changes wake newly visible or newly positive-area owners.
+  for (const ob of observers) for (const [e] of rows) ob.observe(e)
+  const on = (t: EventTarget, k: string, f: EventListener = wake) =>
+    t.addEventListener(k, f, { signal })
+  on(doc, 'visibilitychange')
   on(w, 'pagehide', stop)
-  schedule()
+  on(w, 'pointermove', e => {
+    point = [(e as PointerEvent).clientX, (e as PointerEvent).clientY]
+  })
+  on(motion, 'change')
+  if (conn && typeof conn.addEventListener === 'function') on(conn, 'change')
+  wake()
 }
