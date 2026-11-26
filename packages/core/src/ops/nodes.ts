@@ -177,6 +177,13 @@ export const add: OpFn<'add'> = (doc, registry, op) => {
       )
       return
     }
+    if (isObj(n) && Object.hasOwn(n, 'origin')) {
+      problem = bad(
+        'The origin tag cannot be set by an operation; only inserting a block writes it.',
+        { path: `${at}.origin` },
+      )
+      return
+    }
     if (!isObj(n) || typeof n.kind !== 'string') {
       problem = bad('A node needs a kind.', { path: at })
       return

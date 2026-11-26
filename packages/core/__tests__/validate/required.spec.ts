@@ -1824,3 +1824,65 @@ test('display none at phone on the required header.nav is refused, and the messa
   assert.equal(p[0].rule, 'required')
   assert.match(p[0].message, /; a menu can fold on phone with foldOn "phone"/)
 })
+
+test('a required node with opacity 0 in any layer is refused; motion exempts it', () => {
+  const refusedAt = (d: object) =>
+    validateSite(d, reg).map(x => [x.code, x.rule, x.nodeId, x.path])
+  assert.deepEqual(
+    refusedAt(
+      put(text('t', { required: true, style: { base: { opacity: 0 } } })),
+    ),
+    [['POLICY_VIOLATION', 'required', 't', 'style.base.opacity']],
+  )
+  assert.deepEqual(
+    refusedAt(
+      put(text('t', { required: true, style: { base: { opacity: 0.5 } } })),
+    ),
+    [],
+  )
+  assert.deepEqual(
+    refusedAt(
+      put(
+        text('t', {
+          required: true,
+          style: { base: { opacity: 0 } },
+          motion: {
+            trigger: 'load',
+            steps: [
+              {
+                target: 'self',
+                from: { opacity: 0 },
+                to: { opacity: 1 },
+                durationMs: 500,
+              },
+            ],
+          },
+        }),
+      ),
+    ),
+    [],
+  )
+})
+
+test('fluidSize.max is held to the text range', () => {
+  const d = (displayMax?: number) => {
+    const w = withRange(
+      put(
+        text('t', {
+          props: { level: 'h1', runs: [{ text: 'Hi' }] },
+          style: { base: { fluidSize: { min: 16, max: 240 } } },
+        }),
+      ),
+      8,
+      40,
+    )
+    if (displayMax) Object.assign(w.styles.textRange, { displayMax })
+    return w
+  }
+  const p = validateSite(d(), reg)
+  assert.equal(p.length, 1)
+  assert.equal(p[0].rule, 'textRange')
+  assert.ok(p[0].path?.endsWith('fluidSize.max'))
+  assert.deepEqual(p[0].allowed, ['8', '40'])
+  assert.deepEqual(validateSite(d(240), reg), [])
+})

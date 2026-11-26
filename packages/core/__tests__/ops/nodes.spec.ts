@@ -189,6 +189,15 @@ test('add names the nested node a refusal is about: the path leads to it', () =>
   // the top node keeps its short paths
   invalid(add({ node: { kind: 'box', id: 'c' } }), { path: 'node.id' })
 })
+test('add refuses a node that carries origin, at any depth', () => {
+  const origin = { block: 'demo', version: 0, look: 'default' }
+  const add = (node: object) =>
+    run('add', base(), { parent: 'e', index: 0, node })
+  invalid(add({ kind: 'column', origin }), { path: 'node.origin' })
+  invalid(add({ kind: 'column', children: [{ kind: 'box', origin }] }), {
+    path: 'node.children.0.origin',
+  })
+})
 test('add refuses a name or a slot of the wrong type on a given node, and says where', () => {
   for (const [field, value] of [
     ['name', 3],

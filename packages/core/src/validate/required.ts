@@ -55,9 +55,8 @@ function hiddenPath(n: Node): string | undefined {
   const r = reasonOf(n)
   if (!r) return undefined
   if (r.how === 'hide') return `hide.${r.where}`
-  if (r.where !== 'when') return `style.${r.where}.hidden`
-  const i = (n.style?.when ?? []).findIndex(w => w?.decl?.hidden === true)
-  return `style.when.${i}.decl.hidden`
+  if (r.where !== 'when') return `style.${r.where}.${r.field}`
+  return `style.when.${r.i}.decl.${r.field}`
 }
 
 /** Where an unrolled node sits: `top`, a node of the source tree (the node itself, or the outermost instance it is a part of), and `rest`, the part's id inside it. */

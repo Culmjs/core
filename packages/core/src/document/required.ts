@@ -22,21 +22,38 @@ const LAYOUTS: readonly Layout[] = ['desktop', 'tablet', 'phone']
 const hideOf = (h: Node['hide']): Layout | undefined =>
   h && typeof h === 'object' ? LAYOUTS.find(l => h[l] === true) : undefined
 
-const hiddenIn = (s: Style | undefined): StyleLayer | 'when' | undefined => {
+const FIELDS = ['hidden', 'opacity'] as const
+const off = (d: Style['base'], f: (typeof FIELDS)[number]) =>
+  f === 'hidden' ? d?.hidden === true : d?.opacity === 0
+
+const hiddenIn = (
+  s: Style | undefined,
+  motion: boolean,
+):
+  | { where: StyleLayer | 'when'; field: (typeof FIELDS)[number]; i: number }
+  | undefined => {
   if (!s || typeof s !== 'object') return undefined
-  const layer = STATES.find(k => s[k]?.hidden === true)
-  if (layer) return layer
-  return Array.isArray(s.when) && s.when.some(w => w?.decl?.hidden === true)
-    ? 'when'
-    : undefined
+  // opacity 0 is the start of an entrance, so a node with motion is exempt from it
+  for (const field of FIELDS) {
+    if (field === 'opacity' && motion) continue
+    const where = STATES.find(k => off(s[k], field))
+    if (where) return { where, field, i: -1 }
+    const i = Array.isArray(s.when)
+      ? s.when.findIndex(w => off(w?.decl, field))
+      : -1
+    if (i >= 0) return { where: 'when', field, i }
+  }
+  return undefined
 }
 
-/** `hide` or `hidden: true` on a node or on an override or variant patch, as the reason it gives. */
-export const reasonOf = (x: Pick<Override, 'hide' | 'style'>) => {
+/** `hide`, `hidden: true` or `opacity: 0` on a node or on an override or variant patch, as the reason it gives. */
+export const reasonOf = (
+  x: Pick<Override, 'hide' | 'style'> & { motion?: unknown },
+) => {
   const l = hideOf(x.hide)
   if (l) return { how: 'hide', where: l } as const
-  const s = hiddenIn(x.style)
-  return s ? ({ how: 'hidden', where: s } as const) : undefined
+  const s = hiddenIn(x.style, !!x.motion)
+  return s ? ({ how: 'hidden', ...s } as const) : undefined
 }
 
 export type TreeAt =
@@ -156,6 +173,8 @@ function* sizesOf(
   if (num(d.size)) yield { size: d.size, path: `${at}.size` }
   const min = isObj(d.fluidSize) ? d.fluidSize.min : undefined
   if (num(min)) yield { size: min, path: `${at}.fluidSize.min` }
+  const max = isObj(d.fluidSize) ? d.fluidSize.max : undefined
+  if (num(max)) yield { size: max, path: `${at}.fluidSize.max` }
 }
 
 /** The `size` and `fluidSize.min` of a node's style layers (including `when`) and of the styles of its runs; `path` is relative to the node. */
