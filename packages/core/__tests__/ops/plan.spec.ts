@@ -452,7 +452,7 @@ test('ops that is not a list, a missing key, a fractional baseRevision: INVALID_
     plan(base(), reg, null as unknown as ChangeRequest),
   ])
     assert.equal(refused(r)[0].code, 'INVALID_OPERATION')
-  ok(run([], base(), undefined, { key: 'k'.repeat(200) }))
+  ok(run([setText('t1', 'x')], base(), undefined, { key: 'k'.repeat(200) }))
 })
 
 test('hostile input is refused through plan with the operation index', () => {
@@ -935,4 +935,10 @@ test('moving a motion target outside its owner blames the move op index', () => 
     ]),
   )
   assert.equal(p[0]?.op, 2)
+})
+
+test('an empty batch is refused', () => {
+  const p = refused(run([]))
+  assert.equal(p[0].code, 'INVALID_OPERATION')
+  assert.equal(p[0].path, 'ops')
 })

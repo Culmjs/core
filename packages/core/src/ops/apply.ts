@@ -110,7 +110,13 @@ export async function apply(
   const { site, key, baseRevision } = snap
   const b = await begin(store, site, key, baseRevision, text)
   if (!('doc' in b)) return b
-  const p = plan(b.doc, registry, snap, allow)
+  let head = b.doc
+  if (head.schemaVersion < SCHEMA_VERSION) {
+    const m = migrate(head)
+    if (!m.ok) return { ok: false, problems: [m.problem] }
+    head = m.doc
+  }
+  const p = plan(head, registry, snap, allow)
   if (!p.ok) return p
   const { doc, ...made } = p
   return finish(store, site, baseRevision, doc, key, text, made, b.readStamp)

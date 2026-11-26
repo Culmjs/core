@@ -589,3 +589,12 @@ test('a rule problem is copied field by field: only known, short fields of the r
   assert.equal('allowed' in p, false)
   assert.equal('extra' in p, false)
 })
+
+test('a page id must be an id', () => {
+  const p = base().pages[0]
+  for (const id of ['header', 'footer', 'a b/..']) {
+    const r = validateSite({ ...base(), pages: [{ ...p, id }] }, reg)
+    assert.equal(r[0].code, 'INVALID_DOCUMENT', id)
+    assert.equal(r[0].path, 'pages.0.id', id)
+  }
+})

@@ -187,6 +187,8 @@ function runOps(
       return bad('baseRevision must be a whole number.', {
         path: 'baseRevision',
       })
+    if (ops.length === 0)
+      return bad('ops must hold at least one operation.', { path: 'ops' })
     if (ops.length > MAX_OPS)
       return fail(
         refuse(

@@ -86,7 +86,7 @@ for (const action of [
       site: 's',
       key: 'outside',
       baseRevision: saved.revision,
-      ops: [],
+      ops: [{ op: 'setSite', name: 'Outside' }],
     })
     assert.ok(!outside.ok && outside.problems[0].code === 'REVISION_CONFLICT')
     const before = await files(dir)
@@ -185,7 +185,7 @@ for (const crash of [0, 6, 8])
       site: 's',
       key: 'outside',
       baseRevision: a.revision,
-      ops: [],
+      ops: [{ op: 'setSite', name: 'Outside' }],
     })
     assert.ok(!r.ok && r.problems[0].code === 'REVISION_CONFLICT')
     const outside = await files(dir)

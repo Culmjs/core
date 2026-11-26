@@ -175,6 +175,11 @@ export function checkDocument(
         if (typeof p[k] !== 'boolean')
           bad(`A page ${k} must be on or off.`, `${at}.${k}`)
       if (!isStr(p.id, 100) || !p.id) bad('A page id must be text.', `${at}.id`)
+      else if (!ID_RE.test(p.id) || p.id === 'header' || p.id === 'footer')
+        bad(
+          'A page id is 1 to 20 lowercase letters or digits, and not header or footer.',
+          `${at}.id`,
+        )
       else if (ids.has(p.id)) bad('Two pages have the same id.', `${at}.id`)
       else ids.add(p.id)
       if (!isStr(p.slug, 200) || !SLUG_RE.test(p.slug))

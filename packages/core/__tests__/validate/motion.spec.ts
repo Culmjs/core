@@ -4,7 +4,6 @@ import {
   compilePage,
   defaultSiteStyles,
   expand,
-  plan,
   type Component,
   type Motion,
   type Node,
@@ -491,16 +490,6 @@ test('checking an unused component cannot bind over the stored default text runs
     (doc: SiteDocument) => assert.deepEqual(validateSite(doc, reg), []),
     (doc: SiteDocument) =>
       assert.equal(compilePage(doc, 'home', { registry: reg }).ok, true),
-    (doc: SiteDocument) =>
-      assert.equal(
-        plan(doc, reg, {
-          site: 'example',
-          key: 'empty',
-          baseRevision: 0,
-          ops: [],
-        }).ok,
-        true,
-      ),
   ]) {
     const input = structuredClone(before)
     run(input)

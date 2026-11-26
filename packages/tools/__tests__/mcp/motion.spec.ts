@@ -392,7 +392,7 @@ test('effects catalogue pages registered numeric settings and provides a runnabl
   const dir = await copyFixture('site-basic')
   const home = join(dir, 'pages/home.json')
   const page = parse(await readFile(home, 'utf8'))
-  page.id = 'studio-index'
+  page.id = 'studioindex'
   page.root.id = 'studio'
   await writeFile(home, JSON.stringify(page))
   const project = await openProject(dir)
@@ -448,7 +448,7 @@ test('effects catalogue pages registered numeric settings and provides a runnabl
   ])
   assert.equal(detail.example.op, 'setMotion')
   assert.equal(detail.example.motion.effect, 'rise')
-  assert.deepEqual(detail.example.tree, { page: 'studio-index' })
+  assert.deepEqual(detail.example.tree, { page: 'studioindex' })
   assert.equal(detail.example.id, 'studio')
   const { revision } = await ok(call, 'describe')
   await ok(call, 'plan', { baseRevision: revision, ops: [detail.example] })

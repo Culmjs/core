@@ -143,3 +143,29 @@ test('a plain value becomes { value }; null, booleans, lists and NaN are skipped
   assert.deepEqual(rowsOf(undefined as never, { source: 's' }), [])
   assert.deepEqual(rowsOf('abc' as never, { source: 's' }), [])
 })
+
+test('sort order does not depend on the locale', async () => {
+  const { execFileSync } = await import('node:child_process')
+  const want = ['a', 'z', 'ä']
+  const data = ['z', 'ä', 'a'].map(title => ({ title }))
+  const here = (r: unknown) => (r as Row[]).map(x => x.title)
+  assert.deepEqual(
+    here(rowsOf(data, { source: 'p', sort: { field: 'title', dir: 'asc' } })),
+    want,
+  )
+  // ponytail: the locale may not be installed; the order must be the same either way.
+  const src = new URL('../../src/data/index.ts', import.meta.url).href
+  const code = `import(${JSON.stringify(src)}).then(m=>console.log(JSON.stringify(m.rowsOf(${JSON.stringify(data)},{source:'p',sort:{field:'title',dir:'asc'}}).map(r=>r.title))))`
+  for (const LC_ALL of ['sv_SE.UTF-8', 'en_US.UTF-8'])
+    assert.deepEqual(
+      JSON.parse(
+        execFileSync(
+          process.execPath,
+          ['--conditions=@culmjs/source', '--import', 'tsx', '-e', code],
+          { env: { ...process.env, LC_ALL, LANG: LC_ALL }, encoding: 'utf8' },
+        ),
+      ),
+      want,
+      LC_ALL,
+    )
+})

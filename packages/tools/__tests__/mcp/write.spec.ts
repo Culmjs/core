@@ -9,7 +9,8 @@ import {
   fontSlug,
   type Data,
 } from '@culmjs/core'
-import { memoryStore, plan } from '@culmjs/core/ops'
+import { memoryStore, type plan } from '@culmjs/core/ops'
+import { validateSite } from '@culmjs/core/validate'
 import starter, { LOOK, STYLES } from '@culmjs/starter'
 import { createMcpServer } from '../../src/mcp/server.ts'
 import { JsxError, parseJsx } from '../../src/jsx/parse.ts'
@@ -194,13 +195,7 @@ test('write on an empty starter page builds a hero that compiles and passes plan
   walk(root)
   for (const k of ['row', 'text', 'button', 'shape'])
     assert.ok(kinds.includes(k), k)
-  const planned = plan(doc, registry, {
-    site: 's',
-    baseRevision: 0,
-    key: 'p',
-    ops: [],
-  })
-  assert.ok(planned.ok, JSON.stringify(planned))
+  assert.deepEqual(validateSite(doc, registry), [])
   const compiled = compileSite(doc, {
     registry,
     data,

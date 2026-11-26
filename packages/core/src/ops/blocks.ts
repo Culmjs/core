@@ -119,7 +119,13 @@ export const setBlockSetting: OpFn<'setBlockSetting'> = (doc, registry, op) => {
   const unsafe = checkSafe(o, t.node.id, ['value'])
   if (unsafe) return unsafe
   const r = applySetting(registry, t.node, o.key, o.value as never)
-  if (!r.ok) return r
+  if (!r.ok)
+    return {
+      ...r,
+      problems: r.problems.map(p =>
+        p.code === 'INVALID_NODE' ? { ...p, code: 'INVALID_OPERATION' } : p,
+      ),
+    }
   const before = new Map<string, string>()
   walk(t.node, w => before.set(w.id, flat(w)))
   const created: string[] = []

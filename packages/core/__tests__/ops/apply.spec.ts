@@ -437,3 +437,14 @@ test('restore: a hostile veto is POLICY_VIOLATION with the text fields only, as 
   assert.ok(!t.ok)
   assert.equal(t.problems[0].message, 'allow failed: unknown error')
 })
+
+test('apply migrates an older head before it plans', async () => {
+  const old = base() as SiteDocument & { schemaVersion: number }
+  old.schemaVersion = 1
+  const store = memoryStore({ s: old })
+  const r = await apply(store, reg, A([set('t1', 'A')]))
+  assert.ok(r.ok, JSON.stringify(!r.ok && r.problems))
+  const h = await store.head('s')
+  assert.ok('doc' in h)
+  assert.equal(h.doc.schemaVersion, SCHEMA_VERSION)
+})

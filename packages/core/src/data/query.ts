@@ -56,7 +56,7 @@ function sorted(rows: Row[], field: string, dir: 'asc' | 'desc'): Row[] {
   const cmp = (a: unknown, b: unknown) =>
     typeof a === 'number' && typeof b === 'number'
       ? a - b
-      : String(a).localeCompare(String(b))
+      : ((x, y) => (x < y ? -1 : x > y ? 1 : 0))(String(a), String(b))
   // Array.prototype.sort is stable.
   return [...rows].sort((x, y) => {
     const a = field === 'years' ? firstYear(x[field]) : x[field]

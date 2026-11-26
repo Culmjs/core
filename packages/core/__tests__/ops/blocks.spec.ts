@@ -185,16 +185,22 @@ test('setBlockSetting writes one setting and lists the changed parts', () => {
 
 test('setBlockSetting on a node that is not a block root is refused', () => {
   const doc = withBlock()
-  refused(setting(doc, 't', 'heading', 'x'), 'INVALID_NODE', { nodeId: 't' })
-  refused(setting(doc, 'b1.title', 'heading', 'x'), 'INVALID_NODE')
+  refused(setting(doc, 't', 'heading', 'x'), 'INVALID_OPERATION', {
+    nodeId: 't',
+  })
+  refused(setting(doc, 'b1.title', 'heading', 'x'), 'INVALID_OPERATION')
   refused(setting(doc, 'zz', 'heading', 'x'), 'INVALID_OPERATION', {
     nodeId: 'zz',
   })
-  refused(setting(doc, 'b1', 'nope', 'x'), 'INVALID_NODE', { nodeId: 'b1' })
+  refused(setting(doc, 'b1', 'nope', 'x'), 'INVALID_OPERATION', {
+    nodeId: 'b1',
+  })
   refused(setting(doc, 'b1', 3 as never, 'x'), 'INVALID_OPERATION', {
     path: 'key',
   })
-  refused(setting(doc, 'b1', 'heading', 3), 'INVALID_NODE', { path: 'heading' })
+  refused(setting(doc, 'b1', 'heading', 3), 'INVALID_OPERATION', {
+    path: 'heading',
+  })
   // a value that is missing is a fault of the operation, not of the node
   const noValue = { op: 'setBlockSetting', tree: T, id: 'b1', key: 'heading' }
   refused(setBlockSetting(doc, reg, noValue as never), 'INVALID_OPERATION', {
@@ -544,7 +550,7 @@ test('the block operations leave a frozen input document alone, whether they suc
   ok(ins(doc, { id: 'b2', settings: { heading: 'Two' } }))
   refused(ins(doc, { id: 'b1' }), 'INVALID_OPERATION')
   ok(setting(doc, 'b1', 'heading', 'Hello'))
-  refused(setting(doc, 'b1', 'heading', 3), 'INVALID_NODE')
+  refused(setting(doc, 'b1', 'heading', 3), 'INVALID_OPERATION')
   ok(update(doc, 'b1', demoV2Registry()))
   refused(update(doc, 't'), 'INVALID_OPERATION')
   assert.equal(JSON.stringify(doc), before)
@@ -639,3 +645,13 @@ test('updateBlock: a required: false mark is not carried onto a node that is no 
 function nodeOpsSetRequired(doc: SiteDocument, id: string, required: boolean) {
   subtree(doc, id).required = required
 }
+
+test('setBlockSetting with an unknown key or a bad value is INVALID_OPERATION', () => {
+  const doc = withBlock()
+  const r = setting(doc, 'b1', 'nope', 'x')
+  refused(r, 'INVALID_OPERATION', { nodeId: 'b1' })
+  assert.ok(!r.ok && r.problems[0].allowed?.includes('heading'))
+  refused(setting(doc, 'b1', 'heading', 3), 'INVALID_OPERATION', {
+    path: 'heading',
+  })
+})
