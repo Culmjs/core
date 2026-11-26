@@ -477,6 +477,12 @@ const JSX_INSTRUCTIONS = [
   'A refused write returns problems, the revision, and a draft when available. Fix a field without resending the page: write {baseRevision,draft,edits:[{op:"replace",path:"/patch/0/id",value:"intro"}]}.',
 ].join(' ')
 
+/** The sections profile: the one-shot text, with the receipt it really returns in place of the full findings and index. */
+export const SECTIONS_INSTRUCTIONS = JSX_INSTRUCTIONS.replace(
+  /The reply is all you need to go on:.*?Fix the findings with/,
+  'The reply is a short receipt: revision, roots (the written parts), issues (at most 3, one per check, each with node id and fix), moreIssues (true when more findings exist: call measure), measurement (complete, partial or incomplete), measuredRevision (when the measurement ran at another revision), replayed and a warning count. Fix the issues with',
+)
+
 /** What the client reads once at initialize: the working order, in the order an agent should use it. The JSX route first; the operations after it, still available. */
 export const INSTRUCTIONS =
   JSX_INSTRUCTIONS +
@@ -554,7 +560,7 @@ export function createMcpServer(o: McpOptions): Server {
     {
       capabilities: { tools: {} },
       instructions: o.sections
-        ? JSX_INSTRUCTIONS
+        ? SECTIONS_INSTRUCTIONS
         : compact
           ? JSON_GUIDE
           : INSTRUCTIONS,

@@ -224,7 +224,7 @@ In `--full` mode, send `{"op":"setMotion","tree":{"page":"home"},"id":"title","m
 - `measurement`: `complete`, `partial` (cut) or `incomplete` (a cell was not measured, or measuring failed; `problem` says why).
 - `measuredRevision` appears only when the measurement ran at a different revision from the write. `replayed`, `warningCount` and `warning` appear when they apply.
 
-`--sections` and `--full` exclude each other.
+`at` is the width the finding was measured at. `describe` returns its full reply in this profile. `--sections` and `--full` exclude each other.
 
 ## Full editing API (`--full`)
 

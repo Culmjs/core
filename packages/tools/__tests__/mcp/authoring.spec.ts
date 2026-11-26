@@ -2,7 +2,7 @@ import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { INSTRUCTIONS } from '../../src/mcp/server.ts'
+import { INSTRUCTIONS, SECTIONS_INSTRUCTIONS } from '../../src/mcp/server.ts'
 import { createRegistry, emptySite, fontSlug, type Data } from '@culmjs/core'
 import { memoryStore } from '@culmjs/core/ops'
 import starter, { LOOK, STYLES } from '@culmjs/starter'
@@ -611,7 +611,9 @@ test('sections: five tools, a short receipt, and whole, single-section and batch
       }
       const r = await call('write', args)
       assert.equal(r.error, false, JSON.stringify(r.json))
-      assert.equal((await call('write', args)).json.revision, r.json.revision)
+      const again = await call('write', args)
+      assert.equal(again.json.revision, r.json.revision)
+      assert.equal(again.json.replayed, true)
       i += count
     }
     const baseRevision = await rev()
@@ -655,15 +657,20 @@ test('sections: a clean write has no issues, no moreIssues, and no measuredRevis
     baseRevision: 0,
     jsx: '<Page path="/"><Column id="a"><Text>Hi</Text></Column></Page>',
   })
-  assert.deepEqual(r.json.issues.length ? [] : r.json.issues, [])
+  assert.equal(r.error, false)
+  assert.equal(r.json.measurement, 'complete')
+  assert.deepEqual(r.json.issues, [])
   assert.ok(!('moreIssues' in r.json) && !('measuredRevision' in r.json))
 })
 
 test('sections: measurement is incomplete when the browser cannot measure, and ops is refused', async () => {
   const registry = createRegistry()
   registry.use(starter)
+  const store = memoryStore({
+    s: { ...emptySite('Ada', LOOK), styles: STYLES },
+  })
   const server = createMcpServer({
-    store: memoryStore({ s: { ...emptySite('Ada', LOOK), styles: STYLES } }),
+    store,
     registry,
     site: 's',
     data,
@@ -689,7 +696,41 @@ test('sections: measurement is incomplete when the browser cannot measure, and o
     jsx: '<Page path="/"><Column id="a"><Text>Hi</Text></Column></Page>',
   })
   assert.equal(ok.measurement, 'incomplete', JSON.stringify(ok))
-  assert.ok(ok.revision >= 1)
+  assert.ok(!('problem' in ok)) // problem is set only when measure itself refuses
+  assert.equal(
+    ((await store.head('s')) as { revision: number }).revision,
+    ok.revision,
+  )
   const refused = await call({ baseRevision: ok.revision, ops: [] })
   assert.equal(refused.problems[0].code, 'INVALID_OPERATION')
+})
+
+test('sections: instructions describe the short receipt, not findings and an index', () => {
+  assert.doesNotMatch(
+    SECTIONS_INSTRUCTIONS,
+    /index of every tree|all you need to go on/,
+  )
+  assert.match(SECTIONS_INSTRUCTIONS, /moreIssues/)
+})
+
+test('sections: a replayed write is measured at the head, so the receipt names measuredRevision', async () => {
+  const { call, rev } = await connect([], false, true)
+  const a = {
+    baseRevision: 0,
+    page: 'home',
+    jsx: '<Column id="a"><Text>A</Text></Column>',
+  }
+  const first = await call('write', a)
+  assert.equal(first.error, false, JSON.stringify(first.json))
+  const second = await call('write', {
+    baseRevision: first.json.revision,
+    page: 'home',
+    append: true,
+    jsx: '<Column id="b"><Text>B</Text></Column>',
+  })
+  assert.equal(second.json.revision, first.json.revision + 1)
+  const again = await call('write', a)
+  assert.equal(again.json.replayed, true, JSON.stringify(again.json))
+  assert.equal(again.json.revision, first.json.revision)
+  assert.equal(again.json.measuredRevision, await rev())
 })
