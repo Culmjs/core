@@ -117,6 +117,36 @@ test('a list repeats its item over filtered, sorted rows with stable ids', () =>
   assert.equal(tree.repeat, undefined)
 })
 
+test('a # link inside a repeated template follows its own row and leaves the document alone', () => {
+  const tpl = box('it', [
+    box('tgt'),
+    {
+      id: 'b',
+      kind: 'button',
+      name: 'b',
+      slot: {},
+      props: { label: 'go', link: { url: '#tgt' } },
+    } as Node,
+    txt('t', '', {
+      props: { level: 'p', runs: [{ text: 'x', link: { url: '#tgt' } }] },
+    }),
+  ])
+  const doc = list({ filter: undefined, sort: undefined, max: 2 }, [tpl])
+  const before = structuredClone(doc)
+  const a = expand(doc, ctx()).tree
+  const links = (t: Node) =>
+    t.children!.map(r => [
+      (r.children![1].props!.link as { url: string }).url,
+      (runsOf(r.children![2])[0].link as { url: string }).url,
+    ])
+  assert.deepEqual(links(a), [
+    ['#tgt~0', '#tgt~0'],
+    ['#tgt~1', '#tgt~1'],
+  ])
+  assert.deepEqual(doc, before)
+  assert.deepEqual(expand(doc, ctx()).tree, a)
+})
+
 test('a run whose words came from a field says so; your own words do not', () => {
   const mixed = box('it', [
     txt('t', '', {

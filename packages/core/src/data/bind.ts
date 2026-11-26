@@ -77,7 +77,7 @@ function node(w: Node, c: Pass, depth: number): Node | null {
   delete out.bind
   delete out.showIf
   delete out.showIfAny
-  if (w.props) out.props = { ...w.props }
+  if (w.props) out.props = structuredClone(w.props)
   // Internal targets are renamed per copy, so each copy owns its programs.
   if (w.on) out.on = structuredClone(w.on)
   if (w.motion) out.motion = structuredClone(w.motion)
