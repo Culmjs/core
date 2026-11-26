@@ -209,6 +209,19 @@ const realish = async (p: string): Promise<string> => {
   }
 }
 
+const imageOut = (rel: string): { ok: false; problem: Problem } | undefined =>
+  /\.(svg|png|jpe?g|webp)$/i.test(rel) &&
+  !/^(\.culm|node_modules)(\/|$)/.test(rel)
+    ? undefined
+    : {
+        ok: false,
+        problem: bad(
+          'POLICY_VIOLATION',
+          'out must be an image file (.svg, .png, .jpg, .webp) outside .culm and node_modules.',
+          'out',
+        ),
+      }
+
 async function resolveOutPath(
   cwd: string | undefined,
   out: string,
@@ -234,11 +247,8 @@ async function resolveOutPath(
           'out',
         ),
       }
-    return {
-      ok: true,
-      abs: outReal,
-      rel: relative(rootReal, outReal).split(sep).join('/'),
-    }
+    const rel = relative(rootReal, outReal).split(sep).join('/')
+    return imageOut(rel) ?? { ok: true, abs: outReal, rel }
   }
   const abs = resolve(base, out)
   if (contain) {
@@ -253,11 +263,8 @@ async function resolveOutPath(
           'out',
         ),
       }
-    return {
-      ok: true,
-      abs: outReal,
-      rel: relative(rootReal, outReal).split(sep).join('/'),
-    }
+    const rel = relative(rootReal, outReal).split(sep).join('/')
+    return imageOut(rel) ?? { ok: true, abs: outReal, rel }
   }
   return { ok: true, abs, rel: out }
 }

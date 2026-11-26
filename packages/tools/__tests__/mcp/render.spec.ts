@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test, { after } from 'node:test'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRegistry, emptySite } from '@culmjs/core'
@@ -77,6 +77,61 @@ test('MCP render exports standalone SVG without browser and blocks path escape',
     assert.equal(esc.isError, true)
     const errJson = JSON.parse((esc.content as { text: string }[])[0]!.text)
     assert.equal(errJson.problems[0].code, 'POLICY_VIOLATION')
+  } finally {
+    await client.close()
+  }
+})
+
+test('render refuses an out path that is not an image file', async () => {
+  const dir = await makeDir()
+  const server = createMcpServer({
+    store: memoryStore({ s: emptySite('R', LOOK) }),
+    registry: createRegistry(),
+    site: 's',
+    data: { rows: {} },
+    cwd: dir,
+    jsonOps: true,
+  })
+  const [a, b] = InMemoryTransport.createLinkedPair()
+  const client = new Client({ name: 'test', version: '0' })
+  await Promise.all([server.connect(b), client.connect(a)])
+  const call = async (out: string) => {
+    const res = await client.callTool({
+      name: 'render',
+      arguments: {
+        out,
+        format: 'svg',
+        node: { kind: 'shape', stamp: { text: 'SEAL' } },
+      },
+    })
+    return JSON.parse((res.content as { text: string }[])[0]!.text)
+  }
+  try {
+    await mkdir(join(dir, 'pages'), { recursive: true })
+    await writeFile(join(dir, 'pages/home.json'), 'ORIGINAL')
+    for (const out of [
+      'pages/home.json',
+      'site.json',
+      'package.json',
+      'culm.json',
+      '.culm/head',
+      '.culm/x.svg',
+      'node_modules/x.svg',
+    ]) {
+      const reply = await call(out)
+      assert.notEqual(reply.ok, true, out)
+      assert.equal(reply.problems[0].code, 'POLICY_VIOLATION', out)
+      assert.equal(reply.problems[0].path, 'out', out)
+      await assert.rejects(
+        readFile(join(dir, out), 'utf8').then(t => {
+          if (out === 'pages/home.json') throw new Error(t)
+          return t
+        }),
+        out === 'pages/home.json' ? /ORIGINAL/ : /ENOENT/,
+      )
+    }
+    const ok = await call('renders/hero.svg')
+    assert.equal(ok.out, 'renders/hero.svg')
   } finally {
     await client.close()
   }
