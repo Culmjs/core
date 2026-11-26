@@ -66,6 +66,15 @@ test('lowercase compound Culm ids are hits', () => {
   }
 })
 
+test('compound hits are reported under their own term', () => {
+  assert.deepEqual(termHits([{ path: 'a.ts', source: 'paperlist' }]), [
+    'a.ts:1 paper',
+  ])
+  assert.deepEqual(termHits([{ path: 'a.ts', source: 'talkpage' }]), [
+    'a.ts:1 talk',
+  ])
+})
+
 for (const word of [
   'scholars',
   'labs',

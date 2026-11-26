@@ -21,15 +21,17 @@ export const TERMS = [
   'analytics',
 ]
 
-const PATTERNS = TERMS.map(
-  t =>
-    [t, new RegExp(`\\b${t}(?:s|es)?\\d?\\b`, t === 'CV' ? '' : 'i')] as const,
-)
 const COMPOUND_SUFFIX =
   '(?:list|grid|card|row|form|page|block|item|section|box|profile|widget|view|bar|header|footer|nav|menu|link|btn|button|title|text|id)s?'
-const COMPOUNDS = TERMS.filter(t => t !== 'CV').map(
+const PATTERNS = TERMS.map(
   t =>
-    [t, new RegExp(`\\b${t}(?:s|es)?${COMPOUND_SUFFIX}\\d?\\b`, 'i')] as const,
+    [
+      t,
+      new RegExp(`\\b${t}(?:s|es)?\\d?\\b`, t === 'CV' ? '' : 'i'),
+      t === 'CV'
+        ? undefined
+        : new RegExp(`\\b${t}(?:s|es)?${COMPOUND_SUFFIX}\\d?\\b`, 'i'),
+    ] as const,
 )
 
 export function termHits(files: { path: string; source: string }[]): string[] {
@@ -49,11 +51,9 @@ export function termHits(files: { path: string; source: string }[]): string[] {
         .replace(/([A-Z]+)([A-Z](?!(?:s|es)\b)[a-z])/g, '$1 $2')
         .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
         .replace(/_/g, ' ')
-      for (const [k, [term, re]] of PATTERNS.entries())
-        if (re.test(line) || (k > 0 && COMPOUNDS[k - 1]?.[1].test(line))) {
+      for (const [term, re, compound] of PATTERNS)
+        if (re.test(line) || compound?.test(line))
           out.push(`${path}:${i + 1} ${term}`)
-          continue
-        }
     })
   }
   return out
