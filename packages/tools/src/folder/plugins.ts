@@ -17,6 +17,7 @@ import type {
   Row,
 } from '@culmjs/core'
 import { ID_RE, PLAIN, SOURCES, isObj } from '../shared.ts'
+import { IMAGE_PROVIDERS, type ImageConfig } from '../image/providers.ts'
 import { parseFile, type JsonPath } from './jsonc.ts'
 
 /** The files loadPlugins reads, and so owns the problems of: culm.json and the top-level blocks/ and data/ files. */
@@ -210,7 +211,11 @@ export type Located = Problem & {
   line?: number
   column?: number
 }
-export type ProjectConfig = { plugins: string[]; out: string }
+export type ProjectConfig = {
+  plugins: string[]
+  out: string
+  images?: ImageConfig
+}
 
 export async function loadPlugins(
   dir: string,
@@ -258,7 +263,47 @@ export async function loadPlugins(
     } else if (!isObj(value))
       bad('INVALID_DOCUMENT', 'culm.json must be an object.')
     else {
-      const { plugins, out } = value
+      const { plugins, out, images } = value
+      if (images !== undefined) {
+        if (!isObj(images))
+          bad('INVALID_DOCUMENT', '"images" must be an object.', ['images'])
+        else {
+          const img: ImageConfig = {}
+          if (images.provider !== undefined) {
+            if (
+              typeof images.provider !== 'string' ||
+              !IMAGE_PROVIDERS.includes(images.provider as never)
+            )
+              bad(
+                'INVALID_DOCUMENT',
+                `"images.provider" must be one of ${IMAGE_PROVIDERS.join(', ')}.`,
+                ['images', 'provider'],
+              )
+            else img.provider = images.provider as ImageConfig['provider']
+          }
+          if (images.model !== undefined) {
+            if (typeof images.model !== 'string' || !images.model.trim())
+              bad('INVALID_DOCUMENT', '"images.model" must be text.', [
+                'images',
+                'model',
+              ])
+            else img.model = images.model.trim()
+          }
+          if (images.endpoint !== undefined) {
+            if (
+              typeof images.endpoint !== 'string' ||
+              !/^https?:\/\/\S+$/i.test(images.endpoint)
+            )
+              bad(
+                'INVALID_DOCUMENT',
+                '"images.endpoint" must be an http:// or https:// URL.',
+                ['images', 'endpoint'],
+              )
+            else img.endpoint = images.endpoint
+          }
+          config.images = img
+        }
+      }
       if (plugins !== undefined && !Array.isArray(plugins))
         bad('INVALID_DOCUMENT', '"plugins" must be a list of package names.', [
           'plugins',

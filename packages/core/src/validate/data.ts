@@ -1,5 +1,5 @@
 import { type Code, type KindSpec } from '../document/index.ts'
-import { MAX_ROWS } from '../document/kinds.ts'
+import { KINDS, MAX_ROWS } from '../document/kinds.ts'
 import { isObj } from '../document/rules.ts'
 import { type FieldType } from '../registry/index.ts'
 import {
@@ -144,8 +144,12 @@ export function checkRepeat(
 ) {
   const { w } = e
   const r = w.repeat as unknown
-  if (!spec.repeatable || (w.kind !== 'list' && w.kind !== 'table'))
-    return say('Only a list or table can repeat.', 'repeat')
+  if (
+    !spec.repeatable ||
+    (Object.hasOwn(KINDS, w.kind) && w.kind !== 'list' && w.kind !== 'table') ||
+    spec.role !== 'container'
+  )
+    return say('Only a repeatable container can repeat.', 'repeat')
   if (
     !isObj(r) ||
     !only(r, [

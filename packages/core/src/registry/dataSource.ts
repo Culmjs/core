@@ -57,7 +57,10 @@ function checkRow(
           message: 'Expected a list.',
           path: at,
         })
-    } else if (typeof value !== (type === 'text' ? 'string' : type))
+    } else if (
+      typeof value !== (type === 'text' ? 'string' : type) ||
+      (type === 'number' && !Number.isFinite(value))
+    )
       out.push({
         code: 'INVALID_DOCUMENT',
         message: `Expected ${type}.`,

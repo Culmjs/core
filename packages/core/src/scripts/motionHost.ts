@@ -75,9 +75,12 @@ export function hostMotion(
   const clock = (name: string) => w.CSS.supports(`animation-timeline:${name}()`)
   const rect = (el: Element) => el.getBoundingClientRect()
   const area = (r: DOMRect) => r.width * r.height
+  const hidden = (el: Element) =>
+    el.getClientRects ? !el.getClientRects().length : !area(rect(el))
   const { max, min } = Math
   const clamp = (p: number) => min(1, max(0, p))
-  const attr = 'data-culm-motion'
+  const attr = 'data-culm-motion',
+    vc = 'visibilitychange'
   const pending = new Set<() => void>()
   let frame = 0
   const cancel = () => {
@@ -130,8 +133,8 @@ export function hostMotion(
     const state = Array.isArray(tr)
     const pointer = tr === 'pointer-x',
       scrub = pointer || tr === 'scroll'
-    const target = (id?: number) =>
-      id ? owner.querySelector(token(id)) : owner
+    const target = (id?: number, root: Element = owner) =>
+      id ? root.querySelector(token(id)) : owner
     const child = target(s.child)
     if (!owner.animate || !owner.getBoundingClientRect || !child) return
     managed = true
@@ -141,7 +144,7 @@ export function hostMotion(
       const on = listen(scope)
       // IO owns visibility; a load/activation before its first delivery starts paused.
       let visible = false
-      let x = -Infinity
+      let x: number | undefined
       const animations: Animation[] = []
       const keep = (a: Animation) => {
         // Later fills (including another pin's additive margin at the same
@@ -210,6 +213,7 @@ export function hostMotion(
               if (a) {
                 const fx = a.effect as KeyframeEffect
                 fx.target = el
+                fx.setKeyframes(keys)
                 fx.updateTiming(timing)
               } else {
                 a = el.animate(keys, timing)
@@ -264,7 +268,7 @@ export function hostMotion(
       }
       const play = () => {
         if (animations.length || text) return
-        if (!area(rect(child))) {
+        if (pin || parts ? !area(rect(child)) : hidden(child)) {
           // IO need not cross a threshold when an in-view zero-sized box
           // grows. Borrow the metric watch only until this activation acquires
           // its tracks; stop() also releases it if the predicate turns false.
@@ -279,10 +283,9 @@ export function hostMotion(
         sizes = disconnect(sizes)
         if (!pin) return start()
         // Capture every applicable extent before installing the padding.
-        const pinBox = owner as HTMLElement,
-          balance: [HTMLElement, number][] = []
+        const balance: [HTMLElement, number][] = []
         const matrix = (el: Element, id: number) =>
-          el.querySelector<SVGSVGElement>(token(id))!.getScreenCTM()!.inverse()
+          (target(id, el) as SVGSVGElement).getScreenCTM()!.inverse()
         const hold = (f: Keyframe, el: Element = owner) =>
           keep(el.animate([f, f], { fill: 'both' }))
         let needed
@@ -290,7 +293,7 @@ export function hostMotion(
           const m = matrix(owner, s.basis!),
             y = pin * m.d
           if (!isFinite(y)) return
-          needed = pinBox.offsetHeight + y
+          needed = (owner as HTMLElement).offsetHeight + y
           let previous = y
           for (const [id, probe] of s.flow!) {
             const boundary = owner.closest<HTMLElement>(token(id))!
@@ -308,7 +311,8 @@ export function hostMotion(
           return
         } // absent/singular geometry: leave the static box in flow
         if (!start()) return
-        if (pinBox.offsetHeight < needed) hold({ minHeight: needed + 'px' })
+        if ((owner as HTMLElement).offsetHeight < needed)
+          hold({ minHeight: needed + 'px' })
         // Settle corrections inside out. An inner margin has already affected
         // the next boundary's actual height by the time it is read here.
         for (const [el, extent] of balance)
@@ -323,7 +327,7 @@ export function hostMotion(
         if (animations.length)
           resume = animations.every(a => a.playState === 'finished')
             ? Infinity
-            : animations.reduce((t, a) => max(t, Number(a.currentTime)), 0)
+            : animations.reduce((t, a) => max(t, +a.currentTime!), 0)
         fixed.forEach(a => {
           ;(a.effect as KeyframeEffect).target = null
         })
@@ -340,7 +344,7 @@ export function hostMotion(
       if (parts) {
         if (!ResizeObserver) return
         if (fonts) on(fonts, 'loadingdone', invalidate)
-        on(doc, 'visibilitychange', () => {
+        on(doc, vc, () => {
           if (dirty) schedule(rebuild)
         })
       }
@@ -352,7 +356,7 @@ export function hostMotion(
       }
       let intersecting = false,
         active = entrance || load
-      let wake: (e: Event) => boolean = () => false
+      let wake: ((e: Event) => boolean) | undefined
       const syncView = () => {
         visible = intersecting && !doc.hidden
         if (readInput) {
@@ -370,12 +374,12 @@ export function hostMotion(
               // Cache the scroll interval swept by the stable box. Native IO
               // watches paint. This second gate handles canonical-only entry
               // without a layout read/frame for distant document scrolls.
-              const y = w.scrollY,
-                x = w.scrollX
+              const sy = w.scrollY,
+                sx = w.scrollX
               wake = e =>
                 (e.target instanceof w.Element && e.target.contains(owner)) ||
-                x !== w.scrollX ||
-                passage(w.scrollY - y) !== progress
+                sx !== w.scrollX ||
+                passage(w.scrollY - sy) !== progress
             }
             if (shifts.length) {
               // Intersect the unanimated subject with the *real* clipping
@@ -405,15 +409,18 @@ export function hostMotion(
                 axis('left', 'right', 'overflowX', w.innerWidth)
             }
             if (scrub) {
-              if (!area(r) || (pin && !child.getClientRects().length)) stop()
-              else {
+              if (!area(r) || (pin && hidden(child))) stop()
+              else if (!pointer || x != null) {
                 play()
-                const p = pointer
-                  ? clamp((x - r.left) / r.width)
-                  : pin
-                    ? clamp(-r.top / pin)
-                    : progress
-                const time = duration * p
+                const time =
+                  duration *
+                  clamp(
+                    pointer
+                      ? (x! - r.left) / r.width
+                      : pin
+                        ? -r.top / pin
+                        : progress,
+                  )
                 for (const a of animations) a.currentTime = time
               }
             }
@@ -443,19 +450,19 @@ export function hostMotion(
         if (layouts.delete(syncView) && !layouts.size) unwatchFlow()
         unschedule(syncView)
       })
-      on(doc, 'visibilitychange', syncView)
+      on(doc, vc, syncView)
       if (readInput)
         on(
           w,
           'scroll resize',
           e => {
-            const resize = e.type === 'resize'
+            const resize = e.type[0] === 'r'
             if (pin && resize) stop()
             if (
               visible ||
               intersecting ||
               (resize && (layout || pin)) ||
-              wake(e)
+              (wake && wake(e))
             )
               schedule(syncView)
           },
@@ -484,7 +491,9 @@ export function hostMotion(
         on(owner, 'pointerdown keydown', event => {
           const e = event as Input
           if (
-            e.key ? !e.repeat && ['Enter', ' '].includes(e.key) : e.button === 0
+            e.key
+              ? !e.repeat && (e.key === 'Enter' || e.key === ' ')
+              : e.button === 0
           ) {
             held.add(id(e))
             play()
@@ -510,11 +519,8 @@ export function hostMotion(
         const [id, attr, value] = tr
         const holder = owner.closest(token(id))
         if (!holder) return
-        const sync = () => {
-          active = holder.getAttribute(attr) === value
-          if (active) play()
-          else stop()
-        }
+        const sync = () =>
+          (active = holder.getAttribute(attr) === value) ? play() : stop()
         const observer = new MutationObserver(sync)
         observer.observe(holder, { attributeFilter: [attr] })
         abort(scope, () => disconnect(observer))
@@ -549,7 +555,7 @@ export function hostMotion(
     configure()
   })
   if (managed)
-    on(doc, 'visibilitychange', () => {
+    on(doc, vc, () => {
       if (doc.hidden) cancel()
     })
   abort(signal, () => {

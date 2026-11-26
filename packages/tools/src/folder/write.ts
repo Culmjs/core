@@ -7,11 +7,19 @@ import {
   insertBlock,
   kindSpec,
   readSettings,
+  walk,
 } from '@culmjs/core'
-import type { Node, Note, Page, Registry, SiteDocument } from '@culmjs/core'
+import type {
+  Node,
+  Note,
+  Page,
+  Registry,
+  SiteDocument,
+  TreeRef,
+} from '@culmjs/core'
 import { derivedId } from './ids.ts'
 import { editFile, parseFile, removeAt, type JsonPath } from './jsonc.ts'
-import { defaultSlot, type Loaded } from './load.ts'
+import { INSTANCE_FIELDS, defaultSlot, type Loaded } from './load.ts'
 import type { Located } from './plugins.ts'
 import { isObj } from '../shared.ts'
 
@@ -287,23 +295,50 @@ export function fileEdits(
         if (mv?.cut === undefined)
           put(file, [...path, i], mv ? mv.value : make(k), true)
         else {
-          put(file, [...path, i], HOLE, true)
+          const beforeSplice = texts.get(file)
+          let hole = '__culm_moved_element__'
+          while (beforeSplice?.includes(hole))
+            hole = `__culm_moved_element_${Math.random().toString(36).slice(2)}__`
+          put(file, [...path, i], hole, true)
           const t = texts.get(file)
           const cut = mv.cut
-          if (t !== undefined && !poisoned.has(file))
-            texts.set(
-              file,
-              t.replace(
-                new RegExp(JSON.stringify(HOLE) + '(,?)'),
-                (_, comma: string) => cut.slice + comma + cut.tail,
-              ),
+          if (t !== undefined && !poisoned.has(file)) {
+            const escaped = JSON.stringify(hole).replace(
+              /[.*+?^${}()|[\]\\]/g,
+              '\\$&',
             )
+            const m = new RegExp(escaped + '(,?)').exec(t)
+            if (m) {
+              const rest = t.slice(m.index + m[0].length)
+              const ls = t.lastIndexOf('\n', m.index - 1) + 1
+              const indent = /^[ \t]*/.exec(t.slice(ls))?.[0] ?? ''
+              const needsNl = cut.tail !== '' && /^[ \t]*[^\r\n]/.test(rest)
+              const eol = t.includes('\r\n') ? '\r\n' : '\n'
+              const nextText =
+                t.slice(0, m.index) +
+                cut.slice +
+                (m[1] ?? '') +
+                cut.tail +
+                (needsNl ? eol + indent : '') +
+                rest
+              const errs: ParseError[] = []
+              parseTree(
+                nextText.startsWith('\uFEFF') ? nextText.slice(1) : nextText,
+                errs,
+                { allowTrailingComma: true },
+              )
+              if (!errs.length) texts.set(file, nextText)
+              else {
+                if (beforeSplice !== undefined) texts.set(file, beforeSplice)
+                put(file, [...path, i], mv.value, true)
+              }
+            }
+          }
         }
         cur.splice(i, 0, k)
       }
     })
   }
-  const HOLE = '__culm_moved_element__'
 
   // ---- files of pieces and pages: where each lives, including the ones this batch creates
   const pieceFiles = new Map<string, string>()
@@ -335,30 +370,37 @@ export function fileEdits(
     }
     return raw
   }
-  // a piece that declares a setting called `name` keeps that key of a use for the setting
-  const declaresName = (component: string | undefined) =>
+  // a piece that declares a setting keeps that key of a use for the setting
+  const declares = (component: string | undefined, key: string) =>
     after.components
       .find(c => c.id === component)
-      ?.props.some(p => p.key === 'name') ?? false
+      ?.props.some(p => p.key === key) ?? false
   const useLabel = () =>
     kindSpec('instance', registry.kinds())?.label ?? 'Component'
   function rawNew(n: Node, parent: Node | undefined, file: string): Raw {
     const pf = n.component ? pieceFiles.get(n.component) : undefined
     const { id, slot, set, name } = n
-    const extra = omit(n, 'id', 'kind', 'name', 'slot', 'component', 'set')
     if (
       pf &&
       n.kind === 'instance' &&
-      (n.name === useLabel() || !declaresName(n.component)) &&
-      !Object.keys(extra).length &&
-      eq(slot, defaultSlot(parent?.kind))
-    )
-      return {
+      (n.name === useLabel() || !declares(n.component, 'name'))
+    ) {
+      const out: Raw = {
         use: posix.relative(posix.dirname(file), pf),
         id,
-        ...(name === useLabel() ? {} : { name }),
-        ...(set ?? {}),
       }
+      if (name !== useLabel()) out.name = name
+      if (!eq(slot, defaultSlot(parent?.kind))) out.slot = slot
+      for (const k of INSTANCE_FIELDS) {
+        if (k === 'slot' || k === 'children') continue
+        const v = (n as Raw)[k]
+        if (v !== undefined && !declares(n.component, k)) out[k] = v
+      }
+      if (n.children !== undefined && !declares(n.component, 'children'))
+        out.children = n.children.map(c => rawNew(c, n, file))
+      for (const [k, v] of Object.entries(set ?? {})) out[k] = v
+      return out
+    }
     const short = shortRaw(n, parent)
     if (short && eq(n.slot, defaultSlot(parent?.kind))) return short
     return {
@@ -461,25 +503,44 @@ export function fileEdits(
     parent: Node | undefined,
     raw: Raw,
   ) {
-    const fixed = (n: Node) => omit(n, 'id', 'set', 'name')
-    if (!eq(fixed(b), fixed(a)) || !eq(a.slot, defaultSlot(parent?.kind)))
+    const fixed = (n: Node) => omit(n, 'id', 'set', 'name', ...INSTANCE_FIELDS)
+    if (!eq(fixed(b), fixed(a)))
       return bad(
         file,
         path,
         `${a.id} is a use of a piece: a file holds only the values of its settings there.`,
       )
+    for (const k of INSTANCE_FIELDS) {
+      if (
+        !eq((b as Raw)[k], (a as Raw)[k]) &&
+        declares(a.component, k) &&
+        (k !== 'slot' || !eq(a.slot, defaultSlot(parent?.kind)))
+      )
+        return bad(
+          file,
+          path,
+          `${a.id} is a use of a piece that has a setting called ${k}, so a use cannot carry ${k}.`,
+        )
+    }
     const next: Raw = { use: raw.use }
     if (raw.id !== undefined) next.id = raw.id
     if (a.name !== useLabel())
-      if (declaresName(a.component))
+      if (declares(a.component, 'name'))
         return bad(
           file,
           path,
           `${a.id} is a use of a piece that has a setting called name, so a use cannot carry a node name.`,
         )
       else next.name = a.name
+    if (!eq(a.slot, defaultSlot(parent?.kind))) next.slot = a.slot
+    for (const k of INSTANCE_FIELDS) {
+      if (k === 'slot' || k === 'children') continue
+      const v = (a as Raw)[k]
+      if (v !== undefined && !declares(a.component, k)) next[k] = v
+    }
     Object.assign(next, a.set ?? {})
-    sync(file, path, raw, next)
+    sync(file, path, omit(raw, 'children'), next)
+    if (!eq(b.children, a.children)) syncChildren(file, path, b, a)
   }
 
   function syncShort(
@@ -522,6 +583,46 @@ export function fileEdits(
     syncPlain(file, path, b, a, now)
     syncChildren(file, path, b, a)
   }
+
+  // ---- pin unwritten ids that are newly referenced in after
+  const TARGET_KEYS = ['scrollTo', 'open', 'close', 'play', 'pause']
+  const pinReferenced = (tree: TreeRef, root: Node) => {
+    const inAfter = new Set<string>()
+    walk(root, n => {
+      inAfter.add(n.id)
+    })
+    walk(root, n => {
+      const targets: string[] = []
+      if (typeof n.props?.opens === 'string') targets.push(n.props.opens)
+      if (typeof n.props?.labelledBy === 'string')
+        targets.push(n.props.labelledBy)
+      for (const t of Array.isArray(n.on) ? n.on : []) {
+        const d = (t?.do ?? {}) as Record<string, unknown>
+        const k = TARGET_KEYS.find(x => typeof d[x] === 'string')
+        if (k) targets.push(d[k] as string)
+      }
+      if (n.motion && 'steps' in n.motion)
+        for (const s of n.motion.steps)
+          if (
+            typeof s.target === 'object' &&
+            s.target !== null &&
+            typeof s.target.id === 'string'
+          )
+            targets.push(s.target.id)
+      for (const target of targets) {
+        if (!inAfter.has(target)) continue
+        const o = map.origin(tree, target)
+        if (!o || o.written || o.form === 'in-short') continue
+        const raw = rawAt(o.file, o.path)
+        if (isObj(raw) && raw.id === undefined)
+          put(o.file, [...o.path, 'id'], target)
+      }
+    })
+  }
+  pinReferenced('header', after.header)
+  pinReferenced('footer', after.footer)
+  for (const p of after.pages) pinReferenced({ page: p.id }, p.root)
+  for (const c of after.components) pinReferenced({ component: c.id }, c.root)
 
   // ---- the site file
   const SITE = 'site.json'
@@ -598,6 +699,18 @@ export function fileEdits(
         ),
       )
       continue
+    }
+    if (was.name !== c.name) {
+      const rn = rawAt(file, ['name'])
+      if (rn === undefined) put(file, ['name'], c.name)
+      else sync(file, ['name'], rn, c.name)
+    }
+    if (!eq(was.variants, c.variants)) {
+      const rv = rawAt(file, ['variants'])
+      if (!c.variants.length) {
+        if (rv !== undefined) drop(file, ['variants'])
+      } else if (rv === undefined) put(file, ['variants'], c.variants)
+      else sync(file, ['variants'], rv, c.variants)
     }
     if (!eq(was.props, c.props)) {
       const rs = rawAt(file, ['settings'])

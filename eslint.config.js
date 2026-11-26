@@ -47,12 +47,44 @@ export default tseslint.config(
     },
   },
   // starter src imports only @culmjs/core (the root) and relative files that
-  // stay inside packages/starter. Same depth scheme as tools below.
-  // ponytail: one block per depth, 0..7; deeper files are unchecked.
+  // stay inside packages/starter (any depth, any JS/TS extension).
+  {
+    files: ['packages/starter/src/**/*.{ts,mts,cts,js,mjs,cjs,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              regex: '^(?!\\.{1,2}/|@culmjs/core$)',
+              message: 'starter imports only @culmjs/core and its own files',
+            },
+          ],
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'ImportExpression > Literal[value=/^(?!\\.{1,2}\\x2f|@culmjs\\x2fcore$)/]',
+          message:
+            'starter imports only @culmjs/core and its own files, inside packages/starter',
+        },
+        {
+          selector:
+            'ImportExpression > TemplateLiteral[quasis.0.value.raw=/^(?!\\.{1,2}\\x2f|@culmjs\\x2fcore$)/]',
+          message:
+            'starter imports only @culmjs/core and its own files, inside packages/starter',
+        },
+      ],
+    },
+  },
   ...Array.from({ length: 8 }, (_, depth) => {
     const out = `^(\\./)*(\\.\\./(\\./)*){${depth + 2},}`
     return {
-      files: [`packages/starter/src/${'*/'.repeat(depth)}*.ts`],
+      files: [
+        `packages/starter/src/${'*/'.repeat(depth)}*.{ts,mts,cts,js,mjs,cjs,tsx}`,
+      ],
       rules: {
         'no-restricted-imports': [
           'error',
@@ -77,18 +109,26 @@ export default tseslint.config(
             message:
               'starter imports only @culmjs/core and its own files, inside packages/starter',
           },
+          {
+            selector: `ImportExpression > TemplateLiteral[quasis.0.value.raw=/^(?!\\.{1,2}\\x2f|@culmjs\\x2fcore$)|${out.replaceAll('/', '\\x2f')}/]`,
+            message:
+              'starter imports only @culmjs/core and its own files, inside packages/starter',
+          },
         ],
       },
     }
   }),
-  // tools src may not import by a relative path that resolves outside
+  // tools src and bin may not import by a relative path that resolves outside
   // packages/tools/ (core is imported as @culmjs/core/<sub-path>). A file
-  // `depth` folders under src needs depth + 2 climbs to leave the package.
-  // ponytail: one block per depth, 0..7; deeper files are unchecked.
+  // `depth` folders under src/bin needs depth + 2 climbs to leave the package.
   ...Array.from({ length: 8 }, (_, depth) => {
     const out = `^(\\./)*(\\.\\./(\\./)*){${depth + 2},}`
+    const dir = '*/'.repeat(depth)
     return {
-      files: [`packages/tools/src/${'*/'.repeat(depth)}*.ts`],
+      files: [
+        `packages/tools/src/${dir}*.{ts,mts,cts,js,mjs,cjs,tsx}`,
+        `packages/tools/bin/${dir}*.{ts,mts,cts,js,mjs,cjs,tsx}`,
+      ],
       rules: {
         'no-restricted-imports': [
           'error',
@@ -107,6 +147,11 @@ export default tseslint.config(
           'error',
           {
             selector: `ImportExpression > Literal[value=/${out.replaceAll('/', '\\x2f')}/]`,
+            message:
+              'tools src may not import by a relative path outside packages/tools',
+          },
+          {
+            selector: `ImportExpression > TemplateLiteral[quasis.0.value.raw=/${out.replaceAll('/', '\\x2f')}/]`,
             message:
               'tools src may not import by a relative path outside packages/tools',
           },

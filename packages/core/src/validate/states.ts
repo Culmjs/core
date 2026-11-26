@@ -55,6 +55,32 @@ export function masterStates(
   return out
 }
 
+/** States held on the ancestor chain leading to a component's slot part (never unrelated sibling branches). */
+export function slotStates(
+  c: Ctx,
+  comp: Component | undefined,
+  seen = new Set<string>(),
+): StateDecl[] {
+  if (!comp || seen.has(comp.id)) return []
+  seen.add(comp.id)
+  const tree = c.compTrees.get(comp.id)
+  if (!tree) return []
+  const props = Array.isArray(comp.props) ? comp.props : []
+  const slotId = props.find(
+    p => isObj(p) && p.type === 'slot' && typeof p.part === 'string',
+  )?.part as string | undefined
+  const entry = slotId ? tree.entries.find(e => e.w.id === slotId) : undefined
+  if (!entry) return []
+  const list: StateDecl[] = []
+  for (let a: Entry | null = entry; a; a = a.parent) {
+    if (Array.isArray(a.w.state))
+      for (const s of a.w.state) if (isObj(s)) list.push(s as StateDecl)
+    if (a.w.kind === 'instance' && typeof a.w.component === 'string')
+      list.push(...slotStates(c, c.comps.get(a.w.component), seen))
+  }
+  return list
+}
+
 /** Whether any node in a tree holds a state of that name, or uses a component whose master does. */
 export const heldIn = (c: Ctx, t: Tree | undefined, name: string) =>
   !!t?.entries.some(
@@ -90,7 +116,7 @@ export function stateIn(
     const s =
       declIn(a.w.state, name) ??
       (a.w.kind === 'instance'
-        ? masterStates(c, c.comps.get(a.w.component as string)).list.find(
+        ? slotStates(c, c.comps.get(a.w.component as string)).find(
             x => x.name === name,
           )
         : undefined)

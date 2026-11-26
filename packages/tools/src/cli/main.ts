@@ -1,12 +1,13 @@
-import { access, writeFile } from 'node:fs/promises'
+import { access, readFile, writeFile } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 import { parseArgs } from 'node:util'
+import { parse as parseJsonc } from 'jsonc-parser'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { buildSite, fileHashes } from '../build/bundle.ts'
 import { media, readAsset, refusal } from '../folder/files.ts'
 import { startDev } from '../dev/server.ts'
 import { expandShortForm } from '../folder/write.ts'
-import { fileStore } from '../folder/store.ts'
+import { fileStore, withFolderLock, writeAtomic } from '../folder/store.ts'
 import { loadFolder } from '../folder/load.ts'
 import type { Problem, SiteDocument, TreeRef } from '@culmjs/core'
 import { fetchFor, type FetchOptions } from '../folder/fetch.ts'
@@ -19,6 +20,8 @@ import { listenLocal } from '../mcp/http.ts'
 import { protect } from '../mcp/protect.ts'
 import { authoringSchema } from '../schema/authoring.ts'
 import { locateFinding } from '../folder/locateFinding.ts'
+import { renderImage, type RenderInput } from '../render/render.ts'
+import { isObj } from '../shared.ts'
 import { formatLocated } from './print.ts'
 import { init } from './init.ts'
 
@@ -32,12 +35,15 @@ export interface Io {
 const USAGE = `Usage: culm <command> [options]
 
 Commands:
-  init <folder> [--from folder]
-                               write a new bakery site into a new or empty folder
+  init <folder> [--blank] [--from folder]
+                               write a new bakery site (or minimal single-page site with --blank)
   dev [--port n]               serve the site, recompile on save (default port 4321)
   build                        write the compiled site to the output folder
-  check [--chrome path]        validate, then measure every page in Chrome
+  check [--chrome path] [--classes 1,2,3]
+                               validate, then measure every page in Chrome
   expand <file> <id>           rewrite the short form <id> in <file> as its nodes
+  render [spec.json | page] --out <file>
+                               export a standalone node/page/shape as PNG, WebP, or SVG
   schema                       write culm.schema.json in the project folder
   mcp [--port n] [--chrome path] [--json-ops | --full]
                                JSON authoring by default; --full exposes the low-level tools
@@ -100,10 +106,12 @@ export async function folderMcpOptions(
     },
     allow: protect,
     folder: true,
+    cwd,
+    images: project.config.images,
     executable,
     // the hashes of assets/ and fonts/, read again for each measure
     files: () => fileHashes(cwd),
-    // a Google family a batch names is fetched once into fonts/ (the hosts are a parameter so tests can point at a local fake)
+    // a Google family or generated image a batch names is fetched once into fonts/ or assets/gen/
     fetch: (ops: unknown[], doc: SiteDocument, offline?: boolean) =>
       fetchFor(
         cwd,
@@ -112,9 +120,11 @@ export async function folderMcpOptions(
         offline
           ? {
               ...fetchOptions,
+              images: project.config.images,
+              offline: true,
               get: () => Promise.reject(new Error('no network for a replay')),
             }
-          : fetchOptions,
+          : { images: project.config.images, ...fetchOptions },
       ),
     held: () => readHeld(cwd),
     assets: (p: string) => readAsset(cwd, p),
@@ -150,6 +160,15 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
         full: { type: 'boolean' },
         'json-ops': { type: 'boolean' },
         from: { type: 'string' },
+        blank: { type: 'boolean' },
+        classes: { type: 'string' },
+        out: { type: 'string' },
+        id: { type: 'string' },
+        size: { type: 'string' },
+        scale: { type: 'string' },
+        format: { type: 'string' },
+        transparent: { type: 'boolean' },
+        dark: { type: 'boolean' },
       },
     })
   } catch (e) {
@@ -163,15 +182,24 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
   const [command, ...args] = positionals
   const wants: Record<
     string,
-    { args: number; port?: true; chrome?: true; from?: true }
+    {
+      args: number | [number, number]
+      port?: true
+      chrome?: true
+      from?: true
+      blank?: true
+      classes?: true
+      render?: true
+    }
   > = {
     dev: { args: 0, port: true },
     build: { args: 0 },
-    check: { args: 0, chrome: true },
+    check: { args: 0, chrome: true, classes: true },
     expand: { args: 2 },
+    render: { args: [0, 1], chrome: true, render: true },
     schema: { args: 0 },
     mcp: { args: 0, port: true, chrome: true },
-    init: { args: 1, from: true },
+    init: { args: 1, from: true, blank: true },
   }
   const want = command ? wants[command] : undefined
   if ((values.full || values['json-ops']) && command !== 'mcp')
@@ -180,9 +208,14 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
     return usage('Choose either --json-ops or --full.')
   if (!command || !want)
     return usage(command ? `Unknown command "${command}".` : undefined)
-  if (args.length !== want.args)
+  const [minArgs, maxArgs] = Array.isArray(want.args)
+    ? want.args
+    : [want.args, want.args]
+  if (args.length < minArgs || args.length > maxArgs)
     return usage(
-      `culm ${command} takes ${want.args} argument${want.args === 1 ? '' : 's'}.`,
+      minArgs === maxArgs
+        ? `culm ${command} takes ${minArgs} argument${minArgs === 1 ? '' : 's'}.`
+        : `culm ${command} takes ${minArgs} to ${maxArgs} arguments.`,
     )
   if (values.port !== undefined && !want.port)
     return usage(`culm ${command} has no --port.`)
@@ -190,6 +223,33 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
     return usage(`culm ${command} has no --chrome.`)
   if (values.from !== undefined && !want.from)
     return usage(`culm ${command} has no --from.`)
+  if (values.blank && !want.blank)
+    return usage(`culm ${command} has no --blank.`)
+  if (values.classes !== undefined && !want.classes)
+    return usage(`culm ${command} has no --classes.`)
+  for (const flag of [
+    'out',
+    'id',
+    'size',
+    'scale',
+    'format',
+    'transparent',
+    'dark',
+  ] as const)
+    if (values[flag] !== undefined && !want.render)
+      return usage(`culm ${command} has no --${flag}.`)
+  let classes: (1 | 2 | 3)[] | undefined
+  if (values.classes !== undefined) {
+    const parts = values.classes
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+    if (!parts.length || parts.some(p => !['1', '2', '3'].includes(p)))
+      return usage(
+        `--classes expects 1, 2 or 3 separated by commas, not "${values.classes}".`,
+      )
+    classes = [...new Set(parts.map(Number))].sort() as (1 | 2 | 3)[]
+  }
   let port: number | undefined
   if (values.port !== undefined) {
     port = /^\d{1,5}$/.test(values.port) ? Number(values.port) : NaN
@@ -201,7 +261,10 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
 
   if (command === 'init') {
     try {
-      const r = await init(resolve(cwd, args[0]!), { from: values.from })
+      const r = await init(resolve(cwd, args[0]!), {
+        from: values.from,
+        blank: values.blank,
+      })
       if (!r.ok) return (r.problems.forEach(p => err(`${p.message}\n`)), 1)
       const dir = args[0]!
       const shown = /^[\w@%+=:,./-]+$/.test(dir)
@@ -211,6 +274,97 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
         `Wrote ${r.files.length} files to ${dir}\nNext: cd ${shown} && npm install && npx culm dev\n`,
       )
       return 0
+    } catch (e) {
+      err(`${e instanceof Error ? e.message : String(e)}\n`)
+      return 1
+    }
+  }
+
+  if (command === 'render') {
+    const outPath = values.out
+    if (!outPath) return usage('culm render requires --out <file>.')
+    let scale: number | undefined
+    if (values.scale !== undefined) {
+      scale = /^[1-4]$/.test(values.scale) ? Number(values.scale) : NaN
+      if (!Number.isInteger(scale))
+        return usage('--scale must be 1, 2, 3, or 4.')
+    }
+    if (
+      values.format !== undefined &&
+      !['png', 'webp', 'svg'].includes(values.format)
+    )
+      return usage('--format must be png, webp, or svg.')
+    try {
+      const target = args[0]
+      const isFile =
+        target !== undefined &&
+        (/\.(jsonc?)$/i.test(target) ||
+          (await access(resolve(cwd, target)).then(
+            () => true,
+            () => false,
+          )))
+      const hasProject = await access(join(cwd, 'culm.json')).then(
+        () => true,
+        () => false,
+      )
+      const project = hasProject ? await openProject(cwd) : undefined
+      if (project && !isFile && project.loaded.problems.length) {
+        show(project.loaded.problems)
+        return 1
+      }
+      let spec: RenderInput = {
+        out: outPath,
+        ...(values.id ? { id: values.id } : {}),
+        ...(values.size ? { size: values.size } : {}),
+        ...(scale ? { scale } : {}),
+        ...(values.format
+          ? { format: values.format as 'png' | 'webp' | 'svg' }
+          : {}),
+        ...(values.transparent ? { transparent: true } : {}),
+        ...(values.dark ? { dark: true } : {}),
+      }
+      if (isFile) {
+        const raw = await readFile(resolve(cwd, target!), 'utf8')
+        const parsedSpec = parseJsonc(raw)
+        if (!isObj(parsedSpec)) {
+          err(`${target} must be a JSON object.\n`)
+          return 1
+        }
+        const fromFile: RenderInput =
+          typeof parsedSpec.kind === 'string'
+            ? { node: parsedSpec }
+            : (parsedSpec as RenderInput)
+        spec = {
+          ...fromFile,
+          ...spec,
+          out: outPath,
+        }
+      } else if (target) {
+        spec.page = target
+      }
+      const res = await renderImage(spec, {
+        cwd,
+        containInDir: Boolean(hasProject),
+        doc: project?.loaded.doc,
+        registry: project?.registry,
+        data: project?.loaded.data,
+        fonts: project?.held.fonts,
+        icons: project?.held.icons,
+        assets: p => readAsset(cwd, p),
+        executable: values.chrome,
+        images: project?.config.images,
+      })
+      if (!res.ok) {
+        show(res.problems)
+        return res.problems.some(p => p.code === 'MEASUREMENT_INCOMPLETE')
+          ? 2
+          : 1
+      }
+      for (const f of res.findings) err(`${formatLocated(f)}\n`)
+      out(
+        `Rendered ${res.out ?? outPath} (${res.format}, ${res.width}x${res.height}@${res.scale}x, ${res.bytes} bytes, ${res.findings.length} findings)\n`,
+      )
+      return res.findings.length ? 1 : 0
     } catch (e) {
       err(`${e instanceof Error ? e.message : String(e)}\n`)
       return 1
@@ -274,32 +428,42 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
     if (command === 'expand') {
       const [file, id] = args as [string, string]
       const rel = relative(cwd, resolve(cwd, file)).split(sep).join('/')
-      const doc = loaded.doc!
-      const trees: TreeRef[] = [
-        'header',
-        'footer',
-        ...doc.pages.map(p => ({ page: p.id })),
-        ...doc.components.map(c => ({ component: c.id })),
-      ]
-      const origin = trees
-        .map(t => loaded.map.origin(t, id))
-        .find(o => o?.file === rel && o.form === 'short')
-      const text = loaded.files.find(f => f.path === rel)?.text
-      const next =
-        origin && text !== undefined
-          ? expandShortForm(text, origin.path, project.registry, rel)
-          : undefined
-      if (next === undefined) {
-        show([
-          {
-            code: 'INVALID_OPERATION',
-            message: `"${id}" is not a short form in ${rel}.`,
-            file: rel,
-          },
-        ])
+      const res = await withFolderLock(cwd, async () => {
+        const fresh = await loadFolder(cwd, project.registry)
+        if (!fresh.doc || fresh.problems.length)
+          return { problems: fresh.problems }
+        const trees: TreeRef[] = [
+          'header',
+          'footer',
+          ...fresh.doc.pages.map(p => ({ page: p.id })),
+          ...fresh.doc.components.map(c => ({ component: c.id })),
+        ]
+        const origin = trees
+          .map(t => fresh.map.origin(t, id))
+          .find(o => o?.file === rel && o.form === 'short')
+        const text = fresh.files.find(f => f.path === rel)?.text
+        const next =
+          origin && text !== undefined
+            ? expandShortForm(text, origin.path, project.registry, rel)
+            : undefined
+        if (next === undefined) {
+          return {
+            problems: [
+              {
+                code: 'INVALID_OPERATION' as const,
+                message: `"${id}" is not a short form in ${rel}.`,
+                file: rel,
+              },
+            ],
+          }
+        }
+        await writeAtomic(cwd, rel, next)
+        return { problems: [] as Located[] }
+      })
+      if (res.problems.length) {
+        show(res.problems)
         return 1
       }
-      await writeFile(join(cwd, rel), next)
       out(`Expanded ${id} in ${rel}\n`)
       return 0
     }
@@ -316,6 +480,7 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
         data: loaded.data,
         revision: 0,
         executable: values.chrome,
+        ...(classes ? { classes } : {}),
         files: hashes,
         fonts: project.held.fonts,
         icons: project.held.icons,

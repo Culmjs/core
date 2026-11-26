@@ -349,13 +349,30 @@ export function runChecks(input: Input): Finding[] {
   const isHex = (c: unknown) => typeof c === 'string' && c.startsWith('#')
   for (const w of widgets.values()) {
     if (w.kind !== 'shape') continue
-    const { fill, stroke } = (w.props ?? {}) as Record<string, unknown>
-    const paints =
-      fill && typeof fill === 'object'
-        ? [(fill as { from?: unknown }).from, (fill as { to?: unknown }).to]
-        : [fill]
-    const line = (stroke as { color?: unknown } | undefined)?.color
-    if ([...paints, line].some(isHex))
+    const { fill, stroke, marks } = (w.props ?? {}) as Record<string, unknown>
+    const paintColors = (p: unknown): unknown[] => {
+      if (!p || typeof p !== 'object') return [p]
+      const o = p as {
+        from?: unknown
+        to?: unknown
+        stops?: { color?: unknown }[]
+      }
+      return [
+        o.from,
+        o.to,
+        ...(Array.isArray(o.stops) ? o.stops.map(s => s.color) : []),
+      ]
+    }
+    const paints = [...paintColors(fill)]
+    const lines = [(stroke as { color?: unknown } | undefined)?.color]
+    if (Array.isArray(marks))
+      for (const m of marks)
+        if (m && typeof m === 'object') {
+          const mk = m as { fill?: unknown; stroke?: { color?: unknown } }
+          paints.push(...paintColors(mk.fill))
+          lines.push(mk.stroke?.color)
+        }
+    if ([...paints, ...lines].some(isHex))
       push(
         'raw-colour',
         2,
@@ -543,9 +560,14 @@ export function runChecks(input: Input): Finding[] {
         const tb = n.box
         if (!tb || !n.text) continue
         if (
-          ![n.id, ...ancestors(n.id)].some(a => {
+          ![n.id, ...ancestors(n.id)].some((a, idx, chain) => {
             const x = widgets.get(a)
-            return !!x && isRequired(x)
+            if (!x) return false
+            const form = chain
+              .slice(idx + 1)
+              .map(f => widgets.get(f))
+              .find(f => f?.kind === 'form')
+            return isRequired(x, form)
           })
         )
           continue
@@ -564,6 +586,7 @@ export function runChecks(input: Input): Finding[] {
 
     // Siblings: overlap, alignment, symmetry and stacked rows.
     for (const [parent, ids] of kids) {
+      if (widgets.get(parent)?.kind === 'shape') continue
       // A block with no width or no height paints nothing to line up (an empty menu, say).
       const boxes = ids.flatMap(id =>
         shown(id)?.w && shown(id)?.h

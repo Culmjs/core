@@ -2273,3 +2273,11 @@ test('tablet show: a box with a wrapping child keeps flow-root', () => {
   } as Partial<Node>)
   assert.equal(lastDisplay(tabletOf(css)), 'flow-root')
 })
+
+test('tablet hidden true cascades display:none to phone even when dark hidden is false', () => {
+  const css = compileFor({
+    kind: 'text',
+    style: { dark: { hidden: false }, tablet: { hidden: true } },
+  })
+  assert.match(phoneOf(css), /display:none/)
+})

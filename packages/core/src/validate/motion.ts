@@ -15,6 +15,7 @@ import { templateIndex, walk } from '../document/tree.ts'
 import { visualChild } from '../layout/display.ts'
 import {
   add,
+  addComposed,
   fieldsOf,
   isNum,
   oneOf,
@@ -35,6 +36,7 @@ type Lookup = (
 const common = { trigger: true, pinPx: true, scrollFallback: true } as const
 const sequenceKeys = fieldsOf<Extract<Motion, { steps: Step[] }>>({
   ...common,
+  host: true,
   steps: true,
 })
 const effectKeys = fieldsOf<Extract<Motion, { effect: string }>>({
@@ -123,6 +125,8 @@ export function checkMotion(c: Ctx, _t: TCtx, e: Entry): void {
     return
   }
   const before = c.out.length
+  if (m.host !== undefined && m.host !== true)
+    say('host must be true when set.', 'motion.host')
   checkSteps(m.steps, say)
   if (c.out.length === before) checkTargets(e.w, m.steps as Step[], say)
 }
@@ -134,6 +138,7 @@ export function checkComposedMotions(
   trees: Tree[],
   fonts: FontRef[],
   scheme: Look['dark'],
+  composedArg?: (t: Tree) => { tree: Node; over: boolean },
 ): void {
   if (!trees.some(t => t.entries.some(e => e.w.motion))) return
   const components = [...c.comps.values()]
@@ -156,8 +161,9 @@ export function checkComposedMotions(
   // A local declaration never needs the header. If one does, use the very same bounded
   // composition as render; a declaration beyond a cut is not evidence of a site-wide state.
   let header: ReturnType<typeof compose> | undefined
-  const composed = (t: Tree) =>
-    t === c.header ? (header ??= compose(t)) : compose(t)
+  const composed =
+    composedArg ??
+    ((t: Tree) => (t === c.header ? (header ??= compose(t)) : compose(t)))
   const memo = new Map<Tree, boolean>()
   const hasMotion = (t: Tree): boolean => {
     if (!memo.has(t))
@@ -202,24 +208,8 @@ export function checkComposedMotions(
       const scope = (scopes[depth] = { w, parent: scopes[depth - 1] ?? null })
       const m = w.motion
       if (!m) return
-      const say = (message: string, path: string, code?: Code) => {
-        // The default use added one namespace to every descendant of the master.
-        const localId =
-          t.comp && w !== tree ? w.id.slice(tree.id.length + 1) : w.id
-        // A part of a master is reported on the use that contributed it.
-        let id = localId
-        while (!authored.has(id) && id.includes('.'))
-          id = id.slice(0, id.lastIndexOf('.'))
-        add(
-          c,
-          authored.get(id) ?? w,
-          message,
-          id === localId
-            ? path
-            : `parts.${localId.slice(id.length + 1)}.${path}`,
-          code,
-        )
-      }
+      const say = (message: string, path: string, code?: Code) =>
+        addComposed(c, t, authored, tree, w, message, path, code)
       const cutHeader = (path: string) =>
         say(
           'The header is too large or deep to establish this motion state.',

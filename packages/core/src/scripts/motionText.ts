@@ -70,7 +70,7 @@ export function measureText(
   }
   const member = (parent: HTMLElement, unit: Unit, index: number) => {
     if (plan[unit]) parent = span(parent, plan[unit])
-    const e = span(parent, atom)
+    const e = span(parent, 'cm-frag')
     ;(groups[unit][index] ||= []).push(e)
     return e
   }
@@ -118,7 +118,7 @@ export function measureText(
       // extra elements) keeps light-DOM textContent/copy from doubling. The
       // visual copy alone is hidden from AT; neither ancestor links nor
       // authored labels are ever hidden or renamed.
-      span(run, source).attachShadow({ mode: 'open' })
+      span(run, 'cm-source').attachShadow({ mode: 'open' })
       const visual = span(run)
       visual.setAttribute('aria-hidden', 'true')
       let here = -1,

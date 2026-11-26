@@ -97,7 +97,7 @@ function fixedTracks(
 ) {
   const targets = new Map<number, Map<string, Channel>>()
   let duration = 0
-  for (const [index, { step: s, targets: ids }] of bound.entries()) {
+  for (const { step: s, targets: ids } of bound) {
     const start = duration + (s.delayMs ?? 0),
       stagger = s.staggerMs ?? 0
     const easing = s.ease && s.ease !== 'linear' ? cssEase(s.ease) : undefined
@@ -124,7 +124,7 @@ function fixedTracks(
         const c = by.get(k) ?? {
           segments: [],
           add: k === 'x' || k === 'y',
-          both: first && index === 0,
+          both: first,
         }
         by.set(k, c)
         if (easing) from[k].easing = easing

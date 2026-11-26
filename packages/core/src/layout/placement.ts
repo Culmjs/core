@@ -1,4 +1,7 @@
 import type { Box, Layout, Node, PlacementValue } from '../document/index.ts'
+import { shownOn } from '../document/visibility.ts'
+
+export { shownOn }
 
 export const PLACEMENT_MODES = [
   'normal',
@@ -12,13 +15,7 @@ export type LayoutFlag = boolean | 'tablet'
 /** The flag the placement helpers take for a layout. */
 export const flagOf = (layout: Layout): LayoutFlag =>
   layout === 'phone' ? true : layout === 'tablet' ? 'tablet' : false
-/**
- * Whether a block is drawn on a layout: hiding on desktop reaches tablet too, and phone shows it again.
- * Not the same rule as `shownOn` in `document/samples.ts` (the sample check), where a desktop hide does not reach tablet.
- * The two differ on purpose for now: changing either changes published output, so they are to be settled together.
- */
-export const shownOn = (w: Node, layout: Layout): boolean =>
-  !w.hide?.[layout] && !(layout === 'tablet' && w.hide?.desktop)
+/** Whether a block is drawn on a layout: hiding on desktop reaches tablet too, and phone shows it again. */
 export function effectivePlacement(
   w: Node,
   layout: LayoutFlag = false,

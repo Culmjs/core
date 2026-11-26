@@ -65,10 +65,13 @@ export function runChange(
   if (!isObj(at)) return null
   const copy = (runs as Record<string, unknown>[]).map(r => ({ ...r }))
   const line = { ...copy[run] }
-  delete line.bind
-  delete line.bindHref
-  copy[run] =
-    field === 'text' ? { ...line, text: value } : { ...copy[run], link: value }
+  if (field === 'text') {
+    delete line.bind
+    copy[run] = { ...line, text: value }
+  } else {
+    delete line.bindHref
+    copy[run] = { ...line, link: value }
+  }
   return { props: { runs: copy } }
 }
 

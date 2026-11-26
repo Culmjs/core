@@ -1,7 +1,8 @@
 import type { Box, Layout, Node } from '../document/index.ts'
 import { walk } from '../document/tree.ts'
+import { shownAtLayout } from '../document/visibility.ts'
 import { effectiveFreeBoxes } from '../layout/phone.ts'
-import { flagOf, shownOn, wrapping } from '../layout/placement.ts'
+import { flagOf, wrapping } from '../layout/placement.ts'
 import type { Registry } from '../registry/index.ts'
 
 const LAYOUTS = ['desktop', 'tablet', 'phone'] as const
@@ -46,7 +47,7 @@ const usesCssOrder = (parent: Node, layout: Layout) =>
 
 /** The shown children of `parent` in the order the layout draws them (a Free area's by position, a CSS-ordered group's by order). */
 export function visualSiblings(parent: Node, layout: Layout): Node[] {
-  const children = (parent.children ?? []).filter(w => shownOn(w, layout))
+  const children = (parent.children ?? []).filter(w => shownAtLayout(w, layout))
   if (parent.kind === 'free') {
     const boxes = effectiveFreeBoxes(parent, layout)
     return children
@@ -109,7 +110,7 @@ export function outlineOf(root: Node, registry: Registry): Outline {
         const i = order(parent, l).indexOf(w.id)
         return i < 0 ? null : i
       }),
-      hidden: per(l => !shownOn(w, l)),
+      hidden: per(l => !shownAtLayout(w, l)),
       ...(boxes ? { box: boxes } : {}),
     })
     if (w.kind !== 'free') return

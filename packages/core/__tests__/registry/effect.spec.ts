@@ -438,3 +438,25 @@ test('a declared tier-2 preset retains that floor after projection and copying',
   assert.ok(r.ok && plain.ok)
   assert.equal(r.css, plain.css)
 })
+
+test('detach of an id-bearing tier-2 load preset preserves host execution via host: true', () => {
+  const reg = core.createRegistry()
+  reg.use(plugin(def({ tier: 2, steps: () => [step({ id: 'title' })] })))
+  const root = node('panel', 'box', [text('title', 'Title')])
+  root.motion = { trigger: 'load', effect: 'lift' }
+  const d = siteWith([{ ...node('use', 'instance'), component: 'panel' }], {
+    components: [{ id: 'panel', name: 'Panel', props: [], variants: [], root }],
+  })
+  const r = plan(d, reg, {
+    site: 's',
+    key: 'k',
+    baseRevision: 0,
+    ops: [{ op: 'detach', tree: { page: 'home' }, id: 'use' }],
+  })
+  assert.ok(r.ok)
+  assert.deepEqual(r.doc.pages[0].root.children![0].motion, {
+    trigger: 'load',
+    host: true,
+    steps: [step({ id: 'n1' })],
+  })
+})

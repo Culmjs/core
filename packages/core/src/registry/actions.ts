@@ -54,10 +54,21 @@ function equal(a: unknown, b: unknown): boolean {
 const dig = (hit: Hit | null): unknown =>
   hit?.path.reduce<unknown>((o, k) => (o as Obj | undefined)?.[k], hit.node)
 
+const UNSAFE_FIELDS = new Set([
+  '__proto__',
+  'constructor',
+  'prototype',
+  'id',
+  'kind',
+  'origin',
+  'component',
+])
+
 /** Writes `v` at a target in `root`, or deletes the key when `v` is undefined. A target whose node is missing is skipped. */
 function put(root: Node, target: string, v: unknown): void {
   const hit = localTarget(root, target)
   if (!hit?.path.length) return
+  if (hit.path.some(k => UNSAFE_FIELDS.has(k))) return
   const last = hit.path.at(-1)!
   let o: Obj | undefined = hit.node as unknown as Obj
   for (const k of hit.path.slice(0, -1))

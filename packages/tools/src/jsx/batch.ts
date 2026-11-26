@@ -5,6 +5,7 @@ import {
   type Registry,
   type SiteDocument,
   type Problem,
+  type TreeRef,
 } from '@culmjs/core'
 import { projectOps } from '@culmjs/core/internal/projection'
 import { isObj } from '../shared.ts'
@@ -88,7 +89,7 @@ export function buildRequest(
     warnings: [],
   }
   const page = a.page ?? 'home',
-    tree = { page }
+    tree: TreeRef = page === 'header' || page === 'footer' ? page : { page }
   const error = (path: string, message: string) =>
     out.errors.push(bad(path, message))
   for (const [k, v] of [
@@ -160,7 +161,12 @@ export function buildRequest(
     project(b.ops, path, b)
   }
   if (a.theme !== undefined) add({ jsx: '', theme: a.theme }, 'theme')
-  const root = () => doc.pages.find(p => p.id === page)?.root
+  const root = () =>
+    page === 'header'
+      ? doc.header
+      : page === 'footer'
+        ? doc.footer
+        : doc.pages.find(p => p.id === page)?.root
   const fromEdit = (index: number, emit: () => void) => {
     const firstEntry = out.plan.entries.length
     const firstError = out.errors.length
@@ -169,7 +175,11 @@ export function buildRequest(
     for (const p of out.errors.slice(firstError)) p.op = index
   }
   const firstInsert = edits.findIndex(e => isObj(e) && e.op === 'insert')
-  if (!root() && (inserts.length || firstInsert !== -1)) {
+  if (
+    typeof tree !== 'string' &&
+    !root() &&
+    (inserts.length || firstInsert !== -1)
+  ) {
     const addPage = () =>
       project(
         [
@@ -262,6 +272,11 @@ export function buildRequest(
         'motion',
         'text',
         'set',
+        'slot',
+        'placement',
+        'hide',
+        'state',
+        'on',
         'style',
         'phone',
         'tablet',
@@ -306,7 +321,13 @@ export function buildRequest(
     const inheritedLevel =
       w.props.level === undefined && n.props?.level !== undefined
     if (inheritedLevel) w.props.level = n.props!.level
-    normalise([w], { doc, siteRefs: new Set(), needs, warns: out.warnings })
+    normalise([w], {
+      doc,
+      registry,
+      siteRefs: new Set(),
+      needs,
+      warns: out.warnings,
+    })
     if (inheritedLevel) delete w.props.level
     const ops: Obj[] = []
     if (needs.size)
@@ -315,14 +336,32 @@ export function buildRequest(
         fonts: [
           ...doc.fonts,
           ...[...needs].map(([ref, v]) =>
-            v === 'cat' ? ref : { google: v.family, weights: [...v.weights] },
+            v === 'cat'
+              ? ref
+              : {
+                  google: v.family,
+                  weights: [...v.weights],
+                  ...(v.italic ? { italic: true } : {}),
+                },
           ),
         ],
       })
-    for (const [key, value] of Object.entries(
-      settings(n.origin?.block, p.set, path + '.set'),
-    ))
-      ops.push({ op: 'setBlockSetting', ...scope, key, value })
+    if (p.set !== undefined) {
+      if (n.kind === 'instance') {
+        if (!isObj(p.set)) error(`${path}.set`, 'set must be an object.')
+        else ops.push({ op: 'setInstance', ...scope, set: p.set })
+      } else if (n.origin?.block) {
+        for (const [key, value] of Object.entries(
+          settings(n.origin.block, p.set, path + '.set'),
+        ))
+          ops.push({ op: 'setBlockSetting', ...scope, key, value })
+      } else {
+        error(
+          `${path}.set`,
+          `${n.id} is neither a block root nor an instance; use props or text instead.`,
+        )
+      }
+    }
     if (p.text !== undefined)
       ops.push(
         n.kind === 'button'
@@ -336,12 +375,77 @@ export function buildRequest(
     for (const [layer, decl] of Object.entries(w.layers))
       if (isObj(decl) && Object.keys(decl).length)
         ops.push({ op: 'setStyle', ...scope, layer, decl })
-    if (w.extras.slot)
+    if (p.slot !== undefined || p.placement !== undefined) {
+      let nextSlot: Obj | undefined
+      if (p.slot !== undefined) {
+        if (!isObj(p.slot)) error(`${path}.slot`, 'slot must be an object.')
+        else {
+          nextSlot = { ...(n.slot as Obj) }
+          for (const [k, v] of Object.entries(p.slot))
+            if (v === null) delete nextSlot[k]
+            else nextSlot[k] = v
+        }
+      }
+      if (
+        p.placement !== undefined &&
+        p.placement !== null &&
+        !isObj(p.placement)
+      )
+        error(`${path}.placement`, 'placement must be an object or null.')
+      else if (nextSlot !== undefined || p.placement !== undefined)
+        ops.push({
+          op: 'setSlot',
+          ...scope,
+          ...(nextSlot !== undefined ? { slot: nextSlot } : {}),
+          ...(p.placement !== undefined ? { placement: p.placement } : {}),
+        })
+    } else if (w.extras.slot)
       ops.push({
         op: 'setSlot',
         ...scope,
         slot: { ...n.slot, ...(w.extras.slot as Obj) },
       })
+    if (p.hide !== undefined) {
+      if (p.hide === null) {
+        for (const layout of ['desktop', 'tablet', 'phone'] as const)
+          if (n.hide?.[layout])
+            ops.push({ op: 'setHidden', ...scope, layout, hidden: false })
+      } else if (!isObj(p.hide))
+        error(`${path}.hide`, 'hide must be an object or null.')
+      else {
+        for (const [layout, v] of Object.entries(p.hide)) {
+          if (!['desktop', 'tablet', 'phone'].includes(layout))
+            error(
+              `${path}.hide.${layout}`,
+              'hide keys must be desktop, tablet or phone.',
+            )
+          else if (typeof v !== 'boolean' && v !== null)
+            error(
+              `${path}.hide.${layout}`,
+              'hide values must be true, false or null.',
+            )
+          else
+            ops.push({
+              op: 'setHidden',
+              ...scope,
+              layout,
+              hidden: Boolean(v),
+            })
+        }
+      }
+    }
+    if (p.state !== undefined || p.on !== undefined) {
+      if (p.state !== undefined && p.state !== null && !Array.isArray(p.state))
+        error(`${path}.state`, 'state must be an array or null.')
+      if (p.on !== undefined && p.on !== null && !Array.isArray(p.on))
+        error(`${path}.on`, 'on must be an array or null.')
+      ops.push({
+        op: 'setStates',
+        ...scope,
+        ...(p.state !== undefined ? { state: p.state } : {}),
+        ...(p.on !== undefined ? { on: p.on } : {}),
+      })
+    }
     project(ops, path)
   }
   patches.forEach((p, i) => patchItem(p, `patch[${i}]`))
@@ -399,8 +503,45 @@ export function buildRequest(
         )
         break
       }
+      case 'addPage': {
+        fields(
+          edit,
+          [
+            'op',
+            'page',
+            'title',
+            'slug',
+            'index',
+            'on',
+            'inMenu',
+            'inFooter',
+            'icon',
+          ],
+          path,
+        )
+        const opObj = { ...edit }
+        project([opObj], path)
+        break
+      }
+      case 'removePage': {
+        fields(edit, ['op', 'page'], path)
+        project([{ op: 'removePage', page: edit.page }], path)
+        break
+      }
+      case 'setPage': {
+        fields(
+          edit,
+          ['op', 'page', 'title', 'slug', 'on', 'inMenu', 'inFooter', 'icon'],
+          path,
+        )
+        project([{ ...edit }], path)
+        break
+      }
       default:
-        error(`${path}.op`, 'Use insert, update, move, remove or theme.')
+        error(
+          `${path}.op`,
+          'Use insert, update, move, remove, theme, addPage, removePage or setPage.',
+        )
     }
   }
   edits.forEach((edit, i) => fromEdit(i, () => orderedItem(edit, `ops[${i}]`)))

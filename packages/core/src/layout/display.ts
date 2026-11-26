@@ -106,7 +106,10 @@ export function layoutDisplays(
     childLayoutDisplay(w, true)
   )
     visible = true
-  if (phone ?? (s?.dark?.hidden !== false && tablet !== false && base))
+  if (
+    phone ??
+    (tablet !== undefined ? tablet : s?.dark?.hidden !== false && base)
+  )
     visible = false
   else if (phone === false && (tablet ?? base)) visible = true
   return { desktop, tablet: onTablet, phone: visible && !w.hide?.phone }

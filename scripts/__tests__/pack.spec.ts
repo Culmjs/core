@@ -28,7 +28,15 @@ test('packed core installs offline and every sub-path imports', () => {
     writeFileSync(join(app, 'package.json'), '{"type":"module"}')
     run(
       'npm',
-      ['install', tarball, '--offline', '--no-audit', '--no-fund'],
+      [
+        'install',
+        tarball,
+        '--offline',
+        '--no-audit',
+        '--no-fund',
+        '--cache',
+        join(tmp, 'cache'),
+      ],
       app,
     )
 
@@ -47,52 +55,74 @@ test('packed core installs offline and every sub-path imports', () => {
       ),
       [],
     )
+    assert.ok(files.includes('package/LICENSE'), 'missing LICENSE')
+    assert.ok(files.includes('package/README.md'), 'missing README.md')
   } finally {
-    rmSync(tmp, { recursive: true, force: true })
-    // a stale dist would satisfy a run that forgot --conditions=source
-    rmSync(join(core, 'dist'), { recursive: true, force: true })
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 3 })
+    // a stale dist would satisfy a run that forgot --conditions=@culmjs/source
+    rmSync(join(core, 'dist'), { recursive: true, force: true, maxRetries: 3 })
   }
 })
 
-test('pack:all packs core, starter and tools into .pack/; packed tools runs `culm --help` and `culm init --from .pack` from a temp install', () => {
+test('packed workspaces install into a temp project without mutating .pack; packed tools runs `culm --help` and `culm init --from`', () => {
   const root = join(import.meta.dirname, '../..')
   const tmp = mkdtempSync(join(tmpdir(), 'culm-packall-'))
+  const packDir = join(tmp, 'pack')
+  const app = join(tmp, 'app')
+  mkdirSync(packDir)
+  mkdirSync(app)
   try {
-    run('npm', ['run', 'pack:all'], root)
-    const tars = readdirSync(join(root, '.pack')).filter(f =>
-      f.endsWith('.tgz'),
-    )
+    for (const ws of ['packages/core', 'packages/starter', 'packages/tools'])
+      run(
+        'npm',
+        ['pack', '--workspace=' + ws, '--pack-destination', packDir],
+        root,
+      )
+    const tars = readdirSync(packDir).filter(f => f.endsWith('.tgz'))
     const core = tars.find(f => f.startsWith('culmjs-core-'))
     const tools = tars.find(f => f.startsWith('culmjs-tools-'))
     const starter = tars.find(f => f.startsWith('culmjs-starter-'))
     assert.ok(
       core && starter && tools,
-      `missing tarballs in .pack: ${tars.join()}`,
+      `missing tarballs in packDir: ${tars.join()}`,
     )
-    writeFileSync(join(tmp, 'package.json'), '{"type":"module"}')
+    for (const tar of [core, starter, tools]) {
+      const files = run('tar', ['-tzf', join(packDir, tar)], tmp)
+        .split('\n')
+        .filter(Boolean)
+      assert.ok(files.includes('package/LICENSE'), `${tar} missing LICENSE`)
+      assert.ok(files.includes('package/README.md'), `${tar} missing README.md`)
+    }
+    writeFileSync(join(app, 'package.json'), '{"type":"module"}')
     run(
       'npm',
       [
         'install',
-        join(root, '.pack', core),
-        join(root, '.pack', starter),
-        join(root, '.pack', tools),
+        join(packDir, core),
+        join(packDir, starter),
+        join(packDir, tools),
         '--prefer-offline',
         '--no-audit',
         '--no-fund',
+        '--cache',
+        join(tmp, 'cache'),
       ],
-      tmp,
+      app,
     )
-    const out = run('npx', ['culm', '--help'], tmp)
+    run(
+      'node',
+      [
+        '-e',
+        "await import('@culmjs/core'); await import('@culmjs/starter'); await import('@culmjs/tools')",
+      ],
+      app,
+    )
+    const out = run('npx', ['culm', '--help'], app)
     assert.match(out, /culm/)
-    const made = run(
-      'npx',
-      ['culm', 'init', 'my-site', '--from', join(root, '.pack')],
-      tmp,
-    )
+    const made = run('npx', ['culm', 'init', 'my-site', '--from', packDir], app)
     assert.match(made, /Wrote/)
     const pkg = JSON.parse(
-      readFileSync(join(tmp, 'my-site/package.json'), 'utf8'),
+      readFileSync(join(app, 'my-site/package.json'), 'utf8'),
     )
     assert.match(
       pkg.dependencies['@culmjs/starter'],
@@ -105,15 +135,14 @@ test('pack:all packs core, starter and tools into .pack/; packed tools runs `cul
       'culm.schema.json',
       '.gitignore',
     ])
-      readFileSync(join(tmp, 'my-site', f))
+      readFileSync(join(app, 'my-site', f))
   } finally {
-    rmSync(tmp, { recursive: true, force: true })
-    rmSync(join(root, '.pack'), { recursive: true, force: true })
-    rmSync(join(root, 'packages/core/dist'), { recursive: true, force: true })
-    rmSync(join(root, 'packages/starter/dist'), {
-      recursive: true,
-      force: true,
-    })
-    rmSync(join(root, 'packages/tools/dist'), { recursive: true, force: true })
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 3 })
+    for (const pkg of ['core', 'starter', 'tools'])
+      rmSync(join(root, 'packages', pkg, 'dist'), {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+      })
   }
 })

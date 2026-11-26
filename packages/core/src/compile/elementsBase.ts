@@ -7,15 +7,19 @@ import {
 import { LAYERS } from '../document/kinds.ts'
 import { isObj } from '../document/rules.ts'
 import { type TabAttrs } from '../document/tabs.ts'
+import { STATE_NAME, stateNameOk } from '../style/decl.ts'
 import { type HtmlNode } from './html.ts'
 import { ICONS } from './icons.ts'
 import { ICON_NAME_RE, siteIcon, type SiteIcons } from './siteIcon.ts'
 import { type Links } from './links.ts'
+import { type SiteFonts } from '../style/fonts.ts'
 
 export type ElementCtx = {
   classOf: ReadonlyMap<string, string>
   doc: Pick<SiteDocument, 'pages'>
   links: Links
+  /** The fonts the site's folder holds (`up:<name>`), read by the tools; core opens no file. */
+  fonts?: SiteFonts
   /** The icons the site's folder holds (`set:name`), read by the tools; core opens no file. */
   icons?: SiteIcons
   mode: 'edit' | 'live'
@@ -35,7 +39,10 @@ export type ElementCtx = {
 }
 
 /** The context inside the walk: the tree's tab attributes are worked out once. */
-export type Inner = ElementCtx & { tabs?: ReadonlyMap<string, TabAttrs> }
+export type Inner = ElementCtx & {
+  tabs?: ReadonlyMap<string, TabAttrs>
+  inForm?: boolean
+}
 export type Attrs = NonNullable<HtmlNode['attrs']>
 export type Props = Record<string, unknown>
 
@@ -43,6 +50,26 @@ export type Props = Record<string, unknown>
 export const SAFE_ID = /^[a-z0-9.~]{1,2500}$/
 /** The DOM id of a node that something points at. The prefix keeps it clear of the page's own ids. */
 export const domId = (id: string) => `w-${id}`
+
+/**
+ * The attributes a node's states write. Every name and value passes the same grammar as at save, so a tree that skipped
+ * the save check still cannot reach an attribute name or value with anything else.
+ */
+export function stateAttrs(w: Node): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const s of Array.isArray(w.state) ? w.state : []) {
+    const ok =
+      isObj(s) &&
+      stateNameOk(s.name) &&
+      typeof s.initial === 'string' &&
+      STATE_NAME.test(s.initial) &&
+      (s.values === 'on-off'
+        ? s.initial === 'on' || s.initial === 'off'
+        : Array.isArray(s.values) && s.values.includes(s.initial))
+    if (ok) out[`data-s-${s.name}`] = s.initial as string
+  }
+  return out
+}
 
 /** English words of the markup itself. */
 export const UI = {

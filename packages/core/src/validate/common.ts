@@ -110,3 +110,27 @@ export const add = (
     nodeId: idOf(w),
     ...(path === undefined ? {} : { path }),
   })
+
+/** Map a problem found on a composed unrolled node back to the authored node (or enclosing component instance) that contributed it. */
+export function addComposed(
+  c: Ctx,
+  t: Tree,
+  authored: ReadonlyMap<string, Node>,
+  tree: Node,
+  w: Node,
+  message: string,
+  path?: string,
+  code: Code = 'INVALID_NODE',
+): void {
+  const localId = t.comp && w !== tree ? w.id.slice(tree.id.length + 1) : w.id
+  let id = localId
+  while (!authored.has(id) && id.includes('.'))
+    id = id.slice(0, id.lastIndexOf('.'))
+  const resolvedPath =
+    path === undefined
+      ? undefined
+      : id === localId
+        ? path
+        : `parts.${localId.slice(id.length + 1)}.${path}`
+  add(c, authored.get(id) ?? w, message, resolvedPath, code)
+}

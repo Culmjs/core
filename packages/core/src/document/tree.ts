@@ -1,4 +1,5 @@
 import type { Component, FreeSlot, Kind, Node, Slot } from './types.ts'
+import { isObj } from './rules.ts'
 
 const s = (w: Node) => w.slot as FreeSlot
 
@@ -163,8 +164,6 @@ export function blockIds(rootId: string, w: Node): Node {
   })
   walk(copy, (x, p) => {
     x.id = p ? local.get(x.id)! : rootId
-    const o = x.props?.opens
-    if (typeof o === 'string' && local.has(o)) x.props!.opens = local.get(o)!
     retarget(x, local)
   })
   return copy
@@ -189,13 +188,31 @@ export const targetOf = (d: unknown): string | undefined => {
   return k ? (o[k] as string) : undefined
 }
 
-/** Points trigger actions and motion steps at the new ids in this copy. */
+/** Points internal references (`props.opens`, `props.labelledBy`, `#id` links, trigger actions, and motion targets) at new ids. */
 export function retarget(w: Node, ids: ReadonlyMap<string, string>): void {
+  const swapHash = (v: unknown) => {
+    if (isObj(v) && typeof v.url === 'string' && v.url.startsWith('#')) {
+      const target = v.url.slice(1)
+      if (ids.has(target)) v.url = `#${ids.get(target)!}`
+    }
+  }
+  if (w.props) {
+    for (const k of ['opens', 'labelledBy'] as const) {
+      const cur = w.props[k]
+      if (typeof cur === 'string' && ids.has(cur)) w.props[k] = ids.get(cur)!
+    }
+    swapHash(w.props.link)
+    swapHash(w.props.viewAll)
+    if (Array.isArray(w.props.runs))
+      for (const r of w.props.runs)
+        if (isObj(r) && 'link' in r) swapHash(r.link)
+  }
   for (const t of Array.isArray(w.on) ? w.on : []) {
     const d = t?.do as Record<string, unknown> | undefined
     for (const k of TARGET_KEYS)
       if (d && typeof d[k] === 'string' && ids.has(d[k] as string))
         d[k] = ids.get(d[k] as string)
+    if (d) swapHash(d.goTo)
   }
   const m = w.motion
   if (m && typeof m === 'object' && 'steps' in m && Array.isArray(m.steps))
@@ -210,6 +227,7 @@ export function refsTo(root: Node, id: string): Node[] {
   walk(root, w => {
     if (
       w.props?.opens === id ||
+      w.props?.labelledBy === id ||
       (Array.isArray(w.on) && w.on.some(t => targetOf(t?.do) === id))
     )
       out.push(w)

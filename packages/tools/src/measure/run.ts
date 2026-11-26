@@ -223,16 +223,17 @@ async function measurePage(
       )
     for (const width of widths) {
       await page.setViewport(width, HEIGHT)
-      await page.setScheme('light')
-      if (!(await fontsLoaded(page))) loaded.fonts = false
-      // Geometry is measured in the light theme only.
-      if (themes.includes('light'))
+      const probeTheme = themes.includes('light') ? 'light' : themes[0]
+      if (probeTheme) {
+        await page.setScheme(probeTheme)
+        if (!(await fontsLoaded(page))) loaded.fonts = false
         layouts.push({
           layout: LAYOUT[width as keyof typeof LAYOUT],
           ...(await page.evaluate<Omit<LayoutRaw, 'layout'>>(
             `(${PROBE_SCRIPT})(document, window, ${width})`,
           )),
         })
+      }
       for (const theme of themes) {
         await page.setScheme(theme)
         contrast.push(...(await contrastOf(page, theme, width)))

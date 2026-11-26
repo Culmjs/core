@@ -9,15 +9,18 @@ import {
   type SiteIcons,
 } from '@culmjs/core'
 import { walkFiles } from './files.ts'
+import type { ResolvedAsset } from '../image/generate.ts'
 
 /**
- * What the project folder holds that a build uses: the fonts under `fonts/<name>/font.json`, and the icons under
- * `assets/icons/<set>/<name>.svg` (each next to its set's `LICENSE`, and accepted by `siteIcon`). A font counts only when its file passes
- * `checkSiteFont`, sits in the folder named by its family, and every file it lists is there. Anything else is skipped, never read as a font.
+ * What the project folder holds that a build uses: the fonts under `fonts/<name>/font.json`, the icons under
+ * `assets/icons/<set>/<name>.svg` (each next to its set's `LICENSE`, and accepted by `siteIcon`), and generated images
+ * under `assets/gen/<stem>.(webp|png|jpg)`.
  */
-export async function readHeld(
-  dir: string,
-): Promise<{ fonts: SiteFonts; icons: SiteIcons }> {
+export async function readHeld(dir: string): Promise<{
+  fonts: SiteFonts
+  icons: SiteIcons
+  generated: Map<string, ResolvedAsset>
+}> {
   const fonts: SiteFonts = {}
   // a folder that cannot be read holds nothing; the loader reports it
   const { files } = await walkFiles(dir, ['fonts'], () => true, true).catch(
@@ -55,7 +58,51 @@ export async function readHeld(
       // unreadable or not JSON: not a font
     }
   }
-  return { fonts, icons: await readIcons(dir) }
+  return {
+    fonts,
+    icons: await readIcons(dir),
+    generated: await readGenerated(dir),
+  }
+}
+
+const GEN_FILE = /^assets\/(gen\/[^/]+)\.(webp|png|jpg)$/
+const GEN_META = /^assets\/(gen\/[^/]+)\.json$/
+
+async function readGenerated(dir: string): Promise<Map<string, ResolvedAsset>> {
+  const out = new Map<string, ResolvedAsset>()
+  const { files } = await walkFiles(
+    dir,
+    ['assets'],
+    rel => GEN_FILE.test(rel) || GEN_META.test(rel),
+    true,
+  ).catch(() => ({ files: new Map<string, string>() }))
+  for (const [rel] of files) {
+    const m = GEN_FILE.exec(rel)
+    if (!m) continue
+    const stem = m[1]!
+    let width: number | undefined
+    let height: number | undefined
+    const metaReal = files.get(`assets/${stem}.json`)
+    if (metaReal) {
+      try {
+        const meta = JSON.parse(await readFile(metaReal, 'utf8')) as {
+          width?: unknown
+          height?: unknown
+        }
+        if (typeof meta.width === 'number' && meta.width > 0) width = meta.width
+        if (typeof meta.height === 'number' && meta.height > 0)
+          height = meta.height
+      } catch {
+        // ignore unreadable sidecar
+      }
+    }
+    out.set(stem, {
+      assetId: `${stem}.${m[2]!}`,
+      ...(width ? { width } : {}),
+      ...(height ? { height } : {}),
+    })
+  }
+  return out
 }
 
 const ICON_FILE = /^assets\/icons\/([^/]+)\/([^/]+)\.svg$/

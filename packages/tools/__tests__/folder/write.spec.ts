@@ -786,3 +786,60 @@ test('an add after an element whose comma follows a block comment still gives va
   assert.deepEqual(again.problems, [])
   assert.deepEqual(again.doc, p.doc)
 })
+
+test('unreferenced piece files load and removeComponent deletes them; setInstance and add preserve instance fields on use', async () => {
+  const files = new Map(base)
+  files.set(
+    'pieces/extra.json',
+    '{\n  "id": "extra",\n  "name": "Extra",\n  "settings": [],\n  "root": { "id": "exbox", "kind": "box", "children": [] }\n}\n',
+  )
+  const l = await loadFiles(files, registry)
+  assert.deepEqual(l.problems, [])
+  assert.ok(l.doc!.components.some(c => c.id === 'extra'))
+  const rm = plan(l.doc!, registry, {
+    site: 's',
+    baseRevision: 0,
+    key: 'k',
+    ops: [{ op: 'removeComponent', component: 'extra' }],
+  })
+  assert.ok(rm.ok)
+  assert.deepEqual(fileEdits(l.doc!, rm.doc, l, registry).remove, [
+    'pieces/extra.json',
+  ])
+
+  const mod = plan(l.doc!, registry, {
+    site: 's',
+    baseRevision: 0,
+    key: 'k2',
+    ops: [
+      {
+        op: 'setHidden',
+        tree: home,
+        id: 'visit1',
+        layout: 'phone',
+        hidden: true,
+      },
+      {
+        op: 'setInstance',
+        tree: home,
+        id: 'visit1',
+        overrides: { heading: { props: { level: 'h3' } } },
+      },
+    ],
+  })
+  assert.ok(mod.ok, JSON.stringify(mod))
+  const ed = fileEdits(l.doc!, mod.doc, l, registry)
+  assert.deepEqual(ed.problems, [])
+  assert.match(
+    ed.write['pages/home.json']!,
+    /"hide":\s*\{\s*"phone":\s*true\s*\}/,
+  )
+  assert.match(ed.write['pages/home.json']!, /"overrides":/)
+  assert.ok(!ed.write['pages/home.json']!.includes('"kind": "instance"'))
+  const again = await loadFiles(
+    new Map([...files, ...Object.entries(ed.write)]),
+    registry,
+  )
+  assert.deepEqual(again.problems, [])
+  assert.deepEqual(again.doc, mod.doc)
+})

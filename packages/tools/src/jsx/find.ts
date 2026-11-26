@@ -47,9 +47,14 @@ function walk(
     const go = (n: Node, up: Node[], at: string) => {
       f(n, up, at, tree)
       ;(n.children ?? []).forEach((c, i) =>
-        go(c, [...up, n], `${at} > ${label(c.kind)}[${i}]`),
+        go(
+          c,
+          [...up, n],
+          at ? `${at} > ${label(c.kind)}[${i}]` : `${label(c.kind)}[${i}]`,
+        ),
       )
     }
+    f(root, [], `${label(root.kind)}[root]`, tree)
     ;(root.children ?? []).forEach((c, i) =>
       go(c, [], `${label(c.kind)}[${i}]`),
     )
@@ -79,9 +84,10 @@ export function parseSelector(sel: string): Step[] | string {
   const s = sel.trim()
   if (!s) return 'The selector is empty.'
   while (i < s.length) {
-    const m = /^(\*|[A-Za-z][A-Za-z0-9]*)?(#[a-z0-9]+)?((?:\[[^\]]*\])*)/.exec(
-      s.slice(i),
-    )
+    const m =
+      /^(\*|[A-Za-z][A-Za-z0-9-]*)?(#[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*)?((?:\[[^\]]*\])*)/.exec(
+        s.slice(i),
+      )
     if (!m || !m[0])
       return `Cannot read the selector at "${s.slice(i, i + 12)}".`
     const c: Compound = { attrs: [] }

@@ -159,3 +159,29 @@ test("init's next-step hint quotes a path with a space or a quote, and leaves a 
   assert.match(await hint("it's"), /Next: cd 'it'\\''s' && npm install/)
   assert.match(await hint('plain-site'), /Next: cd plain-site && npm install/)
 })
+
+test('init --blank writes minimal single-page project and package scripts; --from prefers highest semver', async () => {
+  const from = await tmp()
+  for (const n of ['core', 'starter', 'tools']) {
+    await writeFile(join(from, `culmjs-${n}-0.2.0.tgz`), '')
+    await writeFile(join(from, `culmjs-${n}-0.10.0.tgz`), '')
+  }
+  const dir = join(await tmp(), 'blank-site')
+  const r = await init(dir, { from, blank: true })
+  assert.ok(r.ok, JSON.stringify(r))
+  const names = await list(dir)
+  assert.ok(names.includes('pages/home.json'))
+  assert.ok(!names.includes('pages/menu.json'))
+  assert.ok(!names.includes('data/menu.json'))
+  const pkg = JSON.parse(await readFile(join(dir, 'package.json'), 'utf8'))
+  assert.deepEqual(pkg.scripts, {
+    dev: 'culm dev',
+    build: 'culm build',
+    check: 'culm check',
+    mcp: 'culm mcp',
+  })
+  assert.equal(
+    pkg.dependencies['@culmjs/core'],
+    `file:${join(from, 'culmjs-core-0.10.0.tgz')}`,
+  )
+})

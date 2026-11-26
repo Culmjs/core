@@ -470,9 +470,7 @@ export function componentBad(c: Ctx, t: Tree): Bad[] {
     else if (p.default !== undefined) {
       const m =
         valueBad(c, p.type as string, p.default, refs) ??
-        (p.type === 'color' || p.type === 'number'
-          ? onPart(c, cp, part, p.default, refs)
-          : null)
+        onPart(c, cp, part, p.default, refs)
       if (m) push(`The default of "${p.key}" ${m}`, 'props')
     }
   }

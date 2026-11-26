@@ -12,6 +12,7 @@ import { stepsTier } from '../document/motionSteps.ts'
 import { scrollScene } from './scrollScene.ts'
 import { StateConditions, StateAnalysisLimit } from './stateConditions.ts'
 import { resolveEffect } from '../registry/effect.ts'
+import { presetTarget } from '../validate/motionTargets.ts'
 import type { Registry } from '../registry/index.ts'
 import type { HtmlNode } from './html.ts'
 import type { Scene } from '../scripts/motionHost.ts'
@@ -32,16 +33,29 @@ type Lowered = { tier: 1 | 2; steps: Step[] }
 
 /** A validated program. The private render projection already has the exact checked
  * steps, including copy-local target IDs, even when it came from a named preset. */
-export function lowerMotion(m: Motion, registry: Registry): Lowered {
+export function lowerMotion(
+  m: Motion,
+  registry: Registry,
+  owner?: Node,
+  ns?: string,
+): Lowered {
   const def = 'effect' in m ? registry.effect(m.effect) : undefined
-  const steps =
+  const rawSteps =
     'steps' in m
       ? m.steps
       : resolveEffect(def, m.settings, (msg, path) => {
           throw new Error(`${path}: ${msg}`)
         })!
+  const steps =
+    'effect' in m && owner
+      ? rawSteps.map(step => ({
+          ...step,
+          target: presetTarget(owner, step.target, ns),
+        }))
+      : rawSteps
   const tier =
     def?.tier === 2 ||
+    ('host' in m && m.host === true) ||
     m.pinPx !== undefined ||
     m.scrollFallback ||
     m.trigger === 'enter-view' ||
@@ -168,9 +182,16 @@ type Pending = {
 /** A neutral clock can move when a sibling resizes or a declared state changes
  * spacing without resizing any box. Mark real layout branches once per page. */
 function markFlowInputs(el: HtmlNode, owners: ReadonlySet<HtmlNode>): boolean {
-  const states = Object.keys(el.attrs ?? {}).filter(
-    k => k.startsWith('data-s-') && k !== 'data-s-on' && k !== 'data-s-pattern',
-  )
+  const states = Object.entries(el.attrs ?? {})
+    .filter(
+      ([k, v]) =>
+        v !== undefined &&
+        k.startsWith('data-s-') &&
+        k !== 'data-s-on' &&
+        k !== 'data-s-pattern' &&
+        k !== 'data-s-open',
+    )
+    .map(([k]) => k)
   if (states.length) el.attrs!['data-cm-watch'] = states.join(' ')
   let branch = false
   for (const c of el.children ?? [])

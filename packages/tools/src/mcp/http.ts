@@ -6,6 +6,8 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 
 // A request of 1,000,000 characters written as \uXXXX escapes is about 6 MB; core's own limit refuses what is too long.
 const MAX_BODY = 8 * 1024 * 1024
+const SESSION_TTL_MS = 30 * 60 * 1000
+const MAX_SESSIONS = 64
 
 const body = async (req: IncomingMessage): Promise<unknown> => {
   const parts: Buffer[] = []
@@ -31,8 +33,35 @@ export async function listenLocal(
 ): Promise<{ port: number; token: string; close(): Promise<void> }> {
   const token = randomBytes(32).toString('hex')
   const want = Buffer.from(`Bearer ${token}`)
-  const sessions = new Map<string, StreamableHTTPServerTransport>()
+  const sessions = new Map<
+    string,
+    {
+      transport: StreamableHTTPServerTransport
+      server: Server
+      lastUsed: number
+    }
+  >()
   const servers = new Set<Server>()
+  const dropSession = async (id: string) => {
+    const entry = sessions.get(id)
+    if (!entry) return
+    sessions.delete(id)
+    servers.delete(entry.server)
+    await entry.transport.close().catch(() => {})
+    await entry.server.close().catch(() => {})
+  }
+  const pruneSessions = async () => {
+    const cutoff = Date.now() - SESSION_TTL_MS
+    for (const [id, entry] of sessions)
+      if (entry.lastUsed < cutoff) await dropSession(id)
+    while (sessions.size >= MAX_SESSIONS) {
+      const oldest = sessions.keys().next().value
+      if (!oldest) break
+      await dropSession(oldest)
+    }
+  }
+  const sweeper = setInterval(() => void pruneSessions(), 60_000)
+  sweeper.unref()
   let bound = 0
 
   const http = createServer(async (req, res) => {
@@ -54,20 +83,27 @@ export async function listenLocal(
     try {
       const sid = req.headers['mcp-session-id']
       if (typeof sid === 'string') {
-        const t = sessions.get(sid)
-        if (!t) return refuse(404)
-        return await t.handleRequest(req, res)
+        const entry = sessions.get(sid)
+        if (!entry) return refuse(404)
+        entry.lastUsed = Date.now()
+        return await entry.transport.handleRequest(req, res)
       }
       if (req.method !== 'POST') return refuse(400)
       const parsed = await body(req)
       if (!isInitializeRequest(parsed)) return refuse(400)
+      await pruneSessions()
+      const server = make()
       const t: StreamableHTTPServerTransport =
         new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
-          onsessioninitialized: id => void sessions.set(id, t),
+          onsessioninitialized: id =>
+            void sessions.set(id, {
+              transport: t,
+              server,
+              lastUsed: Date.now(),
+            }),
           maxRequestBodySize: MAX_BODY,
         })
-      const server = make()
       servers.add(server)
       t.onclose = () => {
         if (t.sessionId) sessions.delete(t.sessionId)
@@ -98,10 +134,11 @@ export async function listenLocal(
     port: bound,
     token,
     async close() {
+      clearInterval(sweeper)
       http.closeAllConnections()
       await Promise.all([
         new Promise<void>(r => http.close(() => r())),
-        ...[...servers].map(s => s.close()),
+        ...[...servers].map(s => s.close().catch(() => {})),
       ])
     },
   }

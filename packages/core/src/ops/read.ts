@@ -690,7 +690,8 @@ export const readNode = safe(function readNode(
   const cuts: Cuts = []
 
   const props = isObj(found.props) ? found.props : undefined
-  const rawRuns = props && Array.isArray(props.runs) ? props.runs : undefined
+  const rawRuns =
+    props && Array.isArray(props.runs) ? (props.runs as unknown[]) : undefined
   const runs = rawRuns?.map((r, i) => {
     const at = `props.runs.${i}`
     if (!isObj(r)) {

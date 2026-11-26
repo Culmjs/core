@@ -8,3 +8,6 @@ dist
 .pack
 docs/stage-2*-exit.md
 packages/core/src/measure/probeMin.ts
+.ruff_cache
+__pycache__
+.git

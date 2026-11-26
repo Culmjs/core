@@ -2,65 +2,69 @@
   "name": "@culmjs/core",
   "version": "0.0.0",
   "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.18"
+  },
   "sideEffects": false,
   "exports": {
     ".": {
-      "source": "./src/index.ts",
+      "@culmjs/source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./document": {
-      "source": "./src/document/index.ts",
+      "@culmjs/source": "./src/document/index.ts",
       "types": "./dist/document/index.d.ts",
       "default": "./dist/document/index.js"
     },
     "./style": {
-      "source": "./src/style/index.ts",
+      "@culmjs/source": "./src/style/index.ts",
       "types": "./dist/style/index.d.ts",
       "default": "./dist/style/index.js"
     },
     "./layout": {
-      "source": "./src/layout/index.ts",
+      "@culmjs/source": "./src/layout/index.ts",
       "types": "./dist/layout/index.d.ts",
       "default": "./dist/layout/index.js"
     },
     "./scripts": {
-      "source": "./src/scripts/index.ts",
+      "@culmjs/source": "./src/scripts/index.ts",
       "types": "./dist/scripts/index.d.ts",
       "default": "./dist/scripts/index.js"
     },
     "./registry": {
-      "source": "./src/registry/index.ts",
+      "@culmjs/source": "./src/registry/index.ts",
       "types": "./dist/registry/index.d.ts",
       "default": "./dist/registry/index.js"
     },
     "./validate": {
-      "source": "./src/validate/index.ts",
+      "@culmjs/source": "./src/validate/index.ts",
       "types": "./dist/validate/index.d.ts",
       "default": "./dist/validate/index.js"
     },
     "./data": {
-      "source": "./src/data/index.ts",
+      "@culmjs/source": "./src/data/index.ts",
       "types": "./dist/data/index.d.ts",
       "default": "./dist/data/index.js"
     },
     "./compile": {
-      "source": "./src/compile/index.ts",
+      "@culmjs/source": "./src/compile/index.ts",
       "types": "./dist/compile/index.d.ts",
       "default": "./dist/compile/index.js"
     },
     "./ops": {
-      "source": "./src/ops/index.ts",
+      "@culmjs/source": "./src/ops/index.ts",
       "types": "./dist/ops/index.d.ts",
       "default": "./dist/ops/index.js"
     },
     "./internal/projection": {
-      "source": "./src/ops/projection.ts",
+      "@culmjs/source": "./src/ops/projection.ts",
       "types": "./dist/ops/projection.d.ts",
       "default": "./dist/ops/projection.js"
     },
     "./measure": {
-      "source": "./src/measure/index.ts",
+      "@culmjs/source": "./src/measure/index.ts",
       "types": "./dist/measure/index.d.ts",
       "default": "./dist/measure/index.js"
     }

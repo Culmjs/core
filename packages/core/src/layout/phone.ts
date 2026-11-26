@@ -1,12 +1,8 @@
 import { walk } from '../document/index.ts'
 import { groupOrder, runs } from '../document/tree.ts'
 import type { Box, FreeSlot, Layout, Node } from '../document/index.ts'
-import {
-  flagOf,
-  floating,
-  resolveFreeCollisions,
-  shownOn,
-} from './placement.ts'
+import { shownAtLayout } from '../document/visibility.ts'
+import { flagOf, floating, resolveFreeCollisions } from './placement.ts'
 
 const MIN_COL = 8
 const rows = (h: number) => Math.max(1, Math.ceil(h / 2))
@@ -235,7 +231,7 @@ export function effectiveFreeBoxes(
 ): Map<string, Box> {
   const flag = flagOf(l)
   const children = (free.children ?? [])
-    .filter(w => shownOn(w, l))
+    .filter(w => shownAtLayout(w, l))
     .map(w => (l === 'desktop' ? w : atTablet(w)))
   let boxes: Map<string, Box>
   if (l === 'phone') {

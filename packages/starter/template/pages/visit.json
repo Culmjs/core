@@ -19,7 +19,7 @@
         "id": "visithero",
         "title": "Come and see us",
         "lead": "We are on the corner of the street, next to the old tram stop.",
-        "buttonLabel": "Call us",
+        "buttonLabel": "Email us",
         "buttonLink": { "email": "hello@example.com" },
         "image": "street.svg"
       },

@@ -348,7 +348,8 @@ export const dropShadowText = (v: ShadowV) =>
     ? shadowText(v)
     : `${pxs(v.x, v.y, v.blur)} ${colorCss(v.color)}`
 const FONT_RE = /^(sys:(sans|serif|mono)|(cat|up):[A-Za-z0-9_-]{1,64})$/
-const ASSET_RE = /^[A-Za-z0-9_-]{1,64}$/
+const ASSET_RE =
+  /^(?:[A-Za-z0-9_-]{1,64}|gen\/[A-Za-z0-9_-]{1,64}\.(?:png|webp|jpg))$/
 
 // Key order here is the order declarations are written in.
 const SIDE_PROPS = [
@@ -455,9 +456,9 @@ export const PROPS = {
       typeof v === 'string' && ASSET_RE.test(v) ? v : undefined,
     css: (v: string, ctx: StyleCtx) => {
       const u = ctx.fileUrl(v)
-      return u
-        ? `background-image:url("${encodeURI(u).replace(/"/g, '%22')}");background-size:cover`
-        : ''
+      if (!u) return ''
+      const safe = typeof u.toWellFormed === 'function' ? u.toWellFormed() : u
+      return `background-image:url("${encodeURI(safe).replace(/"/g, '%22')}");background-size:cover`
     },
   },
   color: {
@@ -696,8 +697,12 @@ export const PROPS = {
     check: bool,
     css: (v: boolean) => `text-decoration:${v ? 'underline' : 'none'}`,
   },
-  // strike relies on underline coming earlier in PROPS: declCss merges the two line lists when both are on.
-  strike: flag('text-decoration-line:line-through'),
+  strike: {
+    forms: 'true or false',
+    example: true,
+    check: bool,
+    css: (v: boolean) => `text-decoration-line:${v ? 'line-through' : 'none'}`,
+  },
   underlineColor: {
     forms: COLOR_FORMS,
     example: 'brand',
@@ -1369,8 +1374,15 @@ export function declCss(d: Decl, ctx: StyleCtx, later = false): string {
       continue
     }
     let s = (PROPS[k].css as (v: unknown, c: StyleCtx) => string)(d[k], ctx)
-    if (k === 'strike' && d.underline && s)
-      s = 'text-decoration-line:underline line-through'
+    if (k === 'strike' && d.underline !== undefined) {
+      if (d.underline && d.strike)
+        s = 'text-decoration-line:underline line-through'
+      else if (d.underline && d.strike === false) s = ''
+      else if (!d.underline && d.strike === false && later)
+        s = 'text-decoration-line:none'
+    } else if (k === 'strike' && d.strike === false && !later) {
+      s = ''
+    }
     // ponytail: a phone borderWidth over a dashed base border draws solid; read the base layer if that matters.
     if (k === 'borderWidth' && !d.border && !SIDE_PROPS.some(x => d[x]))
       s += ';border-style:solid'
@@ -1447,6 +1459,7 @@ export function checkStyle(
   for (const key of Object.keys(s))
     if (key !== 'when' && !(STATES as readonly string[]).includes(key))
       problems.push(`style.${key} is not a style state`)
+  const BASE_ONLY = new Set(['appearAfter', 'reveal', 'side', 'fitWidth'])
   /** One layer's declarations: only properties the kind has, each held to its own check. */
   const layer = (label: string, d: Record<string, unknown>): Decl => {
     const clean: Record<string, unknown> = {}
@@ -1455,6 +1468,8 @@ export function checkStyle(
       if (v === undefined) continue
       if (!Object.hasOwn(PROPS, k))
         problems.push(`${label}.${k} is not a style property`)
+      else if (label !== 'style.base' && BASE_ONLY.has(k))
+        problems.push(`${label}.${k} applies on the base layer only`)
       else if (!allowed.has(k))
         problems.push(
           `${label}.${k} does not apply to ${kind}` +

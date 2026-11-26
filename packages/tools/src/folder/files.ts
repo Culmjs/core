@@ -141,7 +141,8 @@ export async function resolveFile(
 /** The bytes of a project file `assets/…` or `fonts/…` by the rule of `resolveFile`, or undefined. */
 export async function readAsset(dir: string, path: string) {
   const [base, ...rest] = path.split('/')
-  const real = await resolveFile(dir, base!, rest.join('/'))
+  if (base !== 'assets' && base !== 'fonts') return undefined
+  const real = await resolveFile(dir, base, rest.join('/'))
   return real ? readFile(real).catch(() => undefined) : undefined
 }
 

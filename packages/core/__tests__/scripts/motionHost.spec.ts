@@ -25,7 +25,7 @@ test('the complete invoked timeline is standalone, local, and within its raw cei
     [BASE_SCRIPT, OPEN_SCRIPT, EMAIL_SCRIPT, STATES_SCRIPT].map(s =>
       Buffer.byteLength(s),
     ),
-    [304, 105, 277, 1963],
+    [304, 105, 277, 2031],
   )
 })
 

@@ -83,7 +83,7 @@ export function measureNodes(
         )
       if (el.tagName === 'A' || el.tagName === 'BUTTON')
         node.tap = { w: box!.w, h: box!.h }
-      // Direct text only: one range per character gives the rendered lines and the longest one in characters.
+      // Visible text descendants excluding nested blocks, visually hidden text, and aria-hidden wrappers.
       let chars = 0
       // a word whose letters sit on two lines is broken; the ink's left and right edges catch a word too long for its box (it spills out)
       let broken = false,
@@ -91,14 +91,53 @@ export function measureNodes(
         ink0 = Infinity,
         ink1 = -Infinity
       const lines: { top: number; n: number }[] = []
-      for (const t of Array.from(el.childNodes)) {
-        if (t.nodeType !== TEXT || !(t.nodeValue || '').trim()) continue
+      const items: (Text | null)[] = []
+      const tw =
+        typeof doc.createTreeWalker === 'function' &&
+        !/^(NAV|DETAILS|LABEL|FORM|TABLE)$/.test(el.tagName) &&
+        !el.classList.contains('s-embed') &&
+        !el.classList.contains('s-plate')
+          ? doc.createTreeWalker(el, 5)
+          : null
+      if (tw) {
+        for (let cur: globalThis.Node | null; (cur = tw.nextNode());) {
+          if (cur.nodeType === 1) {
+            if ((cur as Element).tagName === 'BR') items.push(null)
+            continue
+          }
+          const t = cur as Text
+          const tp = t.parentElement
+          if (
+            tp &&
+            tp.closest('[data-id]') === el &&
+            !tp.closest('.s-vh,[aria-hidden="true"],.s-plate') &&
+            (tp === el ||
+              /^(SPAN|A|CODE|EM|STRONG|I|B|U|S|MARK|SMALL|SUB|SUP)$/.test(
+                tp.tagName,
+              )) &&
+            (t.nodeValue || '').trim()
+          )
+            items.push(t)
+        }
+      } else {
+        for (const t of Array.from(el.childNodes))
+          if (t.nodeType === TEXT && (t.nodeValue || '').trim())
+            items.push(t as Text)
+      }
+      for (const t of items) {
+        if (!t) {
+          wordTop = null
+          continue
+        }
         const s = t.nodeValue || ''
-        for (let i = 0; i < s.length; i++) {
+        for (let i = 0; i < s.length;) {
+          const cp = s.codePointAt(i)!
+          const step = cp > 0xffff ? 2 : 1
           range.setStart(t, i)
-          range.setEnd(t, i + 1)
+          range.setEnd(t, i + step)
           const q = range.getClientRects()[0]
-          const gap = /[\s-]/.test(s[i]) // a space or a hyphen may end a line without splitting a word
+          const gap = /[\s-]/.test(s.slice(i, i + step)) // a space or a hyphen may end a line without splitting a word
+          i += step
           if (!q || q.width < 0.1) {
             if (gap) wordTop = null
             continue // a collapsed space has no box

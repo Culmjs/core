@@ -120,6 +120,10 @@ export function htmlElements(
     for (const n of r.nodes ?? []) {
       if (n.type === 'comment') continue
       if (n.type === 'atrule' && n.name === 'media' && layer === 'style') {
+        if (/^\(\s*prefers-color-scheme\s*:\s*dark\s*\)$/i.test(n.params)) {
+          sheet(n, at, 'dark')
+          continue
+        }
         const width = /^\(\s*max-width\s*:\s*(\d+)px\s*\)$/i.exec(n.params)
         if (width) {
           const phone = +width[1]! <= 768,
@@ -140,7 +144,13 @@ export function htmlElements(
       }
       const ds = decls(n, at)
       for (const selector of n.selectors) {
-        const parts = selector.trim().split(/\s+/)
+        let selText = selector.trim()
+        let ruleLayer = layer
+        if (layer === 'style' && /:hover$/i.test(selText)) {
+          selText = selText.slice(0, -6)
+          ruleLayer = 'hover'
+        }
+        const parts = selText.split(/\s+/)
         if (
           !parts.every(
             s => s && /^(?:[a-z][\w-]*|\*)?(?:[.#][\w-]+)*$/i.test(s),
@@ -156,10 +166,10 @@ export function htmlElements(
         rules.push({
           parts: parts.map(s => s.match(/[.#][\w-]+|^[\w*-]+/g)!),
           rank:
-            (selector.match(/#/g)?.length ?? 0) * 10000 +
-            (selector.match(/\./g)?.length ?? 0) * 100 +
+            (selText.match(/#/g)?.length ?? 0) * 10000 +
+            (selText.match(/\./g)?.length ?? 0) * 100 +
             parts.filter(s => /^[a-z]/i.test(s)).length,
-          layer,
+          layer: ruleLayer,
           decls: ds,
         })
       }
@@ -312,7 +322,7 @@ export function htmlElements(
       )
         continue
       if (
-        l !== 'style' &&
+        (l === 'phone' || l === 'tablet') &&
         ds.get((l === 'phone' ? 'tablet' : 'style') + ':' + k)?.value === value
       )
         continue
@@ -540,8 +550,10 @@ export function htmlElements(
     )
     const page = body(content),
       ls = styles(b)
+    const bp: Record<string, unknown> = {}
+    for (const [l, d] of Object.entries(ls)) bp[l] = layoutDecl(d)
     if (
-      Object.keys(ls).length &&
+      Object.keys(bp).length &&
       (part('header').length || part('footer').length)
     )
       warn(
@@ -555,7 +567,7 @@ export function htmlElements(
         'Page',
         loc(b),
         title ? { title } : {},
-        Object.keys(ls).length ? [element('Column', loc(b), ls, page)] : page,
+        Object.keys(bp).length ? [element('Column', loc(b), bp, page)] : page,
       ),
     ]
   }

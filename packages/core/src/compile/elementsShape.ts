@@ -1,7 +1,24 @@
-import { type Color, type Node, type ShapeGeometry } from '../document/index.ts'
+import {
+  type Color,
+  type FontRef,
+  type Node,
+  type ShapeGeometry,
+  type ShapePaint,
+  type ShapeStroke,
+} from '../document/index.ts'
+import { lowerSceneGeometry, type LoweredPrimitive } from '../document/scene.ts'
 import { checkColor, colorCss } from '../style/decl.ts'
+import { fontFamily, type SiteFonts } from '../style/fonts.ts'
 import { geometryBad } from '../validate/tree.ts'
-import { domId, el, type Attrs, type Build } from './elementsBase.ts'
+import {
+  SAFE_ID,
+  domId,
+  el,
+  stateAttrs,
+  type Attrs,
+  type Build,
+  type ElementCtx,
+} from './elementsBase.ts'
 import { type HtmlNode } from './html.ts'
 import { partPaint, type PartPaint as How } from '../document/shapePaint.ts'
 
@@ -67,50 +84,89 @@ type Paint = {
   style: string
   fill: string
   defs?: HtmlNode
+  defItems?: HtmlNode[]
   colors: string[]
 }
 
-/** The paint of a shape as inline style (a site colour is a CSS variable, which an attribute can't read), and the gradient it needs. */
-function paint(id: string, p: Record<string, unknown>, line: boolean): Paint {
+/** The paint of a shape as inline style (a site colour is a CSS variable, which an attribute can't read), and the gradient/filter it needs. */
+function paint(
+  id: string,
+  p: Record<string, unknown>,
+  line: boolean,
+  defaultFill: ShapePaint = 'brand',
+): Paint {
   const out: string[] = [],
-    colors: string[] = []
+    colors: string[] = [],
+    defItems: HtmlNode[] = []
   const css = (c: Color) => {
     const v = colorCss(c)
     colors.push(v)
     return v
   }
-  let defs: HtmlNode | undefined
-  const f = p.fill
+  const f = p.fill === undefined ? defaultFill : p.fill
   if (line || f === 'none') out.push('fill:none')
-  else if (typeof f === 'object' && f !== null && 'from' in f) {
-    const gr = f as { from: unknown; to: unknown; angle?: unknown }
-    const from = asColor(gr.from),
-      to = asColor(gr.to)
-    const angle = typeof gr.angle === 'number' ? gr.angle : 180
-    const s = Math.sin((angle * Math.PI) / 180),
-      c = Math.cos((angle * Math.PI) / 180)
-    const gid = safeId(id, 'g'),
-      pc = (x: number) => `${r2(x * 100)}%`
+  else if (
+    typeof f === 'object' &&
+    f !== null &&
+    ('from' in f || 'stops' in f) &&
+    !('style' in f)
+  ) {
+    const gr = f as {
+      from?: unknown
+      to?: unknown
+      stops?: { color: unknown; at: number; alpha?: number }[]
+      angle?: unknown
+      radial?: [number, number, number]
+    }
+    const gid = safeId(id, 'g')
+    const pc = (x: number) => `${r2(x * 100)}%`
+    const stops =
+      Array.isArray(gr.stops) && gr.stops.length >= 2
+        ? gr.stops.map(s =>
+            el('stop', {
+              offset: `${r2(s.at)}%`,
+              style: `stop-color:${css(asColor(s.color) ?? 'brand')}${s.alpha !== undefined && s.alpha < 1 ? `;stop-opacity:${r2(s.alpha)}` : ''}`,
+            }),
+          )
+        : [
+            el('stop', {
+              offset: 0,
+              style: `stop-color:${css(asColor(gr.from) ?? 'brand')}`,
+            }),
+            el('stop', {
+              offset: 1,
+              style: `stop-color:${css(asColor(gr.to) ?? 'brand')}`,
+            }),
+          ]
     out.push(`fill:url(#${gid})`)
-    defs = el('defs', {}, [
-      el(
-        'lineargradient',
-        {
-          id: gid,
-          x1: pc(0.5 - s / 2),
-          y1: pc(0.5 + c / 2),
-          x2: pc(0.5 + s / 2),
-          y2: pc(0.5 - c / 2),
-        },
-        [
-          el('stop', {
-            offset: 0,
-            style: `stop-color:${css(from ?? 'brand')}`,
-          }),
-          el('stop', { offset: 1, style: `stop-color:${css(to ?? 'brand')}` }),
-        ],
-      ),
-    ])
+    if (Array.isArray(gr.radial) && gr.radial.length === 3) {
+      const [rx, ry, rr] = gr.radial
+      const pct = (v: number) => `${r2(v <= 2 ? v * 100 : v)}%`
+      defItems.push(
+        el(
+          'radialgradient',
+          { id: gid, cx: pct(rx), cy: pct(ry), r: pct(rr) },
+          stops,
+        ),
+      )
+    } else {
+      const angle = typeof gr.angle === 'number' ? gr.angle : 180
+      const s = Math.sin((angle * Math.PI) / 180),
+        c = Math.cos((angle * Math.PI) / 180)
+      defItems.push(
+        el(
+          'lineargradient',
+          {
+            id: gid,
+            x1: pc(0.5 - s / 2),
+            y1: pc(0.5 + c / 2),
+            x2: pc(0.5 + s / 2),
+            y2: pc(0.5 - c / 2),
+          },
+          stops,
+        ),
+      )
+    }
   } else out.push(`fill:${css(asColor(f) ?? 'brand')}`)
   const s = p.stroke as
     { color?: unknown; width?: unknown; dash?: unknown } | undefined
@@ -125,17 +181,84 @@ function paint(id: string, p: Record<string, unknown>, line: boolean): Paint {
       out.push(`stroke-dasharray:${stroke.dash.join(' ')}`)
   }
   if (typeof p.opacity === 'number') out.push(`opacity:${p.opacity}`)
+  const filters: string[] = []
   // `--s-shd-<id>` is the site shadow without its spread (written by the look's variables), as drop-shadow() takes
   if (typeof p.shadow === 'string' && /^[a-z0-9-]{1,32}$/.test(p.shadow)) {
     colors.push(`var(--s-shd-${p.shadow})`)
-    out.push(`filter:drop-shadow(var(--s-shd-${p.shadow}))`)
+    filters.push(`drop-shadow(var(--s-shd-${p.shadow}))`)
   }
-  return { style: out.join(';'), fill: out[0]!, defs, colors }
+  const hasBlur = typeof p.blur === 'number' && p.blur > 0
+  const hasGrain = typeof p.grain === 'number' && p.grain > 0
+  if (hasBlur || hasGrain) {
+    const fid = safeId(id, 'f')
+    const fKids: HtmlNode[] = []
+    if (hasBlur)
+      fKids.push(
+        el('fegaussianblur', {
+          in: 'SourceGraphic',
+          stddeviation: r2(p.blur as number),
+          result: 'blurred',
+        }),
+      )
+    if (hasGrain) {
+      const alpha = r2(Math.min(1, Math.max(0, p.grain as number)) * 0.45)
+      fKids.push(
+        el('feturbulence', {
+          type: 'fractalNoise',
+          basefrequency: '0.85',
+          numoctaves: '3',
+          seed: '7',
+          result: 'noise',
+        }),
+        el('fecolormatrix', {
+          type: 'matrix',
+          in: 'noise',
+          values: `0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ${alpha} 0`,
+          result: 'grain',
+        }),
+        el('fecomposite', {
+          in: 'grain',
+          in2: hasBlur ? 'blurred' : 'SourceGraphic',
+          operator: 'atop',
+          result: 'clipped',
+        }),
+        el('feblend', {
+          mode: 'multiply',
+          in: hasBlur ? 'blurred' : 'SourceGraphic',
+          in2: 'clipped',
+        }),
+      )
+    }
+    defItems.push(el('filter', { id: fid }, fKids))
+    filters.push(`url(#${fid})`)
+  }
+  if (filters.length) out.push(`filter:${filters.join(' ')}`)
+  return {
+    style: out.join(';'),
+    fill: out[0]!,
+    defs: defItems.length ? el('defs', {}, defItems) : undefined,
+    defItems,
+    colors,
+  }
 }
 
 /** The CSS a shape's paint points at, as text: the style compiler reads it to write the site colours and shadows the page uses. */
 export function shapeRefs(p: Record<string, unknown>): string {
-  return paint('x', p, false).colors.join(' ')
+  const colors = [...paint('x', p, false).colors]
+  const g = p.geometry as ShapeGeometry | undefined
+  if (g && typeof g === 'object') {
+    const scene = lowerSceneGeometry(g, p.marks, 'x')
+    if (scene)
+      for (const m of scene.primitives) {
+        if ('fill' in m && m.fill !== undefined)
+          colors.push(...paint('x', { fill: m.fill }, false).colors)
+        if ('stroke' in m && m.stroke !== undefined)
+          colors.push(
+            ...paint('x', { fill: 'none', stroke: m.stroke }, false).colors,
+          )
+      }
+  }
+  return colors.join(' ')
 }
 
 /** The immediate geometry of this shape, never a path inside its defs or a nested SVG. */
@@ -144,7 +267,164 @@ export const directPath = (shape?: HtmlNode) =>
     (e): e is HtmlNode => typeof e !== 'string' && e.tag === 'path',
   )
 
-type Part = { attr: Attrs; style: string[]; kids: HtmlNode[] }
+type Part = { attr: Attrs; style: string[]; kids: HtmlNode[]; defs: HtmlNode[] }
+
+function renderScenePrimitives(
+  shapeId: string,
+  primitives: LoweredPrimitive[],
+  parentPaint: { fill?: unknown; stroke?: unknown },
+  fonts?: SiteFonts,
+): { kids: HtmlNode[]; defs: HtmlNode[] } {
+  const kids: HtmlNode[] = []
+  const defs: HtmlNode[] = []
+  let needArrow = false
+  const arrowId = safeId(shapeId, 'arr')
+  const arrowStroke =
+    (
+      primitives.find(p => 'markerEnd' in p && p.markerEnd && 'stroke' in p) as
+        { stroke?: ShapeStroke } | undefined
+    )?.stroke?.color ?? 'muted'
+
+  primitives.forEach((m, i) => {
+    const pid = `${shapeId}-m${i}`
+    if (m.kind === 'text') {
+      const tp = paint(
+        pid,
+        { fill: m.fill ?? 'ink', opacity: m.opacity, blur: m.blur },
+        false,
+      )
+      if (tp.defItems?.length) defs.push(...tp.defItems)
+      const fam = m.font ? fontFamily(m.font as FontRef, fonts) : undefined
+      const style = [
+        tp.style,
+        `font-size:${m.size ?? 12}px`,
+        m.weight ? `font-weight:${m.weight}` : '',
+        fam ? `font-family:${fam}` : '',
+        m.baseline ? `dominant-baseline:${m.baseline}` : '',
+      ]
+        .filter(Boolean)
+        .join(';')
+      if (m.textPath) {
+        kids.push(
+          el(
+            'text',
+            {
+              'text-anchor': m.anchor ?? 'middle',
+              style,
+              ...(m.transform ? { transform: m.transform } : {}),
+            },
+            [
+              el(
+                'textpath',
+                {
+                  href: `#${m.textPath}`,
+                  startoffset: m.startOffset ?? '50%',
+                },
+                [m.text],
+              ),
+            ],
+          ),
+        )
+      } else {
+        kids.push(
+          el(
+            'text',
+            {
+              x: m.x,
+              y: m.y,
+              'text-anchor': m.anchor ?? 'start',
+              style,
+              ...(m.transform ? { transform: m.transform } : {}),
+            },
+            [m.text],
+          ),
+        )
+      }
+      return
+    }
+    if (m.kind === 'path' && m.pathId) {
+      defs.push(el('path', { id: m.pathId, d: m.d }))
+      return
+    }
+    const isLine = m.kind === 'line'
+    const fallbackFill =
+      'fill' in m && m.fill !== undefined
+        ? m.fill
+        : parentPaint.fill !== undefined
+          ? (parentPaint.fill as ShapePaint)
+          : 'brand'
+    const mp = paint(
+      pid,
+      {
+        fill: isLine ? 'none' : fallbackFill,
+        stroke:
+          'stroke' in m ? (m.stroke ?? parentPaint.stroke) : parentPaint.stroke,
+        opacity: m.opacity,
+        blur: m.blur,
+      },
+      isLine,
+    )
+    if (mp.defItems?.length) defs.push(...mp.defItems)
+    const common: Attrs = {
+      style: mp.style,
+      ...(m.transform ? { transform: m.transform } : {}),
+    }
+    if ('markerEnd' in m && m.markerEnd) {
+      needArrow = true
+      common['marker-end'] = `url(#${arrowId})`
+    }
+    switch (m.kind) {
+      case 'rect':
+        kids.push(
+          el('rect', {
+            x: m.x,
+            y: m.y,
+            width: m.w,
+            height: m.h,
+            ...(m.r ? { rx: m.r } : {}),
+            ...common,
+          }),
+        )
+        break
+      case 'ellipse':
+        kids.push(
+          el('ellipse', { cx: m.cx, cy: m.cy, rx: m.rx, ry: m.ry, ...common }),
+        )
+        break
+      case 'line':
+        kids.push(
+          el('line', { x1: m.x1, y1: m.y1, x2: m.x2, y2: m.y2, ...common }),
+        )
+        break
+      case 'path':
+        kids.push(el('path', { d: m.d, ...common }))
+        break
+    }
+  })
+  if (needArrow) {
+    defs.push(
+      el(
+        'marker',
+        {
+          id: arrowId,
+          viewBox: '0 0 10 10',
+          refX: '9',
+          refY: '5',
+          markerWidth: '6',
+          markerHeight: '6',
+          orient: 'auto-start-reverse',
+        },
+        [
+          el('path', {
+            d: 'M 0 1.5 L 9 5 L 0 8.5 z',
+            style: `fill:${colorCss(arrowStroke)}`,
+          }),
+        ],
+      ),
+    )
+  }
+  return { kids, defs }
+}
 
 /** A rounded rectangle of a known size as a path, each corner its own radius (held to half the short side). */
 function roundRect(w: number, h: number, radius: number | number[]): string {
@@ -164,17 +444,20 @@ function geometry(
   pt: Paint,
   size?: [number, number],
   how: How = 'own',
-  rendered?: Map<Node, HtmlNode>,
+  ctx?: ElementCtx,
 ): Part {
   const attr: Attrs = {},
     style: string[] = [],
-    kids: HtmlNode[] = []
+    kids: HtmlNode[] = [],
+    defs: HtmlNode[] = []
+  const scene = lowerSceneGeometry(g, p.marks, w.id)
   if (['rect', 'ellipse', 'line'].includes(g.type)) {
     if (!size)
       style.push(`--s-ar:${(('view' in g && g.view) || [1, 1]).join('/')}`)
   } else {
-    const [vw, vh] =
-      g.type === 'path' || g.type === 'group'
+    const [vw, vh] = scene
+      ? scene.view
+      : g.type === 'path' || g.type === 'group'
         ? (g.view ?? [100, 100])
         : [100, 100]
     attr.viewBox = `0 0 ${vw} ${vh}`
@@ -184,6 +467,20 @@ function geometry(
         : p.fit === 'stretch'
           ? 'none'
           : 'xMidYMid meet'
+  }
+  if (scene) {
+    const rendered = renderScenePrimitives(
+      w.id,
+      scene.primitives,
+      {
+        fill: p.fill,
+        stroke: p.stroke,
+      },
+      ctx?.fonts,
+    )
+    kids.push(...rendered.kids)
+    defs.push(...rendered.defs)
+    return { attr, style, kids, defs }
   }
   switch (g.type) {
     case 'rect': {
@@ -241,10 +538,10 @@ function geometry(
       kids.push(el('path', { d: g.d }))
       break
     case 'group':
-      kids.push(...groupKids(w, g, pt, how, rendered))
+      kids.push(...groupKids(w, g, pt, how, ctx))
       break
   }
-  return { attr, style, kids }
+  return { attr, style, kids, defs }
 }
 
 const validGeometry = (p: Record<string, unknown>) =>
@@ -254,14 +551,16 @@ const validGeometry = (p: Record<string, unknown>) =>
  * One part of a group at its slot, a nested svg. `own` keeps its paint, `bare` takes the group's, `cut` is black for a mask.
  * Ids come from the part's own (unrolled) id, so a repeated row or a component copy keeps its own gradient.
  */
-function part(c: Node, how: How, rendered?: Map<Node, HtmlNode>): HtmlNode {
+function part(c: Node, how: How, ctx?: ElementCtx): HtmlNode {
   const cp = (c.props ?? {}) as Record<string, unknown>
   const g = validGeometry(cp)
   const sl = c.slot as { x?: number; y?: number; w?: number; h?: number }
   const pt = paint(c.id, cp, g.type === 'line')
-  const geo = geometry(c, cp, g, pt, [sl.w ?? 0, sl.h ?? 0], how, rendered)
+  const geo = geometry(c, cp, g, pt, [sl.w ?? 0, sl.h ?? 0], how, ctx)
   const own =
     how === 'own' ? pt.style : how === 'cut' ? 'fill:#000;stroke:none' : ''
+  const partDefs =
+    how === 'own' ? [...(pt.defItems ?? []), ...geo.defs] : geo.defs
   const svg = el(
     'svg',
     {
@@ -269,12 +568,17 @@ function part(c: Node, how: How, rendered?: Map<Node, HtmlNode>): HtmlNode {
       y: sl.y,
       width: sl.w,
       height: sl.h,
+      class: c.hide ? ctx?.classOf.get(c.id) : undefined,
+      'data-id': ctx?.mode === 'edit' ? c.id : undefined,
+      id:
+        ctx?.targets?.has(c.id) && SAFE_ID.test(c.id) ? domId(c.id) : undefined,
+      ...(how === 'cut' ? {} : stateAttrs(c)),
       ...geo.attr,
       style: [...geo.style, own].filter(Boolean).join(';') || undefined,
     },
-    [how === 'own' ? pt.defs : undefined, ...geo.kids],
+    [partDefs.length ? el('defs', {}, partDefs) : undefined, ...geo.kids],
   )
-  rendered?.set(c, svg)
+  ctx?.rendered?.set(c, svg)
   return svg
 }
 
@@ -284,11 +588,11 @@ function groupKids(
   g: Extract<ShapeGeometry, { type: 'group' }>,
   pt: Paint,
   how: How = 'own',
-  rendered?: Map<Node, HtmlNode>,
+  ctx?: ElementCtx,
 ): HtmlNode[] {
   const kids = w.children ?? []
   const child = (c: Node, i: number) =>
-    part(c, partPaint(g.combine, i, how), rendered)
+    part(c, partPaint(g.combine, i, how), ctx)
   // inside a union or a subtract the outer paint rules: an inner group writes none of its own, and its parts take the outer mode
   const fill = how === 'own' ? { style: pt.fill } : {}
   // ponytail: a gradient on a union or subtract is per part (objectBoundingBox); one ramp across the group needs userSpaceOnUse bounds in the group's view
@@ -329,9 +633,15 @@ function groupKids(
 export function shapeElement(b: Build): HtmlNode {
   const { w, p, attrs } = b
   const g = validGeometry(p)
-  const pt = paint(w.id, p, g.type === 'line')
-  const geo = geometry(w, p, g, pt, undefined, 'own', b.ctx.rendered)
+  const scene = lowerSceneGeometry(g, p.marks, w.id)
+  const pt = paint(
+    w.id,
+    scene ? { ...p, fill: p.fill ?? 'none' } : p,
+    g.type === 'line',
+  )
+  const geo = geometry(w, p, g, pt, undefined, 'own', b.ctx)
   const label = typeof p.label === 'string' && p.label ? p.label : undefined
+  const allDefs = [...(pt.defItems ?? []), ...geo.defs]
   return el(
     'svg',
     {
@@ -340,8 +650,22 @@ export function shapeElement(b: Build): HtmlNode {
       role: label ? 'img' : undefined,
       'aria-label': label,
       'aria-hidden': label ? undefined : 'true',
-      style: [...geo.style, pt.style].join(';'),
+      style:
+        [
+          ...geo.style,
+          ...(scene &&
+          !p.fill &&
+          !p.stroke &&
+          p.opacity === undefined &&
+          !p.blur &&
+          !p.grain &&
+          !p.shadow
+            ? []
+            : [pt.style]),
+        ]
+          .filter(Boolean)
+          .join(';') || undefined,
     },
-    [pt.defs, ...geo.kids],
+    [allDefs.length ? el('defs', {}, allDefs) : undefined, ...geo.kids],
   )
 }

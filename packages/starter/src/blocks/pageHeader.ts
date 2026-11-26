@@ -28,7 +28,9 @@ const tree = (centered: boolean): Node => {
       centered
         ? { ...COLUMN, align: 'center', gap: step('s') }
         : { ...COLUMN, align: 'center', justify: 'between', wrap: true },
-      { direction: 'column', align: 'start' },
+      centered
+        ? { direction: 'column', align: 'center' }
+        : { direction: 'column', align: 'start' },
     )
   return {
     id: 'root',

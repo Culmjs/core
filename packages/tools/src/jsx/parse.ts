@@ -45,13 +45,13 @@ export const linkOf = (h: string): Record<string, string> =>
         : { url: h }
 
 export class JsxError extends Error {
-  constructor(
-    message: string,
-    readonly at: Loc,
-    /** The element path the error belongs to, when known (set by the tree builder). */
-    readonly path?: string,
-  ) {
+  readonly at: Loc
+  /** The element path the error belongs to, when known (set by the tree builder). */
+  readonly path?: string
+  constructor(message: string, at: Loc, path?: string) {
     super(message)
+    this.at = at
+    this.path = path
   }
 }
 
@@ -107,6 +107,9 @@ export function parseJsx(src: string): El[] {
         const e = src.indexOf('*/', i + 2)
         if (e < 0) fail('A comment is not closed.')
         i = e + 2
+      } else if (src.startsWith('//', i)) {
+        const e = src.indexOf('\n', i + 2)
+        i = e < 0 ? src.length : e + 1
       } else return
     }
   }
@@ -406,7 +409,26 @@ export function parseJsx(src: string): El[] {
       return el
     }
     const joined = pieces.map(p => p.text).join('')
-    const text = pieces.some(p => !p.raw) ? joined : joined.trim()
+    let text = joined.trim()
+    if (pieces.some(p => !p.raw)) {
+      const first = pieces.findIndex(p => !p.raw)
+      const last = pieces.findLastIndex(p => !p.raw)
+      const head = pieces
+        .slice(0, first)
+        .map(p => p.text)
+        .join('')
+        .trimStart()
+      const mid = pieces
+        .slice(first, last + 1)
+        .map(p => p.text)
+        .join('')
+      const tail = pieces
+        .slice(last + 1)
+        .map(p => p.text)
+        .join('')
+        .trimEnd()
+      text = head + mid + tail
+    }
     if (text !== '') el.text = text
     return el
   }

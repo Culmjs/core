@@ -162,11 +162,15 @@ function textItems(): Item[] {
     }
     // WCAG 1.4.3 leaves inactive controls out.
     if (el.closest(':disabled')) return
-    const fgc =
-      parseColor(cs.getPropertyValue('-webkit-text-fill-color')) ||
-      parseColor(cs.color)
+    const isSvg = el.namespaceURI === 'http://www.w3.org/2000/svg'
+    const fgc = isSvg
+      ? cs.fill === 'none'
+        ? null
+        : parseColor(cs.fill)
+      : parseColor(cs.getPropertyValue('-webkit-text-fill-color')) ||
+        parseColor(cs.color)
     if (!fgc) return
-    let sampled = false
+    let sampled = isSvg
     const layers: RGBA[] = []
     let opaque = false
     for (let k = at; k < stack.length && !opaque; k++) {
@@ -266,7 +270,7 @@ function textItems(): Item[] {
 }
 
 const HIDE_TEXT =
-  '*,*::before,*::after{color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important;text-decoration:none!important;caret-color:transparent!important}text,tspan{fill:transparent!important;stroke:transparent!important}'
+  '*,*::before,*::after{color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important;text-decoration:none!important;caret-color:transparent!important}text,tspan,textPath{fill:transparent!important;stroke:transparent!important}'
 /** Chrome's screenshots stop being reliable far below this. */
 const MAX_HEIGHT = 16000
 
@@ -302,26 +306,42 @@ async function pixelsUnder(page: Page, rects: Rect[]): Promise<string[][]> {
     const [w, h] = await page.evaluate<[number, number]>(
       '[Math.max(document.documentElement.scrollWidth, innerWidth), document.documentElement.scrollHeight]',
     )
-    const img = decodePng(
-      await page.screenshot({ x: 0, y: 0, w, h: Math.min(h, MAX_HEIGHT) }),
-    )
-    return rects.map(([l, t, r, b]) => {
+    const tiles = new Map<number, ReturnType<typeof decodePng>>()
+    const getTile = async (tileIdx: number) => {
+      let img = tiles.get(tileIdx)
+      if (!img) {
+        const y0 = tileIdx * MAX_HEIGHT
+        const th = Math.min(MAX_HEIGHT, Math.max(1, h - y0))
+        img = decodePng(await page.screenshot({ x: 0, y: y0, w, h: th }))
+        tiles.set(tileIdx, img)
+      }
+      return img
+    }
+    const results: string[][] = []
+    for (const [l, t, r, b] of rects) {
       const out = new Set<string>()
       for (let i = 0; i <= 8; i++)
         for (let j = 0; j <= 2; j++) {
+          const cy = Math.min(
+            Math.max(h - 1, 0),
+            Math.max(0, Math.round(t + ((b - t) * (j + 0.5)) / 3)),
+          )
+          const tileIdx = Math.floor(cy / MAX_HEIGHT)
+          const img = await getTile(tileIdx)
           const x = Math.min(
             img.width - 1,
             Math.max(0, Math.round(l + ((r - l) * i) / 8)),
           )
           const y = Math.min(
             img.height - 1,
-            Math.max(0, Math.round(t + ((b - t) * (j + 0.5)) / 3)),
+            Math.max(0, cy - tileIdx * MAX_HEIGHT),
           )
           const o = (y * img.width + x) * 4
           out.add(hex([img.rgba[o]!, img.rgba[o + 1]!, img.rgba[o + 2]!]))
         }
-      return [...out]
-    })
+      results.push([...out])
+    }
+    return results
   } finally {
     await page.evaluate("document.getElementById('culm-hide-text')?.remove()")
   }

@@ -101,7 +101,7 @@ async function all(
 
 const base = () => siteWith([text('t1', 'One')])
 
-test('the server lists exactly eleven tools: describe, read, write, find, catalogue, plan, apply, measure, diff, restore, build', async () => {
+test('the server lists exactly twelve tools: describe, read, write, find, catalogue, plan, apply, measure, diff, restore, build, render', async () => {
   const { client } = await connect(base())
   const { tools } = await client.listTools()
   assert.deepEqual(tools.map(t => t.name).sort(), [
@@ -114,6 +114,7 @@ test('the server lists exactly eleven tools: describe, read, write, find, catalo
     'measure',
     'plan',
     'read',
+    'render',
     'restore',
     'write',
   ])

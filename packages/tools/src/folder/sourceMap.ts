@@ -38,8 +38,8 @@ const SITE_KEYS = [
 /** What the loader recorded, as the lookups of {@link SourceMap}. `at` finds a place in a parsed file. */
 export type Recorded = {
   origins: Map<string, Origin>
-  /** node id -> its tree; a document tree wins over a component */
-  trees: Map<string, TreeRef>
+  /** node id -> its trees; document trees come before components */
+  trees: Map<string, TreeRef[]>
   /** page id -> file, in the order of the pages list */
   pages: Map<string, string>
   pieces: Map<string, string>
@@ -80,12 +80,31 @@ export function makeSourceMap(r: Recorded): SourceMap {
         : [...o.path, ...steps(field)],
     )
   }
-  // Ids are unique across the header, the footer and the pages; a component's parts are looked up last.
-  const treeOf = (id: string): TreeRef | undefined => {
+  // Ids are expected unique across header, footer and pages, though duplicates are preserved to avoid clobbering.
+  const treesOf = (id: string): TreeRef[] => {
     const segs = id.split('.')
     for (let k = segs.length; k >= 1; k--) {
-      const t = r.trees.get(segs.slice(0, k).join('.'))
-      if (t) return t
+      const list = r.trees.get(segs.slice(0, k).join('.'))
+      if (list?.length) return list
+    }
+    return []
+  }
+  const hintedTree = (
+    path?: string,
+  ): { tree: TreeRef; rest?: string } | undefined => {
+    if (!path) return undefined
+    const segs = path.split('.')
+    if (segs[0] === 'header' || segs[0] === 'footer')
+      return { tree: segs[0], rest: segs.slice(1).join('.') || undefined }
+    if (segs[0] === 'pages' && segs[1] !== undefined) {
+      const pageId = /^\d+$/.test(segs[1])
+        ? [...r.pages.keys()][+segs[1]]
+        : segs[1]
+      if (pageId)
+        return {
+          tree: { page: pageId },
+          rest: segs.slice(2).join('.') || undefined,
+        }
     }
     return undefined
   }
@@ -96,13 +115,22 @@ export function makeSourceMap(r: Recorded): SourceMap {
     pieceFile: id => r.pieces.get(id),
     locateProblem(p) {
       if (p.nodeId !== undefined) {
-        const tree = treeOf(p.nodeId)
+        const candidates = treesOf(p.nodeId)
+        const hint = hintedTree(p.path)
+        const tree =
+          (hint && candidates.find(c => treeKey(c) === treeKey(hint.tree))) ??
+          candidates[0]
+        const rawField =
+          hint &&
+          tree === candidates.find(c => treeKey(c) === treeKey(hint?.tree))
+            ? hint.rest
+            : p.path
         const where =
           tree &&
           locate(
             tree,
             p.nodeId,
-            p.path?.startsWith('parts.') ? undefined : p.path,
+            rawField?.startsWith('parts.') ? undefined : rawField,
           )
         return where ? { ...p, ...where } : p
       }

@@ -5,12 +5,16 @@ The `culm` command line and the tools behind it: a folder of JSON files becomes 
 ## Commands
 
 ```
+culm init <folder> [--blank] [--from folder]
+                                    write a bakery starter (or minimal single-page site with --blank)
 culm dev [--port n]                 serve the site on 127.0.0.1 (default port 4321), recompile on save
 culm build                          write the compiled site to the output folder
-culm check [--chrome path]          validate, then measure every page in Chrome
+culm check [--chrome path] [--classes 1,2,3]
+                                    validate, then measure every page in Chrome
 culm expand <file> <id>             rewrite the short form <id> in <file> as its nodes
 culm schema                         write culm.schema.json in the project folder
-culm mcp [--port n] [--chrome path] serve the site to an agent over standard input and output;
+culm mcp [--port n] [--chrome path] [--json-ops | --full]
+                                    serve 5 JSON tools by default (--full exposes all 11 tools) over stdio;
                                     --port also opens a local port with a token
 ```
 

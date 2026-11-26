@@ -328,7 +328,12 @@ export function diffAll(
     dirty.has('footer') ||
     touches(tb.get('header')) ||
     touches(tb.get('footer'))
-  const everyPage = !same(da.look, db.look) || !same(da.styles, db.styles)
+  const everyPage =
+    !same(da.look, db.look) ||
+    !same(da.styles, db.styles) ||
+    !same(da.fonts, db.fonts) ||
+    !same(da.languages, db.languages) ||
+    !same(da.centreMaxWidth, db.centreMaxWidth)
   const pages = [...B.pages.values()]
     .filter(
       p =>

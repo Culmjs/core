@@ -61,6 +61,99 @@ const alive = (pid: unknown) => {
   }
 }
 
+async function putAtomic(culm: string, path: string, body: string) {
+  const tmp = join(culm, 'tmp', randomUUID())
+  await mkdir(dirname(tmp), { recursive: true })
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(tmp, body)
+  await rename(tmp, path)
+}
+
+async function acquireLock(
+  culm: string,
+  now: () => number,
+): Promise<() => Promise<void>> {
+  const lockPath = join(culm, 'lock')
+  await mkdir(culm, { recursive: true })
+  for (;;) {
+    const token = randomUUID()
+    try {
+      const fh = await open(lockPath, 'wx')
+      await fh.writeFile(
+        JSON.stringify({ pid: process.pid, time: now(), token }),
+      )
+      await fh.close()
+      return async () => {
+        const cur = await readFile(lockPath, 'utf8').catch(() => '')
+        if (cur.includes(token)) await rm(lockPath, { force: true })
+      }
+    } catch (e) {
+      if (code(e) !== 'EEXIST') throw e
+    }
+    const cur = await readFile(lockPath, 'utf8').catch(() => undefined)
+    if (cur === undefined) continue
+    let info: { pid?: unknown; time?: number }
+    try {
+      info = JSON.parse(cur)
+    } catch {
+      const m = await stat(lockPath).then(
+        s => s.mtimeMs,
+        () => Infinity,
+      )
+      info = { time: m }
+    }
+    const stale = now() - (info.time ?? 0) > LOCK_STALE_MS || !alive(info.pid)
+    if (!stale) {
+      await sleep(20)
+      continue
+    }
+    const gone = join(culm, `lock.${randomUUID()}`)
+    try {
+      await rename(lockPath, gone)
+    } catch {
+      continue
+    }
+    if ((await readFile(gone, 'utf8').catch(() => '')) !== cur)
+      await link(gone, lockPath).catch(() => undefined)
+    await rm(gone, { force: true })
+  }
+}
+
+/** Runs `fn` while holding `.culm/lock`. Removes `.culm` again if it did not exist beforehand and is empty when done. */
+export async function withFolderLock<T>(
+  dir: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const culm = join(dir, '.culm')
+  const hadCulm = await access(culm).then(
+    () => true,
+    () => false,
+  )
+  const release = await acquireLock(culm, Date.now)
+  try {
+    return await fn()
+  } finally {
+    await release()
+    if (!hadCulm) {
+      await rm(join(culm, 'tmp'), { recursive: true, force: true }).catch(
+        () => {},
+      )
+      const rest = await readdir(culm).catch(() => ['keep'])
+      if (!rest.length)
+        await rm(culm, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+}
+
+/** Atomically writes `relPath` under `dir` via `.culm/tmp` and rename. */
+export async function writeAtomic(
+  dir: string,
+  relPath: string,
+  body: string,
+): Promise<void> {
+  await putAtomic(join(dir, '.culm'), join(dir, relPath), body)
+}
+
 /**
  * The history of a folder site in `.culm/` (spec item 44), behind the `SiteStore` interface. A folder is one site, so the site name
  * is ignored. Only `commit`, and recovery of an interrupted commit when the store is opened, write to `.culm/`.
@@ -79,7 +172,6 @@ export async function fileStore(
   const now = options.now ?? Date.now
   const hook = (n: number) => options.after?.(n)
   const culm = join(dir, '.culm')
-  const lockPath = join(culm, 'lock')
   const journalPath = join(culm, 'journal.json')
   /** The highest revision number this instance has reported or committed; a new history always starts above it. */
   let last = -1
@@ -102,13 +194,7 @@ export async function fileStore(
       () => false,
     )
   /** Writes through a temporary name and a rename. */
-  async function put(path: string, body: string) {
-    const tmp = join(culm, 'tmp', randomUUID())
-    await mkdir(dirname(tmp), { recursive: true })
-    await mkdir(dirname(path), { recursive: true })
-    await writeFile(tmp, body)
-    await rename(tmp, path)
-  }
+  const put = (path: string, body: string) => putAtomic(culm, path, body)
   const recPath = (n: number) => join(culm, 'revisions', `${n}.json`)
   const names = async (sub: string) =>
     readdir(join(culm, sub)).catch(() => [] as string[])
@@ -170,54 +256,7 @@ export async function fileStore(
   }
 
   // ------------------------------------------------------------ the lock
-  async function takeLock(): Promise<() => Promise<void>> {
-    await mkdir(culm, { recursive: true })
-    for (;;) {
-      const token = randomUUID()
-      try {
-        const fh = await open(lockPath, 'wx')
-        await fh.writeFile(
-          JSON.stringify({ pid: process.pid, time: now(), token }),
-        )
-        await fh.close()
-        return async () => {
-          const cur = await readFile(lockPath, 'utf8').catch(() => '')
-          if (cur.includes(token)) await rm(lockPath, { force: true })
-        }
-      } catch (e) {
-        if (code(e) !== 'EEXIST') throw e
-      }
-      const cur = await readFile(lockPath, 'utf8').catch(() => undefined)
-      if (cur === undefined) continue
-      let info: { pid?: unknown; time?: number }
-      try {
-        info = JSON.parse(cur)
-      } catch {
-        // being written, or torn: its age is the file's
-        const m = await stat(lockPath).then(
-          s => s.mtimeMs,
-          () => Infinity,
-        )
-        info = { time: m }
-      }
-      const stale = now() - (info.time ?? 0) > LOCK_STALE_MS || !alive(info.pid)
-      if (!stale) {
-        await sleep(20)
-        continue
-      }
-      // Exactly one contender's rename finds the file. If it moved a lock that was not the stale one we judged, give it back.
-      // ponytail: the give-back can lose to a third contender; a lock service would close that gap.
-      const gone = join(culm, `lock.${randomUUID()}`)
-      try {
-        await rename(lockPath, gone)
-      } catch {
-        continue
-      }
-      if ((await readFile(gone, 'utf8').catch(() => '')) !== cur)
-        await link(gone, lockPath).catch(() => undefined)
-      await rm(gone, { force: true })
-    }
-  }
+  const takeLock = () => acquireLock(culm, now)
 
   // ------------------------------------------------------- revisions, writes
   const hashes = (texts: Map<string, string>) =>
@@ -476,14 +515,24 @@ export async function fileStore(
           if (now1 !== (was.get(p) ?? null))
             return end<Refusal>({ ok: false, code: 'SOURCE_CONFLICT' })
         }
+        const next = new Map(mine)
+        for (const [p, t] of Object.entries(edits.write)) next.set(p, t)
+        for (const p of edits.remove) next.delete(p)
+        const verifyMap = new Map(next)
+        for (const f of loaded.files)
+          if (!covered(f.path)) verifyMap.set(f.path, f.text)
+        const verified = await loadFiles(verifyMap, registry)
+        if (!verified.doc || verified.problems.length)
+          return end<Refusal>({
+            ok: false,
+            code: 'SOURCE_CONFLICT',
+            problems: verified.problems,
+          })
         hook(4)
         // 5. the journal
         await put(journalPath, JSON.stringify({ paths }))
         hook(5)
         // 6. blobs, then each file through a temporary name and a rename
-        const next = new Map(mine)
-        for (const [p, t] of Object.entries(edits.write)) next.set(p, t)
-        for (const p of edits.remove) next.delete(p)
         await blobs(next)
         let hooked = false
         for (const [p, t] of Object.entries(edits.write)) {

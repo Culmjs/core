@@ -3,10 +3,13 @@
   "version": "0.0.0",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.18"
+  },
   "sideEffects": false,
   "exports": {
     ".": {
-      "source": "./src/index.ts",
+      "@culmjs/source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },

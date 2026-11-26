@@ -15,50 +15,91 @@
         "kind": "column",
         "name": "Opening hours",
         "slot": {},
+        "style": {
+          "base": { "padding": [40, 16, 40, 16], "align": "center" },
+          "phone": { "padding": [24, 16, 24, 16] }
+        },
         "children": [
           {
-            "id": "accent",
-            "kind": "shape",
-            "name": "Accent",
-            "slot": {},
-            "props": {
-              "geometry": { "type": "rect", "radius": 9999 },
-              "fill": "brand"
-            },
+            "id": "inner",
+            "kind": "column",
+            "name": "Inner",
+            "slot": { "align": "center" },
             "style": {
               "base": {
-                "width": { "n": 56, "unit": "px" },
-                "height": { "n": 5, "unit": "px" }
+                "width": "fill",
+                "maxWidth": { "n": 1100, "unit": "px" },
+                "gap": 12
               }
-            }
-          },
-          {
-            "id": "heading",
-            "kind": "text",
-            "name": "Heading",
-            "slot": {},
-            "required": true,
-            "props": { "level": "h2", "runs": [{ "text": "Opening hours" }] }
-          },
-          {
-            "id": "weekdays",
-            "kind": "text",
-            "name": "Weekdays",
-            "slot": {},
-            "props": {
-              "level": "p",
-              "runs": [{ "text": "Monday to Friday, 7 until 3" }]
-            }
-          },
-          {
-            "id": "weekend",
-            "kind": "text",
-            "name": "Weekend",
-            "slot": {},
-            "props": {
-              "level": "p",
-              "runs": [{ "text": "Saturday and Sunday, 8 until 2" }]
-            }
+            },
+            "children": [
+              {
+                "id": "accent",
+                "kind": "shape",
+                "name": "Accent",
+                "slot": {},
+                "props": {
+                  "geometry": { "type": "rect", "radius": 9999 },
+                  "fill": "brand"
+                },
+                "style": {
+                  "base": {
+                    "width": { "n": 56, "unit": "px" },
+                    "height": { "n": 5, "unit": "px" }
+                  }
+                }
+              },
+              {
+                "id": "heading",
+                "kind": "text",
+                "name": "Heading",
+                "slot": {},
+                "required": true,
+                "props": {
+                  "level": "h2",
+                  "runs": [{ "text": "Opening hours" }]
+                },
+                "style": {
+                  "base": {
+                    "size": 32,
+                    "weight": 700,
+                    "lineHeight": 1.2
+                  }
+                }
+              },
+              {
+                "id": "weekdays",
+                "kind": "text",
+                "name": "Weekdays",
+                "slot": {},
+                "props": {
+                  "level": "p",
+                  "runs": [{ "text": "Monday to Friday, 7 until 3" }]
+                },
+                "style": {
+                  "base": {
+                    "size": 17,
+                    "lineHeight": 1.6
+                  }
+                }
+              },
+              {
+                "id": "weekend",
+                "kind": "text",
+                "name": "Weekend",
+                "slot": {},
+                "props": {
+                  "level": "p",
+                  "runs": [{ "text": "Saturday and Sunday, 8 until 2" }]
+                },
+                "style": {
+                  "base": {
+                    "size": 17,
+                    "lineHeight": 1.6
+                  }
+                }
+              }
+            ]
           }
         ]
       }

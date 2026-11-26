@@ -98,3 +98,12 @@ test('an interlaced PNG and an unknown filter byte throw', () => {
     /unknown filter 5/,
   )
 })
+
+test('truncated PNG chunks and invalid dimensions throw', () => {
+  const valid = encode(2, 2, 4, noise(16), () => 0)
+  assert.throws(() => decodePng(valid.subarray(0, 14)), /Truncated/)
+  assert.throws(
+    () => decodePng(encode(0, 2, 4, [], () => 0)),
+    /Invalid PNG dimensions/,
+  )
+})

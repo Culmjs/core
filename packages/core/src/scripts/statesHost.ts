@@ -91,7 +91,7 @@ export function hostStates(
       } catch {
         return
       }
-      if (/^(https?|mailto):$/.test(p.protocol)) w.location.href = p.href
+      if (/^(https?|file|mailto):$/.test(p.protocol)) w.location.href = p.href
       return
     }
     const t = d.getElementById(a) as Media | null
@@ -120,7 +120,12 @@ export function hostStates(
           }
         })
       }
-      if (ev == 'click' || ev == 'submit') on(el, ev, f)
+      if (ev == 'click') on(el, ev, f)
+      else if (ev == 'submit')
+        on(el, ev, e => {
+          if (e && e.preventDefault) e.preventDefault()
+          f()
+        })
       else if (ev == 'hover') {
         const i = () => {
             if (!u) u = f()

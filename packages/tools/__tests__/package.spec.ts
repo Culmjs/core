@@ -75,4 +75,16 @@ test('the boundary also refuses ./../.. paths and dynamic imports, and allows an
       'packages/tools/src/a/b/probe.ts',
     ),
   )
+  assert.ok(
+    bad(
+      `export const f = () => import(\`node:fs\`)\n`,
+      'packages/starter/src/probe.mts',
+    ),
+  )
+  assert.ok(
+    bad(
+      `export const f = () => import(\`../../core/src/index.ts\`)\n`,
+      'packages/tools/src/probe.mts',
+    ),
+  )
 })

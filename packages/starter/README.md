@@ -15,7 +15,7 @@ A starter plug-in for Culm: one look, named site styles and eight general blocks
 
 Tokens: colours `ink #1c1917`, `canvas #fafaf9`, `brand #b45309`, `muted #57534e`, `line #e7e5e4`; text styles `eyebrow` 11, `body` 17, `lead` 20, `h3` 24, `h2` 32, `h1` 48 (a text range of 11 to 96); spacing `xs` 4, `s` 8, `m` 16, `l` 24, `xl` 40, `2xl` 64. Fonts are the system stacks only; the package ships no font file. Every heading and the navigation are required content.
 
-To begin a site:
+To begin a site (4-page bakery starter by default, or pass `--blank` for a minimal single-page site):
 
 ```sh
 npx @culmjs/tools init my-site

@@ -11,6 +11,7 @@ import {
 } from '@culmjs/core'
 import { plan } from '@culmjs/core/ops'
 import { ID_RE, isObj } from '../shared.ts'
+import { rewriteImageOps } from '../image/generate.ts'
 import { JsxError, type El } from './parse.ts'
 import { safeData, sourceElements, start, type Source } from './formats.ts'
 import { KINDS } from '@culmjs/core'
@@ -395,7 +396,7 @@ export function buildWrite(
   })
   const wantsOf = (list: El[], prefix: string) =>
     list.flatMap((e, i) => {
-      const w = want(e, i, prefix, errs, warns)
+      const w = want(e, i, prefix, errs, warns, registry)
       return w ? [w] : []
     })
 
@@ -403,11 +404,7 @@ export function buildWrite(
   let target = a.target
   if (
     a.append &&
-    (siteMode ||
-      a.target !== undefined ||
-      !a.page ||
-      ['header', 'footer'].includes(a.page) ||
-      !els.length)
+    (siteMode || a.target !== undefined || !a.page || !els.length)
   )
     return refuse(
       'append takes a page id and one or more section elements.',
@@ -555,7 +552,7 @@ export function buildWrite(
       if (typeof v === 'string')
         siteRefs.add(v.startsWith('google:') ? `up:${fontSlug(v.slice(7))}` : v)
   const needs = new Map<string, FontNeed | 'cat'>()
-  normalise(all, { doc, siteRefs, warns, needs })
+  normalise(all, { doc, registry, siteRefs, warns, needs })
 
   let site: Obj[] = []
   let siteAt: JsxError['at'] | undefined
@@ -587,7 +584,11 @@ export function buildWrite(
     const added = [...needs].map(([ref, n]) =>
       n === 'cat'
         ? ref
-        : { google: n.family, weights: [...n.weights].sort((x, y) => x - y) },
+        : {
+            google: n.family,
+            weights: [...n.weights].sort((x, y) => x - y),
+            ...(n.italic ? { italic: true } : {}),
+          },
     )
     const op = pre.find(o => o.op === 'setFonts')
     if (op) op.fonts = mergeFonts([...(op.fonts as unknown[]), ...added])
@@ -612,22 +613,23 @@ export function buildWrite(
       const root = doc[key]
       const stripped: Obj[] = []
       // the starter's root is padded, ruled and centred; the JSX cannot reach it, so what it draws is the author's: the first element fills the bar
-      for (const L of ['base', 'tablet', 'phone'] as const) {
-        const have = (root.style?.[L] ?? {}) as Obj
-        const decl = Object.fromEntries(
-          ['padding', 'border', 'align']
-            .filter(k => have[k] !== undefined)
-            .map(k => [k, null]),
-        )
-        if (Object.keys(decl).length)
-          stripped.push({
-            op: 'setStyle',
-            tree: key,
-            id: root.id,
-            layer: L,
-            decl,
-          })
-      }
+      if (!a.append)
+        for (const L of ['base', 'tablet', 'phone'] as const) {
+          const have = (root.style?.[L] ?? {}) as Obj
+          const decl = Object.fromEntries(
+            ['padding', 'border', 'align']
+              .filter(k => have[k] !== undefined)
+              .map(k => [k, null]),
+          )
+          if (Object.keys(decl).length)
+            stripped.push({
+              op: 'setStyle',
+              tree: key,
+              id: root.id,
+              layer: L,
+              decl,
+            })
+        }
       specs.push({ tree: key, root, pre: stripped, raw })
     } else {
       if (!ID_RE.test(key.page))
@@ -830,15 +832,18 @@ export function diagnose(
 }
 
 export const previewOps = (ops: Obj[]) =>
-  ops.map(o =>
-    o.op === 'setFonts'
-      ? {
-          ...o,
-          fonts: (o.fonts as unknown[]).map(f =>
-            isObj(f) && typeof f.google === 'string'
-              ? `up:${fontSlug(f.google)}`
-              : f,
-          ),
-        }
-      : o,
-  )
+  rewriteImageOps(
+    ops.map(o =>
+      o.op === 'setFonts'
+        ? {
+            ...o,
+            fonts: (o.fonts as unknown[]).map(f =>
+              isObj(f) && typeof f.google === 'string'
+                ? `up:${fontSlug(f.google)}`
+                : f,
+            ),
+          }
+        : o,
+    ),
+    new Map(),
+  ) as Obj[]

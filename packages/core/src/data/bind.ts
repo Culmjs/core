@@ -75,6 +75,7 @@ function node(w: Node, c: Pass, depth: number): Node | null {
   const out: Node = { ...w }
   delete out.repeat
   delete out.bind
+  delete out.showIf
   delete out.showIfAny
   if (w.props) out.props = { ...w.props }
   // Internal targets are renamed per copy, so each copy owns its programs.
@@ -84,11 +85,12 @@ function node(w: Node, c: Pass, depth: number): Node | null {
     for (const [k, ref] of Object.entries(w.bind)) {
       if (UNSAFE_FIELDS.includes(k) || k === 'runs') continue
       const v = readRef(ref, scope)
-      ;(out.props ??= {})[k] = (
-        k === 'link' ? { url: textOf(v) } : scalar(v)
-      ) as never
+      if (k === 'link') {
+        const url = textOf(v)
+        if (url || !out.props?.link) (out.props ??= {})[k] = { url } as never
+      } else (out.props ??= {})[k] = scalar(v) as never
       // a label or summary that comes from data is never a sample, whatever mark the stored node carries
-      if ((k === 'label' || k === 'summary') && out.props.sample === true)
+      if ((k === 'label' || k === 'summary') && out.props?.sample === true)
         out.props.sample = false
     }
   // A text with a connected value is data, whatever mark it carries.

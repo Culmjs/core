@@ -10,14 +10,17 @@
       "type": "text",
       "part": "line",
       "field": "text",
-      "default": "Open every day from 7 until 3"
+      "default": "Monday to Friday, 7 until 3 · Saturday and Sunday, 8 until 2"
     }
   ],
   "root": {
     "id": "card",
     "kind": "column",
     "name": "Visit",
-    "style": { "base": { "padding": [40, 16, 40, 16], "align": "center" } },
+    "style": {
+      "base": { "padding": [40, 16, 40, 16], "align": "center" },
+      "phone": { "padding": [24, 16, 24, 16] }
+    },
     "children": [
       {
         "id": "cardinner",
@@ -25,7 +28,11 @@
         "name": "Inner",
         "slot": { "align": "center" },
         "style": {
-          "base": { "width": "fill", "maxWidth": { "n": 1100, "unit": "px" } }
+          "base": {
+            "width": "fill",
+            "maxWidth": { "n": 1100, "unit": "px" },
+            "gap": 8
+          }
         },
         "children": [
           {
@@ -45,7 +52,12 @@
             "name": "Line",
             "props": {
               "level": "p",
-              "runs": [{ "text": "Open every day from 7 until 3" }]
+              "textStyle": "body",
+              "runs": [
+                {
+                  "text": "Monday to Friday, 7 until 3 · Saturday and Sunday, 8 until 2"
+                }
+              ]
             }
           }
         ]

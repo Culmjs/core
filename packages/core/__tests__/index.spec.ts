@@ -38,6 +38,7 @@ const PUBLIC_NAMES = [
   'checkSiteFont',
   'checkSiteStyles',
   'compareReports',
+  'compileFrame',
   'compilePage',
   'compileSite',
   'compileSubtree',

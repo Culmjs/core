@@ -5,7 +5,10 @@ import {
   FONTS,
   fontSlug,
   KINDS,
+  kindSpec,
   textRangeFor,
+  type KindSpec,
+  type Registry,
   type SiteDocument,
 } from '@culmjs/core'
 import { isObj } from '../shared.ts'
@@ -18,15 +21,23 @@ export type Warning = {
   jsx: { path: string; line: number; column: number }
 }
 /** A Google family the style names that the site does not have yet: the write adds it to the site's fonts (the server fetches it). */
-export type FontNeed = { family: string; slug: string; weights: Set<number> }
+export type FontNeed = {
+  family: string
+  slug: string
+  weights: Set<number>
+  italic?: boolean
+}
 export type Cx = {
   doc: SiteDocument
+  registry?: Registry
   /** Font refs the write's <Site fonts> will add. */
   siteRefs: Set<string>
   warns: Warning[]
   /** Fonts to add: `cat:slug` of the built-in catalogue, or a Google family. */
   needs: Map<string, FontNeed | 'cat'>
 }
+const kindDef = (kind: string, registry?: Registry): KindSpec | undefined =>
+  kindSpec(kind, registry?.kinds()) ?? KINDS[kind as keyof typeof KINDS]
 
 const HEX = (r: number, g: number, b: number, a = 1) =>
   '#' +
@@ -91,7 +102,7 @@ export function colour(v: unknown): string | undefined {
   if (/^rgb/i.test(m[1]!))
     return HEX(num(parts[0]!, 255), num(parts[1]!, 255), num(parts[2]!, 255), a)
   const [h, s, li] = [
-    n[0]! % 360,
+    ((n[0]! % 360) + 360) % 360,
     clampN(n[1]!, 0, 100) / 100,
     clampN(n[2]!, 0, 100) / 100,
   ]
@@ -466,6 +477,7 @@ function fontValue(x: Ctx, v: unknown): Out {
     const w = x.decl.weight
     if (typeof w === 'number' && w % 100 === 0 && w >= 100 && w <= 900)
       need.weights.add(w)
+    if (x.decl.italic === true || x.decl.italic === 'italic') need.italic = true
     c.needs.set(ref, need)
     x.note(`font "${family}" was added to the site (Google Fonts)`)
   }
@@ -570,9 +582,7 @@ function fix(x: Ctx, k: string, v: unknown): Out {
         +fluid[3]! >= +fluid[1]! &&
         +fluid[2]! > 0 &&
         +fluid[2]! <= 100 &&
-        KINDS[x.w.kind as keyof typeof KINDS].styles.includes(
-          'fluidSize' as never,
-        )
+        kindDef(x.w.kind, x.c.registry)?.styles.includes('fluidSize' as never)
       ) {
         const range = textRangeFor(x.c.doc.styles, x.w.kind, x.w.props.level)
         const bound = (s: string) =>
@@ -761,6 +771,8 @@ function fix(x: Ctx, k: string, v: unknown): Out {
     }
     case 'font':
       return fontValue(x, v)
+    case 'bgImage':
+      return isObj(v) && v.generate !== undefined ? v : undefined
     case 'justify':
     case 'align': {
       if (typeof v !== 'string') return undefined
@@ -796,20 +808,41 @@ function layer(
   decl: Obj,
   say: (m: string) => void,
 ): Obj {
+  const preDecl: Obj = { ...decl }
+  if (
+    preDecl.size === undefined &&
+    (decl['font-size'] ?? decl.fontSize) !== undefined
+  )
+    preDecl.size = decl['font-size'] ?? decl.fontSize
+  if (
+    preDecl.weight === undefined &&
+    (decl['font-weight'] ?? decl.fontWeight) !== undefined
+  )
+    preDecl.weight = decl['font-weight'] ?? decl.fontWeight
+  if (
+    preDecl.italic === undefined &&
+    (decl['font-style'] ?? decl.fontStyle) !== undefined
+  )
+    preDecl.italic = decl['font-style'] ?? decl.fontStyle
   const out: Obj = {}
   const x: Ctx = {
     c,
     w,
     layer: name,
-    decl,
+    decl: preDecl,
     out,
     note: m => say(`${layerOf(name)}: ${m}`),
   }
   let dividerColor: unknown
+  const here = kindDef(w.kind, c.registry)
   for (const [k0, v0] of Object.entries(decl)) {
     const camel = k0.replace(/-([a-z])/g, (_, ch: string) => ch.toUpperCase())
     const k = ALIAS[k0] ?? ALIAS[camel] ?? camel
     let v = v0
+    if (v === null) {
+      if (here && (here.styles as string[]).includes(k)) out[k] = null
+      continue
+    }
     if (
       k === 'bg' &&
       k0 === 'background' &&
@@ -836,8 +869,7 @@ function layer(
       continue
     }
     if (k !== k0) x.note(`${k0} is written ${k}`)
-    const here = KINDS[w.kind as keyof typeof KINDS]
-    if (!(here.styles as string[]).includes(k)) {
+    if (!here || !(here.styles as string[]).includes(k)) {
       if (k === 'bg' && w.kind === 'shape' && name === 'base') {
         const r = fix(x, 'bg', v)
         if (r !== DROP && w.props.fill === undefined) {
@@ -849,6 +881,7 @@ function layer(
         dividerColor = v
         x.note('color on a Divider is the colour of its line; set border color')
       } else if (
+        here &&
         Object.hasOwn(here.props, k) &&
         w.props[k] === undefined &&
         name === 'base'
@@ -917,6 +950,56 @@ const BASE_KEYS = [
   'invalid',
 ]
 
+const SHAPE_SHORT_TYPES = [
+  'scene',
+  'curve',
+  'arc',
+  'wave',
+  'chart',
+  'diagram',
+  'contours',
+  'stamp',
+] as const
+
+function strokeValue(v: unknown): unknown {
+  if (typeof v === 'string') {
+    const m = /^(\S+?)\/(\d+(?:\.\d+)?)(?:\s+(dashed|dotted))?$/i.exec(v.trim())
+    if (m) {
+      const c = colour(m[1]) ?? m[1]
+      const width = parseFloat(m[2]!)
+      const dash =
+        m[3]?.toLowerCase() === 'dashed'
+          ? [6, 4]
+          : m[3]?.toLowerCase() === 'dotted'
+            ? [2, 3]
+            : undefined
+      return { color: c, width, ...(dash ? { dash } : {}) }
+    }
+  }
+  if (isObj(v) && 'color' in v) {
+    const sc = colour(v.color)
+    return sc !== undefined ? { ...v, color: sc } : v
+  }
+  return v
+}
+
+function paintValue(v: unknown): unknown {
+  if (typeof v === 'string') return colour(v) ?? v
+  if (!isObj(v)) return v
+  return {
+    ...v,
+    ...(colour(v.from) ? { from: colour(v.from) } : {}),
+    ...(colour(v.to) ? { to: colour(v.to) } : {}),
+    ...(Array.isArray(v.stops)
+      ? {
+          stops: v.stops.map(s =>
+            isObj(s) && colour(s.color) ? { ...s, color: colour(s.color) } : s,
+          ),
+        }
+      : {}),
+  }
+}
+
 /** Edits the wants in place so every CSS-style value is in Culm's form; fills `c.warns` and `c.needs`. */
 export function normalise(wants: Want[], c: Cx): void {
   const walk = (w: Want) => {
@@ -946,10 +1029,11 @@ export function normalise(wants: Want[], c: Cx): void {
         isObj(e.decl) ? { ...e, decl: layer(w, c, 'when', e.decl, say) } : e,
       )
     // marks inside a Text
-    const spec = KINDS[w.kind as keyof typeof KINDS]
-    for (const [key, setting] of Object.entries(spec.props))
-      if (setting.type === 'link' && w.props[key] !== undefined)
-        w.props[key] = linkValue(w.props[key])
+    const spec = kindDef(w.kind, c.registry)
+    if (spec)
+      for (const [key, setting] of Object.entries(spec.props))
+        if (setting.type === 'link' && w.props[key] !== undefined)
+          w.props[key] = linkValue(w.props[key])
     if (Array.isArray(w.props.runs)) {
       const t: Want = {
         ...w,
@@ -971,8 +1055,19 @@ export function normalise(wants: Want[], c: Cx): void {
           : r,
       )
     }
-    // a Shape's paint
+    // a Shape's geometry shorthands, paint, stroke and marks
     if (w.kind === 'shape') {
+      for (const st of SHAPE_SHORT_TYPES) {
+        if (w.props[st] !== undefined) {
+          const val = w.props[st]
+          delete w.props[st]
+          if (w.props.geometry === undefined) {
+            w.props.geometry = isObj(val) ? { ...val, type: st } : { type: st }
+          }
+        }
+      }
+      if (w.props.geometry === undefined && Array.isArray(w.props.marks))
+        w.props.geometry = { type: 'scene' }
       const g = w.props.geometry
       const shape = typeof g === 'string' ? g : isObj(g) ? g.type : undefined
       if (typeof shape === 'string') {
@@ -983,16 +1078,59 @@ export function normalise(wants: Want[], c: Cx): void {
               string
             >
           )[shape] ?? shape
-        w.props.geometry = { ...(isObj(g) ? g : {}), type }
-      }
-      const f = w.props.fill
-      if (typeof f === 'string') w.props.fill = colour(f) ?? f
-      else if (isObj(f))
-        w.props.fill = {
-          ...f,
-          ...(colour(f.from) ? { from: colour(f.from) } : {}),
-          ...(colour(f.to) ? { to: colour(f.to) } : {}),
+        const geom: Obj = { ...(isObj(g) ? g : {}), type }
+        if (type === 'contours') {
+          if (typeof geom.rows === 'number' && geom.bands === undefined)
+            geom.bands = geom.rows
+          if (typeof geom.count === 'number' && geom.bands === undefined)
+            geom.bands = geom.count
+          delete geom.rows
+          delete geom.count
+          if (typeof geom.seed !== 'number') geom.seed = 1
+        } else if (type === 'wave') {
+          if (typeof geom.cycles === 'number' && geom.freq === undefined)
+            geom.freq = geom.cycles
+          delete geom.cycles
+          if (typeof geom.amp !== 'number') geom.amp = 16
+          if (typeof geom.freq !== 'number') geom.freq = 2
+        } else if (type === 'stamp') {
+          if (typeof geom.text !== 'string' || !geom.text) geom.text = 'SEAL'
         }
+        w.props.geometry = geom
+      }
+      if (w.props.fill !== undefined) w.props.fill = paintValue(w.props.fill)
+      if (w.props.stroke !== undefined)
+        w.props.stroke = strokeValue(w.props.stroke)
+      if (Array.isArray(w.props.marks)) {
+        const fx: Ctx = {
+          c,
+          w,
+          layer: 'base',
+          decl: {},
+          out: {},
+          note: say,
+        }
+        w.props.marks = (w.props.marks as unknown[]).map(m => {
+          if (!isObj(m)) return m
+          const next: Obj = { ...m }
+          if (isObj(next.wave)) {
+            const wv: Obj = { ...next.wave }
+            if (typeof wv.cycles === 'number' && wv.freq === undefined)
+              wv.freq = wv.cycles
+            delete wv.cycles
+            if (typeof wv.amp !== 'number') wv.amp = 16
+            if (typeof wv.freq !== 'number') wv.freq = 2
+            next.wave = wv
+          }
+          if (next.fill !== undefined) next.fill = paintValue(next.fill)
+          if (next.stroke !== undefined) next.stroke = strokeValue(next.stroke)
+          if (typeof next.font === 'string') {
+            const fv = fontValue(fx, next.font)
+            if (fv !== DROP && fv !== undefined) next.font = fv
+          }
+          return next
+        })
+      }
     }
     w.children.forEach(walk)
   }

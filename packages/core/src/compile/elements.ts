@@ -21,6 +21,7 @@ import {
   domId,
   el,
   nativeCommand,
+  stateAttrs,
   type Attrs,
   type Build,
   type ElementCtx,
@@ -33,7 +34,7 @@ import { textElement } from './elementsText.ts'
 import { type HtmlNode } from './html.ts'
 import { href } from './links.ts'
 
-export type { ElementCtx } from './elementsBase.ts'
+export { stateAttrs, type ElementCtx } from './elementsBase.ts'
 
 const EVENTS = new Set(['click', 'hover', 'enter-view', 'leave-view', 'submit'])
 
@@ -43,42 +44,25 @@ export function triggerTargets(...trees: Node[]): Map<string, Node> {
   const found = new Map<string, Node>()
   for (const t of trees)
     walk(t, w => {
-      for (const x of Array.isArray(w.on) ? w.on : []) {
-        const id = targetOf(x?.do)
-        if (id) ids.add(id)
-      }
-      if (typeof w.props?.labelledBy === 'string') ids.add(w.props.labelledBy)
       const anchor = (l: unknown) => {
         if (isObj(l) && typeof l.url === 'string' && l.url.startsWith('#'))
           ids.add(l.url.slice(1))
       }
+      for (const x of Array.isArray(w.on) ? w.on : []) {
+        const id = targetOf(x?.do)
+        if (id) ids.add(id)
+        if (isObj(x?.do) && 'goTo' in x.do) anchor(x.do.goTo)
+      }
+      if (typeof w.props?.labelledBy === 'string') ids.add(w.props.labelledBy)
       anchor(w.props?.link)
+      anchor(w.props?.viewAll)
       if (Array.isArray(w.props?.runs))
-        for (const r of w.props.runs) if (isObj(r)) anchor(r.link)
+        for (const r of w.props.runs)
+          if (isObj(r) && 'link' in r) anchor(r.link)
     })
   for (const t of trees)
     walk(t, w => void (ids.has(w.id) && found.set(w.id, w)))
   return found
-}
-
-/**
- * The attributes a node's states write. Every name and value passes the same grammar as at save, so a tree that skipped
- * the save check still cannot reach an attribute name or value with anything else.
- */
-export function stateAttrs(w: Node): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const s of Array.isArray(w.state) ? w.state : []) {
-    const ok =
-      isObj(s) &&
-      stateNameOk(s.name) &&
-      typeof s.initial === 'string' &&
-      STATE_NAME.test(s.initial) &&
-      (s.values === 'on-off'
-        ? s.initial === 'on' || s.initial === 'off'
-        : Array.isArray(s.values) && s.values.includes(s.initial))
-    if (ok) out[`data-s-${s.name}`] = s.initial as string
-  }
-  return out
 }
 
 /** `data-s-on` is `<event>:<verb>:<arg>[:<value>]`, entries separated by spaces. Live pages only. */
@@ -270,7 +254,11 @@ function draw(
         )
       : null
   const children = orderedChildren(w)
-  const inner: Inner = { ...ctx, holds: undefined }
+  const inner: Inner = {
+    ...ctx,
+    holds: undefined,
+    inForm: w.kind === 'form' || ctx.inForm,
+  }
   const kids = () =>
     children
       .flatMap(c => [

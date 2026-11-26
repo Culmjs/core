@@ -293,18 +293,30 @@ test('divide draws lines between grid, row and list items only when requested', 
       `<Column divide><Text>a</Text><Text>b</Text></Column>` +
       `<Grid cols={2}><Text>a</Text></Grid>`,
   )
-  assert.match(html, /:nth-child\(n\+4\)\{border-top-width:1px\}/)
   assert.match(
     html,
-    /:not\(:nth-child\(3n\+1\)\)\{border-inline-start-width:1px\}/,
+    /:nth-child\(n\+4 of :not\(\[data-cm-m\]\)\)\{border-top-width:1px\}/,
   )
-  assert.match(html, /@media \(max-width:1024px\)\{[^@]*:nth-child\(n\+3\)/)
   assert.match(
     html,
-    /@media \(max-width:600px\)\{[^@]*:nth-child\(n\+2\)\{border-top-width:1px\}/,
+    /:not\(:nth-child\(3n\+1\) of :not\(\[data-cm-m\]\)\)\{border-inline-start-width:1px\}/,
   )
-  assert.match(html, /\.c\w+>\*\+\*\{border-inline-start-width:1px\}/)
-  assert.match(html, /\.c\w+>\*\+\*\{border-top-width:1px\}/)
+  assert.match(
+    html,
+    /@media \(max-width:1024px\)\{[^@]*:nth-child\(n\+3 of :not\(\[data-cm-m\]\)\)/,
+  )
+  assert.match(
+    html,
+    /@media \(max-width:600px\)\{[^@]*:nth-child\(n\+2 of :not\(\[data-cm-m\]\)\)\{border-top-width:1px\}/,
+  )
+  assert.match(
+    html,
+    /\.c\w+>:not\(\[data-cm-m\]\)\+:not\(\[data-cm-m\]\)\{border-inline-start-width:1px\}/,
+  )
+  assert.match(
+    html,
+    /\.c\w+>:not\(\[data-cm-m\]\)\+:not\(\[data-cm-m\]\)\{border-top-width:1px\}/,
+  )
   assert.equal((html.match(/solid var\(--s-line\)/g) ?? []).length, 3)
 })
 

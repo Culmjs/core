@@ -9,16 +9,16 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "test": "node --conditions=source --import tsx --test --test-concurrency=1 'scripts/__tests__/*.spec.ts' 'packages/*/__tests__/**/*.spec.ts'",
+    "test": "node --conditions=@culmjs/source --import tsx --test --test-concurrency=1 'scripts/__tests__/*.spec.ts' 'packages/*/__tests__/**/*.spec.ts'",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write --cache .",
     "format-check": "prettier --check --cache .",
     "lint": "eslint",
-    "gen:scripts": "node --conditions=source --import tsx scripts/gen-scripts.ts",
-    "check:layers": "node --conditions=source --import tsx scripts/check-layers.ts",
-    "check:terms": "node --conditions=source --import tsx scripts/check-terms.ts",
-    "test:browser": "node --conditions=source --import tsx --test --test-concurrency=1 'packages/*/__browser__/*.spec.ts'",
-    "pack:all": "mkdir -p .pack && npm pack --workspace=packages/core --workspace=packages/starter --workspace=packages/tools --pack-destination=.pack"
+    "gen:scripts": "node --conditions=@culmjs/source --import tsx scripts/gen-scripts.ts",
+    "check:layers": "node --conditions=@culmjs/source --import tsx scripts/check-layers.ts",
+    "check:terms": "node --conditions=@culmjs/source --import tsx scripts/check-terms.ts",
+    "test:browser": "node --conditions=@culmjs/source --import tsx --test --test-concurrency=1 'packages/*/__browser__/*.spec.ts'",
+    "pack:all": "mkdir -p .pack && rm -f .pack/culmjs-*.tgz && npm pack --workspace=packages/core --pack-destination=.pack && npm pack --workspace=packages/starter --pack-destination=.pack && npm pack --workspace=packages/tools --pack-destination=.pack"
   },
   "devDependencies": {
     "@types/node": "^22",

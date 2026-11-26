@@ -48,6 +48,16 @@ test('terms inside identifiers are hits; cv in lower case is not', () => {
   assert.deepEqual(termHits([{ path: 'a.ts', source: 'const cv = 1' }]), [])
 })
 
+test('lowercase compound Culm ids are hits', () => {
+  for (const id of ['paperlist', 'scholarprofile', 'bookingform']) {
+    assert.equal(
+      termHits([{ path: 'a.ts', source: JSON.stringify({ id }) }]).length > 0,
+      true,
+      id,
+    )
+  }
+})
+
 for (const word of [
   'scholars',
   'labs',
@@ -79,7 +89,7 @@ test('the check needs packages/core/src: run from a directory without it, it exi
     const r = spawnSync(
       process.execPath,
       [
-        '--conditions=source',
+        '--conditions=@culmjs/source',
         '--import',
         import.meta.resolve('tsx'),
         join(process.cwd(), 'scripts', 'check-terms.ts'),

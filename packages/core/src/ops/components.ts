@@ -336,9 +336,20 @@ export const detach: OpFn<'detach'> = (doc, registry, op) => {
 
   // A copy, so what is rewritten below is never shared with the document.
   const copy: Node = JSON.parse(JSON.stringify(unrolled))
-  // A detached copy has no block identity and no dotted ids: every node but the root gets the next free `n<k>`, in document order.
+  // A detached copy has no root block identity and no dotted ids on plain components:
+  // every non-root node gets `n<k>`, while nested blocks inside the component keep `<newBlockId>.<localId>`.
   const rename: Node[] = []
-  walk(copy, (w, p) => void (p && rename.push(w)))
+  const subMap: { w: Node; blockId: string; rest: string }[] = []
+  const collect = (w: Node, top: boolean, block?: string) => {
+    if (!top) {
+      if (block && w.id.startsWith(`${block}.`))
+        subMap.push({ w, blockId: block, rest: w.id.slice(block.length) })
+      else rename.push(w)
+    }
+    const nextBlock = !top && w.origin ? w.id : block
+    for (const c of w.children ?? []) collect(c, false, nextBlock)
+  }
+  collect(copy, true)
   // The root drops its block identity. A pattern block sits behind its parent unless its placement says otherwise, which
   // `effectivePlacement` reads from the origin, so that is written out. A block nested in the component keeps its origin.
   if (copy.origin?.block === 'pattern' && copy.placement?.mode === undefined)
@@ -348,6 +359,8 @@ export const detach: OpFn<'detach'> = (doc, registry, op) => {
   if (n.required !== undefined) copy.required = n.required
   const fresh = nextIds(doc, t.tree, rename.length)
   const map = new Map(rename.map((w, i) => [w.id, fresh[i]]))
+  for (const { w, blockId, rest } of subMap)
+    if (map.has(blockId)) map.set(w.id, map.get(blockId)! + rest)
   walk(copy, w => {
     const opens = w.props?.opens
     if (typeof opens === 'string' && map.has(opens))
@@ -355,6 +368,8 @@ export const detach: OpFn<'detach'> = (doc, registry, op) => {
     retarget(w, map)
   })
   for (const w of rename) w.id = map.get(w.id)!
+  for (const { w } of subMap) if (map.has(w.id)) w.id = map.get(w.id)!
+  const createdIds = [...fresh, ...subMap.map(({ w }) => w.id)]
   // The slot content goes into the slot parts, as unrolling does; its nodes keep their ids and kinds.
   if (slotted?.length) {
     const comp = doc.components.find(c => c.id === n.component)!
@@ -391,10 +406,13 @@ export const detach: OpFn<'detach'> = (doc, registry, op) => {
         ? {
             ...playback,
             steps,
-            ...(playback.trigger === 'scroll' &&
-              !playback.pinPx &&
-              registry.effect(effect)?.tier === 2 &&
-              stepsTier(steps) === 1 && { scrollFallback: 'timeline' }),
+            ...(registry.effect(effect)?.tier === 2 &&
+              stepsTier(steps) === 1 &&
+              (playback.trigger === 'scroll' && !playback.pinPx
+                ? { scrollFallback: 'timeline' }
+                : playback.trigger !== 'scroll'
+                  ? { host: true }
+                  : {})),
           }
         : { ...playback, effect, ...(settings && { settings }) }
     },
@@ -412,7 +430,7 @@ export const detach: OpFn<'detach'> = (doc, registry, op) => {
   return {
     ok: true,
     doc: result,
-    created: fresh.map(id => ref(t.tree, id)),
+    created: createdIds.map(id => ref(t.tree, id)),
     changed: [ref(t.tree, n.id)],
   }
 }

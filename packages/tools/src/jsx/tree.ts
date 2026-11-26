@@ -1,6 +1,12 @@
 // JSX elements <-> Culm nodes. `want` builds the tree the JSX describes, `emit` writes a node back as JSX, `reconcile` turns the
 // difference between a tree and a want into core operations (add, remove, move, setProps, setStyle ...). Nothing here writes; core `apply` does.
-import { KINDS, type Node } from '@culmjs/core'
+import {
+  KINDS,
+  kindSpec,
+  type KindSpec,
+  type Node,
+  type Registry,
+} from '@culmjs/core'
 import { ID_RE } from '../shared.ts'
 import { JsxError, type El, type Loc } from './parse.ts'
 import { STYLE_ALIASES, type Warning } from './normalise.ts'
@@ -49,9 +55,15 @@ const RESERVED = new Set([
 /** Written only by inserting a block; never shown, never set. */
 const MARKS = ['sample', 'chrome']
 
-export const kindOf = (name: string): string | undefined => {
+const specOf = (kind: string, registry?: Registry): KindSpec | undefined =>
+  kindSpec(kind, registry?.kinds()) ?? KINDS[kind as keyof typeof KINDS]
+
+export const kindOf = (
+  name: string,
+  registry?: Registry,
+): string | undefined => {
   const k = name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
-  return Object.hasOwn(KINDS, k) && k !== 'instance' ? k : undefined
+  return specOf(k, registry) && k !== 'instance' ? k : undefined
 }
 export const nameOf = (kind: string) =>
   kind
@@ -116,9 +128,10 @@ export function want(
   parent: string,
   errs: JsxError[],
   warns: Warning[] = [],
+  registry?: Registry,
 ): Want | undefined {
   const alias = ELEMENT_ALIASES[el.name]
-  const kind = kindOf(el.name) ?? alias?.[0]
+  const kind = kindOf(el.name, registry) ?? alias?.[0]
   const path =
     el.sourcePath ?? `${parent ? `${parent} > ` : ''}${el.name}[${index}]`
   const say = (message: string, at: Loc = el.at) =>
@@ -126,7 +139,7 @@ export function want(
       message: `${path}: ${message}`,
       jsx: { path, line: at.line, column: at.col },
     })
-  if (kind && alias && !kindOf(el.name))
+  if (kind && alias && !kindOf(el.name, registry))
     say(`<${el.name}> is not a Culm element; used as <${nameOf(kind)}>`)
   if (!kind) {
     errs.push(
@@ -136,10 +149,10 @@ export function want(
         path,
       ),
     )
-    el.children.forEach((c, i) => want(c, i, path, errs, warns))
+    el.children.forEach((c, i) => want(c, i, path, errs, warns, registry))
     return undefined
   }
-  const spec = KINDS[kind as keyof typeof KINDS]
+  const spec = specOf(kind, registry)!
   const w: Want = {
     kind,
     props: { ...alias?.[1] },
@@ -164,7 +177,7 @@ export function want(
     errs.push(new JsxError(e.message, e.at, path))
   }
   w.children = el.children.flatMap((c, i) => {
-    const x = want(c, i, path, errs, warns)
+    const x = want(c, i, path, errs, warns, registry)
     return x ? [x] : []
   })
   return w
@@ -190,7 +203,7 @@ function words(w: Want, el: El, kind: string) {
 function attribute(
   w: Want,
   el: El,
-  spec: (typeof KINDS)[keyof typeof KINDS],
+  spec: KindSpec,
   name: string,
   a: { value: unknown; at: Loc },
   say: (message: string, at?: Loc) => void,
@@ -233,6 +246,22 @@ function attribute(
   } else if (EXTRAS.includes(name)) w.extras[name] = v
   else if (name === 'href' && Object.hasOwn(spec.props, 'link'))
     w.props.link = v
+  else if (w.kind === 'image' && (name === 'generate' || name === 'aspect'))
+    w.props[name] = v
+  else if (
+    w.kind === 'shape' &&
+    [
+      'scene',
+      'curve',
+      'arc',
+      'wave',
+      'chart',
+      'diagram',
+      'contours',
+      'stamp',
+    ].includes(name)
+  )
+    w.props[name] = v
   else if (Object.hasOwn(spec.props, name)) w.props[name] = v
   else if (el.name === 'Field' && name === 'type' && typeof v === 'string') {
     // an input's type names the field: email, message (textarea) or name
@@ -383,10 +412,10 @@ const marksOf = (runs: unknown[]): string | undefined => {
   return out.length ? out.join('') : undefined
 }
 
-export function emit(n: Node, ind = ''): string {
-  if (!Object.hasOwn(KINDS, n.kind) || n.kind === 'instance')
+export function emit(n: Node, ind = '', registry?: Registry): string {
+  const spec = specOf(n.kind, registry)
+  if (!spec || n.kind === 'instance')
     throw new Error(`a ${n.kind} cannot be shown as JSX`)
-  const spec = KINDS[n.kind as keyof typeof KINDS]
   const attrs = [attr('id', n.id)]
   if (n.name !== spec.label) attrs.push(attr('nodeName', n.name))
   if (n.required !== undefined) attrs.push(attr('keep', n.required))
@@ -397,7 +426,7 @@ export function emit(n: Node, ind = ''): string {
     const words =
       k === 'runs' && Array.isArray(v)
         ? (wordsOf(v) ??
-          (v.some(r => isObj(r) && (r.style || r.link))
+          ((v as unknown[]).some(r => isObj(r) && ('style' in r || 'link' in r))
             ? marksOf(v)
             : undefined))
         : undefined

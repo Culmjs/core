@@ -120,6 +120,7 @@ export type PropField = {
     | 'geometry'
     | 'paint'
     | 'stroke'
+    | 'marks'
   min?: number
   max?: number
   int?: boolean
@@ -228,6 +229,7 @@ export const KINDS: Record<CoreKind, KindSpec> = {
       'row',
       'column',
       'grid',
+      'list',
       'table-cell',
       'form',
       'details',
@@ -445,6 +447,8 @@ export const KINDS: Record<CoreKind, KindSpec> = {
       alt: { type: 'text', maxLength: 300 },
       fallback: { type: 'text', maxLength: 300 },
       fit: sel(['cover', 'contain']),
+      width: { type: 'number', min: 1, max: 8192, int: true },
+      height: { type: 'number', min: 1, max: 8192, int: true },
     },
     styles: [...BOX, ...PAINT, ...FX, 'fit', 'focus'],
     bindable: ['src', 'alt', 'fallback'],
@@ -569,7 +573,16 @@ export const KINDS: Record<CoreKind, KindSpec> = {
     children: {
       min: 0,
       max: Infinity,
-      kinds: ['field', 'button', 'text', 'row', 'column', 'grid', 'box'],
+      kinds: [
+        'field',
+        'button',
+        'text',
+        'free',
+        'row',
+        'column',
+        'grid',
+        'box',
+      ],
     },
     tag: () => 'form',
     display: () => 'flex',
@@ -628,16 +641,22 @@ export const KINDS: Record<CoreKind, KindSpec> = {
       geometry: {
         type: 'geometry',
         required: true,
-        hint: 'type: rect{radius?,view?} | ellipse{view?} | polygon{sides 3-12,rotate?} | star{points 3-24,inner 0.1-0.95,rotate?} | line{from:[x,y],to:[x,y] in 0-100} | blob{seed,smooth? 0-1,points? 3-12} | path{d,view?} | group{view?,combine? layer|union|subtract}',
+        hint: 'rect|ellipse|polygon|star|line|blob|path|group|scene|curve{points}|arc{start,end,inner?}|wave{amp,freq}|chart{chart,series,labels?}|diagram{nodes,edges,dir?}|contours{seed,bands?}|stamp{text,center?}',
       },
       fill: {
         type: 'paint',
-        hint: 'A site colour name or {style}, #rrggbb, {from,to,angle?} for a gradient, or "none". Absent: brand.',
+        hint: 'Site colour, #rrggbb, {from,to,angle?,radial?:[cx,cy,r]}, {stops:[{color,at,alpha?}],angle?,radial?}, or "none".',
       },
       stroke: {
         type: 'stroke',
         hint: '{color, width 0-200, dash?:[on,off]}',
       },
+      marks: {
+        type: 'marks',
+        hint: 'Compact marks [{rect|circle|ellipse|line|curve|arc|wave|grid|path|label, fill?, stroke?, opacity?, blur?, rotate?, repeat?}] (max 256 expanded).',
+      },
+      blur: { type: 'number', min: 0, max: 40 },
+      grain: { type: 'number', min: 0, max: 1 },
       opacity: { type: 'number', min: 0, max: 1 },
       shadow: { type: 'text', maxLength: 32 },
       fit: sel(['contain', 'cover', 'stretch']),

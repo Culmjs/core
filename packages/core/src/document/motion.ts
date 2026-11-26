@@ -42,7 +42,8 @@ export type Step = {
 }
 
 export type Program =
-  { steps: Step[] } | { effect: string; settings?: Record<string, number> }
+  | { steps: Step[]; host?: true }
+  | { effect: string; settings?: Record<string, number> }
 
 export type Motion = Program & {
   trigger: MotionTrigger

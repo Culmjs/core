@@ -511,6 +511,8 @@ export function badTokens(look: Record<string, unknown>): string[] {
       return !(
         typeof edge === 'object' &&
         edge !== null &&
+        !Array.isArray(edge) &&
+        Object.keys(edge).every(ek => ek === 'width' || ek === 'color') &&
         [1, 2, 3].includes(edge.width as number) &&
         (edge.color === undefined ||
           (typeof edge.color === 'string' && HEX.test(edge.color)))

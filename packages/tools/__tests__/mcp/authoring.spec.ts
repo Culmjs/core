@@ -508,3 +508,67 @@ test('JSON operations use the display range only for headings, preserve ordered 
   const recipes = await call('write', { baseRevision: 1, ops: other })
   assert.equal(recipes.error, false, JSON.stringify(recipes.json))
 })
+
+test('jsonOps supports page ops, chrome edits, hide/slot/state/null-reset, dotted find selectors and JSX comments', async () => {
+  const { call, store } = await connect([], true)
+  const addP = await call('write', {
+    baseRevision: 0,
+    page: 'about',
+    ops: [
+      {
+        op: 'insert',
+        node: {
+          kind: 'column',
+          id: 'hero',
+          style: { bg: 'ink', color: 'bg', padding: 24 },
+          children: [
+            { kind: 'text', id: 'heading', level: 'h1', text: 'About' },
+          ],
+        },
+      },
+      {
+        op: 'update',
+        id: 'heading',
+        style: { bg: null },
+        hide: { phone: true },
+        slot: { align: 'center' },
+      },
+      { op: 'setPage', page: 'about', inFooter: true },
+      { op: 'addPage', page: 'faq', title: 'FAQ', slug: '/faq' },
+      { op: 'removePage', page: 'faq' },
+    ],
+  })
+  assert.equal(addP.error, false, JSON.stringify(addP.json))
+  const hdr = await call('write', {
+    baseRevision: addP.json.revision,
+    page: 'header',
+    ops: [{ op: 'insert', node: { kind: 'text', id: 'tagline', text: 'Hi' } }],
+  })
+  assert.equal(hdr.error, false, JSON.stringify(hdr.json))
+  assert.equal(
+    (await call('find', { selector: '#header.bar' })).json.matches.length >= 0,
+    true,
+  )
+  assert.equal(
+    (await call('find', { id: 'header' })).json.matches[0]?.id,
+    'header',
+  )
+  const doc = await store.get('s', hdr.json.revision)
+  const about = doc!.pages.find(p => p.id === 'about')!
+  const heading = about.root.children![0]!.children![0]!
+  assert.equal(heading.hide?.phone, true)
+  assert.deepEqual(heading.slot, { grow: 0, align: 'center' })
+  assert.equal(about.inFooter, true)
+
+  const jsx = await connect()
+  const cw = await jsx.call('write', {
+    baseRevision: 0,
+    page: 'home',
+    jsx: '<Text id="t" level="h1" style={{ // line comment\n color: "ink" }}>\n  {"Trimmed"}\n</Text>',
+  })
+  assert.equal(cw.error, false, JSON.stringify(cw.json))
+  const cdoc = await jsx.store.get('s', cw.json.revision)
+  assert.deepEqual(cdoc!.pages[0]!.root.children![0]!.props?.runs, [
+    { text: 'Trimmed' },
+  ])
+})

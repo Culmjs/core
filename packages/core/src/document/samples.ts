@@ -47,21 +47,11 @@ const blank = (w: Node): boolean =>
       : []
   ).some(r => !r.br && (r.text ?? '').trim() !== '')
 
-/**
- * Whether a widget shows on desktop, tablet and phone: the base layer, the tablet and phone layers (a phone inherits the tablet's) and the per-layout hide.
- * Not the same rule as `shownOn` in `layout/placement.ts`: there a desktop hide also hides the block on tablet; here the tablet is decided by its own layer and its own hide.
- * The two differ on purpose for now: changing either changes published output, so they are to be settled together.
- */
+import { nodeShownByLayout } from './visibility.ts'
+
+/** Whether a widget shows on desktop, tablet and phone, following the unified CSS visibility cascade. */
 type L3 = [boolean, boolean, boolean]
-const shownOn = (w: Node): L3 => {
-  // a layer that shows it again while a state holds (a panel a button opens) means it can be seen: it counts as shown everywhere
-  if (w.style?.when?.some(x => x.decl?.hidden === false))
-    return [true, true, true]
-  const b = w.style?.base?.hidden,
-    t = w.style?.tablet?.hidden ?? b,
-    p = w.style?.phone?.hidden ?? t
-  return [!b && !w.hide?.desktop, !t && !w.hide?.tablet, !p && !w.hide?.phone]
-}
+const shownOn = (w: Node): L3 => nodeShownByLayout(w)
 const none: L3 = [false, false, false]
 const and = (a: L3, b: L3): L3 => [a[0] && b[0], a[1] && b[1], a[2] && b[2]]
 const or = (a: L3, b: L3): L3 => [a[0] || b[0], a[1] || b[1], a[2] || b[2]]

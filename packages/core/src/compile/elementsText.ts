@@ -163,7 +163,20 @@ export function textElement(b: Build): HtmlNode | null {
           )
         return b.plate('photo')
       }
-      return { tag: 'img', attrs: { ...attrs, src, alt: str(p.alt) } }
+      return {
+        tag: 'img',
+        attrs: {
+          ...attrs,
+          src,
+          alt: str(p.alt),
+          ...(typeof p.width === 'number' && Number.isFinite(p.width)
+            ? { width: Math.round(p.width) }
+            : {}),
+          ...(typeof p.height === 'number' && Number.isFinite(p.height)
+            ? { height: Math.round(p.height) }
+            : {}),
+        },
+      }
     }
     case 'video': {
       const f = fileOf(b, p.assetId)
@@ -251,8 +264,8 @@ function button(b: Build): HtmlNode {
     )
   )
     return real()
-  // A form's ordinary button submits it, which an `a` can't.
-  if (parent === 'form')
+  // A form's ordinary button submits it, which an `a` can't (including inside row/column/grid/box nested under a form).
+  if ((parent === 'form' || b.ctx.inForm) && !p.link)
     return el('button', { ...attrs, type: 'submit', disabled }, label)
   const link =
     p.link && typeof p.link === 'object'

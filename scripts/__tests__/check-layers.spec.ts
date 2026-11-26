@@ -158,3 +158,24 @@ test('ops importing measure, and compile importing measure, are violations', () 
       [`${path} imports measure (../measure/m.ts)`],
     )
 })
+
+test('semicolons in comments inside multiline imports and triple-slash references are caught', () => {
+  assert.deepEqual(
+    layerViolations([
+      {
+        path: 'document/x.ts',
+        source: `import {\n  runChecks, // note; see measure\n} from '../measure/index.ts'`,
+      },
+    ]),
+    ['document/x.ts imports measure (../measure/index.ts)'],
+  )
+  assert.deepEqual(
+    layerViolations([
+      {
+        path: 'document/x.ts',
+        source: `/// <reference path="../measure/index.ts" />\n`,
+      },
+    ]),
+    ['document/x.ts imports measure (../measure/index.ts)'],
+  )
+})

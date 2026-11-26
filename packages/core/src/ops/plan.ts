@@ -1,7 +1,7 @@
 import { canonicalJson } from '../document/hash.ts'
 import type { Problem, SiteDocument } from '../document/index.ts'
 import { isObj } from '../document/rules.ts'
-import { walk } from '../document/tree.ts'
+import { find, walk } from '../document/tree.ts'
 import type { Registry } from '../registry/index.ts'
 import { validateSite } from '../validate/index.ts'
 import { droppedRequired } from '../validate/required.ts'
@@ -21,6 +21,7 @@ import {
   type Op,
   type OpFn,
   type PlanResult,
+  type TreeRef,
 } from './types.ts'
 
 export { why }
@@ -162,6 +163,9 @@ function brokenLinks(before: SiteDocument, after: SiteDocument): Note[] {
     : []
 }
 
+const refKey = (tree: TreeRef, id: string) =>
+  `${typeof tree === 'string' ? tree : 'page' in tree ? `p:${tree.page}` : `c:${tree.component}`}:${id}`
+
 /** Project edits for id allocation and subsequent lookups. Intermediate references
  * may still be unresolved. Only plan/apply check a publishable batch boundary. */
 function runOps(
@@ -219,8 +223,10 @@ function runOps(
 
     let work = doc
     // The operations' own created and changed lists serve one purpose here: the index of the operation to blame for a validation problem.
-    const last = new Map<string, number>() // node id -> index of the last operation that created or changed it
+    const last = new Map<string, number>() // tree:id -> index of the last operation that created, changed or removed it
+    const lastById = new Map<string, number>()
     const motion = new Map<string, number>()
+    const motionById = new Map<string, number>()
     const notes: Note[] = []
     for (i = 0; i < ops.length; i++) {
       const op: unknown = ops[i]
@@ -257,12 +263,35 @@ function runOps(
       )
       if (!r.ok) return fail(r.problems, i)
       work = r.doc
-      for (const c of [...r.created, ...r.changed]) last.set(c.id, i)
-      for (const c of r.created) motion.set(c.id, i)
-      if (op.op === 'setMotion') motion.set(op.id as string, i)
+      for (const c of [...r.created, ...r.changed]) {
+        last.set(refKey(c.tree, c.id), i)
+        lastById.set(c.id, i)
+      }
+      for (const c of r.created) {
+        motion.set(refKey(c.tree, c.id), i)
+        motionById.set(c.id, i)
+      }
+      if (op.op === 'setMotion' && typeof op.id === 'string') {
+        const tree = (op as { tree?: TreeRef }).tree
+        if (tree) motion.set(refKey(tree, op.id), i)
+        motionById.set(op.id, i)
+      }
+      if (op.op === 'remove' && typeof op.id === 'string') {
+        const tree = (op as { tree?: TreeRef }).tree
+        if (tree) last.set(refKey(tree, op.id), i)
+        lastById.set(op.id, i)
+      }
       if (r.notes) notes.push(...r.notes)
     }
-    return { ok: true as const, doc: work, last, motion, notes }
+    return {
+      ok: true as const,
+      doc: work,
+      last,
+      lastById,
+      motion,
+      motionById,
+      notes,
+    }
   } catch (e) {
     return fail(refuse('INVALID_OPERATION', why(e)).problems, i)
   }
@@ -287,36 +316,54 @@ export function plan(
   try {
     const r = runOps(doc, registry, request, allow)
     if (!r.ok) return r
-    const { last, motion, notes } = r
+    const { last, lastById, motion, motionById, notes } = r
     const work = aliasStyles(r.doc)
+    const workTrees = trees(work)
+    const blameOp = (p: Problem): number | undefined => {
+      if (p.nodeId === undefined) return undefined
+      const match = workTrees
+        .map(t => ({ tree: t.tree, node: find(t.root, p.nodeId!) }))
+        .find(x => x.node)
+      const ownerKey = match ? refKey(match.tree, p.nodeId) : undefined
+      const baseOp =
+        (ownerKey !== undefined ? last.get(ownerKey) : undefined) ??
+        lastById.get(p.nodeId)
+      if (!p.path?.includes('motion')) return baseOp
+      let opIdx =
+        (ownerKey !== undefined ? motion.get(ownerKey) : undefined) ??
+        motionById.get(p.nodeId) ??
+        -1
+      const tm = /motion\.steps\.(\d+)\.target/.exec(p.path)
+      if (tm && match?.node?.motion && 'steps' in match.node.motion) {
+        const step = match.node.motion.steps[Number(tm[1])]
+        if (step && typeof step.target === 'object') {
+          const tId = step.target.id
+          const targetOp =
+            last.get(refKey(match.tree, tId)) ?? lastById.get(tId)
+          if (targetOp !== undefined) opIdx = Math.max(opIdx, targetOp)
+        }
+      }
+      return opIdx >= 0 ? opIdx : baseOp
+    }
     const problems = validateSite(work, registry)
     if (problems.length)
       return {
         ok: false,
-        problems: problems.map(p =>
-          p.nodeId !== undefined && last.has(p.nodeId)
-            ? {
-                ...p,
-                op:
-                  (p.path?.startsWith('motion')
-                    ? motion.get(p.nodeId)
-                    : undefined) ?? last.get(p.nodeId),
-              }
-            : p,
-        ),
+        problems: problems.map(p => {
+          const op = blameOp(p)
+          return op === undefined ? p : { ...p, op }
+        }),
       }
 
     // Checked once per batch: what the live page leaves out as samples depends on the whole tree, and the end state is what is published.
     const dropped = droppedRequired(doc, work, registry)
-    if (dropped)
+    if (dropped) {
+      const op = blameOp(dropped)
       return {
         ok: false,
-        problems: [
-          dropped.nodeId !== undefined && last.has(dropped.nodeId)
-            ? { ...dropped, op: last.get(dropped.nodeId) }
-            : dropped,
-        ],
+        problems: [op === undefined ? dropped : { ...dropped, op }],
       }
+    }
 
     // What the batch made and changed is what the diff reports, so the two cannot disagree.
     const d = diffAll(doc, work)

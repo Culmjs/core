@@ -12,6 +12,8 @@ import {
   type SiteFont,
 } from '@culmjs/core'
 import { isObj } from '../shared.ts'
+import { fetchImagesFor } from '../image/generate.ts'
+import type { ImageConfig, ImageProvider } from '../image/providers.ts'
 import { readHeld } from './held.ts'
 
 export type FetchHosts = {
@@ -30,7 +32,13 @@ export type Get = (
   url: string,
   max: number,
 ) => Promise<{ status: number; url: string; bytes: Uint8Array }>
-export type FetchOptions = { hosts?: FetchHosts; get?: Get }
+export type FetchOptions = {
+  hosts?: FetchHosts
+  get?: Get
+  images?: ImageConfig
+  imageProvider?: ImageProvider
+  offline?: boolean
+}
 
 const MAX_FAMILIES = 4
 const MAX_ICONS = 60
@@ -417,11 +425,10 @@ const url = (v: unknown) =>
 class Policy extends Error {}
 /** A refusal about one icon, by its `set:name`. */
 class IconError extends Refused {
-  constructor(
-    readonly full: string,
-    m: string,
-  ) {
+  readonly full: string
+  constructor(full: string, m: string) {
     super(m)
+    this.full = full
   }
 }
 
@@ -752,18 +759,20 @@ export async function fetchFor(
       ],
     }
   }
-  return {
-    ok: true,
-    ops: ops.map((op, i) =>
-      wants.some(w => w.op === i) && isObj(op) && Array.isArray(op.fonts)
-        ? {
-            ...op,
-            fonts: op.fonts.map((f: unknown, j: number) => {
-              const w = wants.find(x => x.op === i && x.index === j)
-              return w ? `up:${fontSlug(w.family)}` : f
-            }),
-          }
-        : op,
-    ),
-  }
+  const nextOps = ops.map((op, i) =>
+    wants.some(w => w.op === i) && isObj(op) && Array.isArray(op.fonts)
+      ? {
+          ...op,
+          fonts: op.fonts.map((f: unknown, j: number) => {
+            const w = wants.find(x => x.op === i && x.index === j)
+            return w ? `up:${fontSlug(w.family)}` : f
+          }),
+        }
+      : op,
+  )
+  return fetchImagesFor(dir, nextOps, heldAll.generated, {
+    config: o.images,
+    provider: o.imageProvider,
+    offline: o.offline,
+  })
 }

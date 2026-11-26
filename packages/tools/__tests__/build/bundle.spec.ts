@@ -363,10 +363,9 @@ async function withSlab(use: boolean) {
   if (use) {
     const p = join(dir, 'site.json')
     const t = await readFile(p, 'utf8')
-    const next = t.replace(
-      /"headingFont": "[^"]*"/,
-      '"headingFont": "up:roboto-slab"',
-    )
+    const next = t
+      .replace(/"headingFont": "[^"]*"/, '"headingFont": "up:roboto-slab"')
+      .replace(/"fonts": \[/, '"fonts": ["up:roboto-slab", ')
     assert.notEqual(next, t)
     await writeFile(p, next)
   }

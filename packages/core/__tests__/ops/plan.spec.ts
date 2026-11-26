@@ -897,3 +897,41 @@ test('setStyle align stretch on a text is refused with the textAlign hint: one o
     JSON.stringify(p),
   )
 })
+
+test('moving a motion target outside its owner blames the move op index', () => {
+  const p = refused(
+    run([
+      {
+        op: 'move',
+        tree: T,
+        id: 't1',
+        parent: 'b',
+        index: 0,
+      },
+      {
+        op: 'setMotion',
+        tree: T,
+        id: 'b',
+        motion: {
+          trigger: 'load',
+          steps: [
+            {
+              target: { id: 't1' },
+              from: { opacity: 0 },
+              to: { opacity: 1 },
+              durationMs: 200,
+            },
+          ],
+        },
+      },
+      {
+        op: 'move',
+        tree: T,
+        id: 't1',
+        parent: 'root',
+        index: 0,
+      },
+    ]),
+  )
+  assert.equal(p[0]?.op, 2)
+})

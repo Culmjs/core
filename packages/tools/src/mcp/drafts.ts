@@ -64,6 +64,8 @@ export function writeDrafts() {
           'page',
           'title',
           'path',
+          'append',
+          'ops',
         ].includes(path[0]!) ||
         path.some(k => ['__proto__', 'prototype', 'constructor'].includes(k))
       )

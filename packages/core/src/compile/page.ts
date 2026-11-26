@@ -5,6 +5,7 @@ import {
   type SiteDocument,
 } from '../document/index.ts'
 import { dropSamples } from '../document/samples.ts'
+import { nodeCanShow } from '../document/visibility.ts'
 import { isObj, urlOk } from '../document/rules.ts'
 import { expand, type Data } from '../data/index.ts'
 import { checkRows, type Registry } from '../registry/index.ts'
@@ -226,6 +227,16 @@ export function fontsOf(doc: SiteDocument, shell: Node): FontRef[] {
       for (const r of runs)
         if (r && typeof r === 'object' && 'text' in r && r.style?.font)
           fonts.add(r.style.font)
+    const marks = w.props?.marks
+    if (Array.isArray(marks))
+      for (const m of marks)
+        if (
+          m &&
+          typeof m === 'object' &&
+          'font' in m &&
+          typeof m.font === 'string'
+        )
+          fonts.add(m.font as FontRef)
   })
   return [...fonts]
 }
@@ -243,7 +254,7 @@ const countElements = (e: HtmlNode | string): number =>
 
 /** A published header or footer with nothing in it, or hidden, draws no strip. The editor always keeps both, so there is somewhere to drop blocks. */
 const shows = (w: Node, mode: 'edit' | 'live') =>
-  mode === 'edit' || (!!w.children?.length && !w.style?.base?.hidden)
+  mode === 'edit' || (!!w.children?.length && nodeCanShow(w))
 
 type Prepared = ReturnType<typeof prepare>
 
@@ -262,6 +273,7 @@ export function siteElement(
     rendered,
     doc,
     links: p.links,
+    ...(p.fonts ? { fonts: p.fonts } : {}),
     ...(p.icons ? { icons: p.icons } : {}),
     mode,
     ...(p.ids ? { ids: true } : {}),

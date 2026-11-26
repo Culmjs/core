@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { accessSync, constants, readdirSync, statSync } from 'node:fs'
+import { rmSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
@@ -54,6 +55,13 @@ export type Page = {
     y: number
     w: number
     h: number
+  }): Promise<Uint8Array>
+  /** Capture a PNG or WebP screenshot with optional DPR scale (1..4), element clip, and transparent background. */
+  capture(options?: {
+    format?: 'png' | 'webp'
+    clip?: { x: number; y: number; w: number; h: number }
+    scale?: number
+    transparent?: boolean
   }): Promise<Uint8Array>
   close(): Promise<void>
 }
@@ -215,7 +223,18 @@ export async function openBrowser(
   child.on('error', () => {})
   child.stderr?.resume()
   const gone = new Promise<void>(r => child.once('close', () => r()))
+  const onExit = () => {
+    try {
+      if (child.exitCode === null && child.signalCode === null)
+        child.kill('SIGKILL')
+    } catch {}
+    try {
+      rmSync(profile, { recursive: true, force: true })
+    } catch {}
+  }
+  process.once('exit', onExit)
   const cleanup = async () => {
+    process.off('exit', onExit)
     if (child.exitCode === null && child.signalCode === null)
       child.kill('SIGKILL')
     await gone.catch(() => {})
@@ -623,7 +642,9 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
       const { nodes } = await s('Accessibility.getFullAXTree')
       return nodes
         .filter((n: Json) => !n.ignored && n.role?.value === role)
-        .map((n: Json) => n.name.value)
+        .map((n: Json) =>
+          typeof n.name?.value === 'string' ? n.name.value : '',
+        )
     },
     async tab() {
       await s('Page.bringToFront')
@@ -646,7 +667,33 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
       await hook(cdp, owner, sessionId)
     },
     async goto(url, timeoutMs) {
-      const loaded = cdp.once(sessionId, 'Page.loadEventFired', timeoutMs)
+      let cancel: (() => void) | undefined
+      const loaded = new Promise<Json>((ok, no) => {
+        const k = `${sessionId}|Page.loadEventFired`
+        let settled = false
+        const timer = setTimeout(() => {
+          if (settled) return
+          settled = true
+          no(
+            new Error(
+              `Page.loadEventFired did not happen within ${timeoutMs} ms`,
+            ),
+          )
+        }, timeoutMs)
+        cancel = () => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          ok(undefined)
+        }
+        cdp.on(sessionId, 'Page.loadEventFired', p => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          ok(p)
+        })
+        void k
+      })
       loaded.catch(() => {})
       try {
         const nav = await s('Page.navigate', { url }, timeoutMs)
@@ -658,6 +705,8 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
           ok: false,
           problem: e instanceof Error ? e.message : String(e),
         }
+      } finally {
+        cancel?.()
       }
     },
     async evaluate<T>(expression: string, options?: { userGesture?: boolean }) {
@@ -693,6 +742,56 @@ async function newPage(cdp: Cdp, hub: Hub): Promise<Page> {
           : {}),
       })
       return Buffer.from(r.data, 'base64')
+    },
+    async capture(options = {}) {
+      const format = options.format === 'webp' ? 'webp' : 'png'
+      const scale = options.scale ?? 1
+      const clip = options.clip
+      if (options.transparent)
+        await s('Emulation.setDefaultBackgroundColorOverride', {
+          color: { r: 0, g: 0, b: 0, a: 0 },
+        })
+      try {
+        const r = await s('Page.captureScreenshot', {
+          format,
+          ...(format === 'webp' ? { quality: 92 } : {}),
+          ...(clip
+            ? {
+                clip: {
+                  x: clip.x,
+                  y: clip.y,
+                  width: clip.w,
+                  height: clip.h,
+                  scale,
+                },
+                captureBeyondViewport: true,
+              }
+            : scale !== 1
+              ? {
+                  clip: {
+                    x: 0,
+                    y: 0,
+                    width: await s('Runtime.evaluate', {
+                      expression: 'window.innerWidth',
+                      returnByValue: true,
+                    }).then(v => Number(v.result?.value) || 1280),
+                    height: await s('Runtime.evaluate', {
+                      expression: 'window.innerHeight',
+                      returnByValue: true,
+                    }).then(v => Number(v.result?.value) || 720),
+                    scale,
+                  },
+                  captureBeyondViewport: true,
+                }
+              : {}),
+        })
+        return Buffer.from(r.data, 'base64')
+      } finally {
+        if (options.transparent)
+          await s('Emulation.setDefaultBackgroundColorOverride', {}).catch(
+            () => {},
+          )
+      }
     },
     async close() {
       for (const h of [...owner.hooked, ...owner.adopted]) cdp.drop(h)

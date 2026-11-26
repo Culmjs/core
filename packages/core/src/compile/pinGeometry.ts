@@ -32,6 +32,7 @@ export function pinGeometry(site: HtmlNode, token: (el: HtmlNode) => number) {
     let meter: HtmlNode = {
       tag: 'svg',
       attrs: {
+        'data-cm-m': '',
         width: 0,
         height: 0,
         'aria-hidden': 'true',
@@ -44,7 +45,11 @@ export function pinGeometry(site: HtmlNode, token: (el: HtmlNode) => number) {
     for (const tag of containers[el.tag] ?? [])
       meter = {
         tag,
-        attrs: { 'aria-hidden': 'true', style: 'display:contents' },
+        attrs: {
+          'data-cm-m': '',
+          'aria-hidden': 'true',
+          style: 'display:contents',
+        },
         children: [meter],
       }
     ;(el.children ??= []).push(meter)

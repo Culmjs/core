@@ -13,7 +13,9 @@ import {
 } from '../document/index.ts'
 import { EMBEDS, embedIdOk } from '../document/embed.ts'
 import { ID_RE, SHAPE_LIMITS } from '../document/kinds.ts'
-import { templateIndex } from '../document/tree.ts'
+import { expandMarks, MAX_MARKS } from '../document/scene.ts'
+import { templateIndex, walk } from '../document/tree.ts'
+import { unrollInstances } from './unroll.ts'
 import {
   isObj,
   DETAILS_NAME,
@@ -29,6 +31,7 @@ import { checkColor, checkSize, checkStyle, declsOf } from '../style/decl.ts'
 import { stylesOf } from '../style/siteStyles.ts'
 import {
   add,
+  addComposed,
   bad,
   fieldsOf,
   idOf,
@@ -312,8 +315,176 @@ export function checkTrees(doc: SiteDocument, reg: Registry, out: Problem[]) {
     }
     c.comps = new Map(doc.components.map(comp => [comp.id, comp]))
   }
-  checkComposedMotions(c, trees, doc.fonts, doc.look.dark)
+  const components = [...c.comps.values()]
+  const env = { fonts: doc.fonts, styles: c.styles, kinds: c.kinds }
+  const compMemo = new Map<Tree, { tree: Node; over: boolean }>()
+  const composed = (t: Tree) => {
+    let hit = compMemo.get(t)
+    if (!hit) {
+      const budget = { n: 0, over: false }
+      const root: Node = t.comp
+        ? {
+            kind: 'instance',
+            component: t.comp.id,
+            id: t.root.id,
+            name: t.root.name,
+            slot: {},
+          }
+        : t.root
+      const tree = unrollInstances(root, components, env, budget)
+      hit = { tree, over: budget.over }
+      compMemo.set(t, hit)
+    }
+    return hit
+  }
+  checkComposedTrees(c, trees, composed)
+  checkComposedMotions(c, trees, doc.fonts, doc.look.dark, composed)
   return doc
+}
+
+function checkComposedTrees(
+  c: Ctx,
+  trees: Tree[],
+  composed: (t: Tree) => { tree: Node; over: boolean },
+) {
+  if (!trees.some(t => t.entries.some(e => e.w.kind === 'instance'))) return
+  const hdr = c.header ? composed(c.header).tree : undefined
+  const ftr = c.footer ? composed(c.footer).tree : undefined
+  const hasDynamicComp = [...c.comps.values()].some(
+    comp =>
+      comp.variants.length > 0 ||
+      comp.props.length > 0 ||
+      (c.compTrees.get(comp.id)?.entries ?? []).some(({ w }) => {
+        const pr = isObj(w.props) ? w.props : {}
+        return (
+          w.kind === 'free' ||
+          w.kind === 'embed' ||
+          (w.kind === 'shape' &&
+            (pr.shadow !== undefined ||
+              (isObj(pr.geometry) &&
+                'type' in pr.geometry &&
+                pr.geometry.type === 'group'))) ||
+          (w.kind === 'text' && pr.textStyle !== undefined) ||
+          (w.kind === 'details' && pr.name !== undefined) ||
+          (w.kind === 'button' && pr.opens !== undefined) ||
+          declsOf(w.style).some(d => d?.reveal || d?.side !== undefined)
+        )
+      }),
+  )
+  for (const t of trees) {
+    if (!t.entries.some(e => e.w.kind === 'instance')) continue
+    const hasOverrides = t.entries.some(
+      ({ w }) =>
+        w.kind === 'instance' &&
+        (w.set !== undefined || w.overrides !== undefined),
+    )
+    if (!hasDynamicComp && !hasOverrides) continue
+    const { tree, over } = composed(t)
+    const authored = new Map(t.entries.map(e => [e.w.id, e.w]))
+    if (over) continue
+    const targets = new Map<string, Node>()
+    for (const r of t.which === 'component'
+      ? [tree]
+      : [tree, hdr, ftr].filter((x): x is Node => !!x))
+      walk(r, x => void targets.set(x.id, x))
+    walk(tree, (w, parent) => {
+      const say = (message: string, path?: string, code?: Code) =>
+        addComposed(c, t, authored, tree, w, message, path, code)
+      const pr = isObj(w.props) ? w.props : {}
+      const gt = isObj(pr.geometry)
+        ? (pr.geometry as { type?: unknown; combine?: unknown })
+        : undefined
+      if (
+        w.kind === 'shape' &&
+        gt?.type === 'group' &&
+        gt.combine === 'subtract'
+      )
+        for (const cutter of (w.children ?? []).slice(1))
+          if (cutter.motion !== undefined)
+            addComposed(
+              c,
+              t,
+              authored,
+              tree,
+              cutter,
+              'A mask cutter part in a subtract shape cannot carry motion.',
+              'motion',
+            )
+      if (w.kind === 'free')
+        for (const l of ['desktop', 'tablet', 'phone'] as const)
+          try {
+            effectiveFreeBoxes(w, l)
+          } catch {
+            say(
+              "There is no room for these blocks within the layout's 1,000 rows.",
+            )
+            break
+          }
+      if (
+        w.kind === 'shape' &&
+        typeof pr.shadow === 'string' &&
+        !c.styles.shadows.some(x => x.id === pr.shadow)
+      )
+        say('Its shadow is not one this site has.', 'props.shadow')
+      if (
+        w.kind === 'text' &&
+        pr.textStyle !== undefined &&
+        !c.styles.text.some(x => x.id === pr.textStyle)
+      )
+        say('Its text style is not one this site has.', 'props.textStyle')
+      if (
+        w.kind === 'details' &&
+        pr.name !== undefined &&
+        !(typeof pr.name === 'string' && DETAILS_NAME.test(pr.name))
+      )
+        say(
+          'Its name must be 1 to 32 lowercase letters, digits and dashes.',
+          'props.name',
+        )
+      if (
+        w.kind === 'embed' &&
+        typeof pr.provider === 'string' &&
+        Object.hasOwn(EMBEDS, pr.provider) &&
+        typeof pr.id === 'string' &&
+        !embedIdOk(pr.provider, pr.id)
+      )
+        say('Its id is not a valid id for that provider.', 'props.id')
+      if (
+        w.kind === 'button' &&
+        typeof pr.opens === 'string' &&
+        typeof pr.command === 'string'
+      ) {
+        const target = targets.get(pr.opens)
+        const layer = isObj(target?.props) ? target.props.layer : undefined
+        if (!target)
+          say(
+            'It points at a node that is not in this tree, the header or the footer.',
+            'props.opens',
+          )
+        else if (
+          pr.command === 'show-modal' || pr.command === 'close'
+            ? layer !== 'dialog'
+            : !(layer === 'popover-auto' || layer === 'popover-manual')
+        )
+          say(
+            'It points at a node that cannot take that command.',
+            'props.command',
+          )
+      }
+      if (w.style !== undefined) {
+        if (
+          declsOf(w.style).some(d => d?.reveal) &&
+          !(t.which === 'footer' && !parent)
+        )
+          say("Reveal belongs on the footer's top block only.", 'style')
+        if (
+          declsOf(w.style).some(d => d?.side !== undefined) &&
+          !(t.which === 'header' && parent === tree)
+        )
+          say("Side belongs on the header's top blocks only.", 'style')
+      }
+    })
+  }
 }
 
 export function checkTree(c: Ctx, t0: Tree, seen: Set<string>) {
@@ -592,6 +763,130 @@ export function geometryBad(v: unknown): string | null {
           (v.combine === undefined ||
             oneOf(v.combine, ['layer', 'union', 'subtract'])),
       )
+    case 'scene':
+      return ok(keys('view') && viewOk(v.view))
+    case 'curve':
+      return ok(
+        keys('points', 'closed', 'tension', 'view') &&
+          Array.isArray(v.points) &&
+          v.points.length >= 2 &&
+          v.points.length <= 128 &&
+          v.points.every(p => pair(p, -10000, 10000)) &&
+          (v.closed === undefined || typeof v.closed === 'boolean') &&
+          (v.tension === undefined || isNum(v.tension, 0, 1)) &&
+          viewOk(v.view),
+      )
+    case 'arc':
+      return ok(
+        keys('cx', 'cy', 'r', 'inner', 'start', 'end', 'view') &&
+          isNum(v.start, -720, 720) &&
+          isNum(v.end, -720, 720) &&
+          (v.cx === undefined || isNum(v.cx, -10000, 10000)) &&
+          (v.cy === undefined || isNum(v.cy, -10000, 10000)) &&
+          (v.r === undefined || isNum(v.r, 0.5, 10000)) &&
+          (v.inner === undefined || isNum(v.inner, 0, 10000)) &&
+          viewOk(v.view),
+      )
+    case 'wave':
+      return ok(
+        keys('y', 'amp', 'freq', 'phase', 'closeBottom', 'view') &&
+          (v.y === undefined || isNum(v.y, -10000, 10000)) &&
+          isNum(v.amp, 0, 5000) &&
+          isNum(v.freq, 0.1, 64) &&
+          (v.phase === undefined || isNum(v.phase, -100, 100)) &&
+          (v.closeBottom === undefined || typeof v.closeBottom === 'boolean') &&
+          viewOk(v.view),
+      )
+    case 'chart':
+      return ok(
+        keys('chart', 'series', 'labels', 'view', 'grid', 'legend') &&
+          oneOf(v.chart, ['bar', 'line', 'area', 'spark', 'donut']) &&
+          Array.isArray(v.series) &&
+          v.series.length >= 1 &&
+          v.series.length <= 8 &&
+          v.series.every(
+            s =>
+              isObj(s) &&
+              only(s, ['name', 'values', 'color']) &&
+              (s.name === undefined || isStr(s.name, 40)) &&
+              Array.isArray(s.values) &&
+              s.values.length >= 1 &&
+              s.values.length <= 64 &&
+              s.values.every(x => isNum(x, -1e9, 1e9)),
+          ) &&
+          (v.labels === undefined ||
+            (Array.isArray(v.labels) &&
+              v.labels.length <= 64 &&
+              v.labels.every(l => isStr(l, 40)))) &&
+          (v.grid === undefined || typeof v.grid === 'boolean') &&
+          (v.legend === undefined || typeof v.legend === 'boolean') &&
+          viewOk(v.view),
+      )
+    case 'diagram': {
+      if (
+        !keys('dir', 'nodes', 'edges', 'view') ||
+        (v.dir !== undefined && !oneOf(v.dir, ['LR', 'TB'])) ||
+        !Array.isArray(v.nodes) ||
+        v.nodes.length < 1 ||
+        v.nodes.length > 32 ||
+        !Array.isArray(v.edges) ||
+        v.edges.length > 64 ||
+        !viewOk(v.view)
+      )
+        return 'is not valid for its type.'
+      const ids = new Set<string>()
+      for (const n of v.nodes) {
+        if (
+          !isObj(n) ||
+          !only(n, ['id', 'label', 'sub', 'col', 'row', 'fill']) ||
+          typeof n.id !== 'string' ||
+          !/^[a-zA-Z0-9_-]{1,24}$/.test(n.id) ||
+          ids.has(n.id) ||
+          typeof n.label !== 'string' ||
+          n.label.length < 1 ||
+          n.label.length > 60 ||
+          (n.sub !== undefined && !isStr(n.sub, 60)) ||
+          (n.col !== undefined && !isInt(n.col, 0, 31)) ||
+          (n.row !== undefined && !isInt(n.row, 0, 31))
+        )
+          return 'is not valid for its type.'
+        ids.add(n.id)
+      }
+      for (const e of v.edges) {
+        if (
+          !Array.isArray(e) ||
+          e.length < 2 ||
+          e.length > 3 ||
+          typeof e[0] !== 'string' ||
+          typeof e[1] !== 'string' ||
+          (e[2] !== undefined && !isStr(e[2], 40))
+        )
+          return 'is not valid for its type.'
+        if (!ids.has(e[0]) || !ids.has(e[1]))
+          return `has an edge pointing at an unknown node; allowed: ${[...ids].join(', ')}.`
+      }
+      return null
+    }
+    case 'contours':
+      return ok(
+        keys('seed', 'bands', 'scale', 'view') &&
+          isInt(v.seed, 0, 2147483647) &&
+          (v.bands === undefined || isInt(v.bands, 2, 24)) &&
+          (v.scale === undefined || isNum(v.scale, 0.25, 4)) &&
+          viewOk(v.view),
+      )
+    case 'stamp':
+      return ok(
+        keys('text', 'center', 'rings', 'teeth', 'rotate', 'view') &&
+          typeof v.text === 'string' &&
+          v.text.length >= 1 &&
+          v.text.length <= 120 &&
+          (v.center === undefined || isStr(v.center, 40)) &&
+          (v.rings === undefined || v.rings === 1 || v.rings === 2) &&
+          (v.teeth === undefined || isInt(v.teeth, 8, 64)) &&
+          (v.rotate === undefined || isNum(v.rotate, -360, 360)) &&
+          viewOk(v.view),
+      )
     default:
       return 'has a type that is not a shape geometry.'
   }
@@ -603,6 +898,233 @@ const colorBad = (c: Checks, v: unknown): boolean => {
     k === undefined ||
     (typeof k === 'object' && !c.styles.colors.some(x => x.id === k.style))
   )
+}
+
+const paintBad = (c: Checks, v: unknown): string | null => {
+  if (v === 'none') return null
+  if (isObj(v) && !Object.hasOwn(v, 'style')) {
+    const radialOk =
+      v.radial === undefined ||
+      (Array.isArray(v.radial) &&
+        v.radial.length === 3 &&
+        isNum(v.radial[0], 0, 100) &&
+        isNum(v.radial[1], 0, 100) &&
+        isNum(v.radial[2], 0.01, 200))
+    const stopsOk =
+      Array.isArray(v.stops) &&
+      v.stops.length >= 2 &&
+      v.stops.length <= 12 &&
+      v.stops.every(
+        s =>
+          isObj(s) &&
+          only(s, ['color', 'at', 'alpha']) &&
+          !colorBad(c, s.color) &&
+          isNum(s.at, 0, 100) &&
+          (s.alpha === undefined || isNum(s.alpha, 0, 1)),
+      )
+    const twoOk =
+      v.stops === undefined && !colorBad(c, v.from) && !colorBad(c, v.to)
+    if (
+      only(v, ['from', 'to', 'stops', 'angle', 'radial']) &&
+      (stopsOk || twoOk) &&
+      (v.angle === undefined || isNum(v.angle, 0, 360)) &&
+      radialOk
+    )
+      return null
+    return 'is not a valid gradient; it takes {"from":<colour>,"to":<colour>,"angle"?:0 to 360,"radial"?:[cx,cy,r]} or {"stops":[...]}, for example {"from":"brand","to":"ink","angle":135}'
+  }
+  return colorBad(c, v)
+    ? 'is not a paint; it takes a site colour name, a #rrggbb colour, a gradient or "none", for example "brand", "#1f2937", {"from":"brand","to":"ink","angle":135} or "none"'
+    : null
+}
+
+const strokeBad = (c: Checks, v: unknown): boolean =>
+  !(
+    isObj(v) &&
+    only(v, ['color', 'width', 'dash']) &&
+    !colorBad(c, v.color) &&
+    isNum(v.width, 0, 200) &&
+    (v.dash === undefined || pair(v.dash, 0, 1000))
+  )
+
+const MARK_SHAPES = [
+  'rect',
+  'circle',
+  'ellipse',
+  'line',
+  'curve',
+  'arc',
+  'wave',
+  'grid',
+  'path',
+  'label',
+] as const
+const MARK_KEYS = [
+  ...MARK_SHAPES,
+  'at',
+  'anchor',
+  'size',
+  'weight',
+  'font',
+  'fill',
+  'stroke',
+  'opacity',
+  'blur',
+  'rotate',
+  'repeat',
+]
+
+function marksBad(c: Checks, v: unknown): Bad | null {
+  if (!Array.isArray(v) || v.length > 64)
+    return bad('must be a list of at most 64 marks.')
+  for (let i = 0; i < v.length; i++) {
+    const m = v[i]
+    if (!isObj(m) || !only(m, MARK_KEYS))
+      return bad(`has an invalid mark at index ${i}.`)
+    const kinds = MARK_SHAPES.filter(k => m[k] !== undefined)
+    if (kinds.length !== 1)
+      return bad(`mark ${i} must name exactly one primitive or label.`)
+    if (
+      m.rect !== undefined &&
+      (!Array.isArray(m.rect) ||
+        m.rect.length < 4 ||
+        m.rect.length > 5 ||
+        !m.rect.every(x => isNum(x, -10000, 10000)))
+    )
+      return bad(`mark ${i} has an invalid rect.`)
+    if (
+      m.circle !== undefined &&
+      (!Array.isArray(m.circle) ||
+        m.circle.length !== 3 ||
+        !m.circle.every(x => isNum(x, -10000, 10000)) ||
+        (m.circle[2] as number) <= 0)
+    )
+      return bad(`mark ${i} has an invalid circle.`)
+    if (
+      m.ellipse !== undefined &&
+      (!Array.isArray(m.ellipse) ||
+        m.ellipse.length !== 4 ||
+        !m.ellipse.every(x => isNum(x, -10000, 10000)))
+    )
+      return bad(`mark ${i} has an invalid ellipse.`)
+    if (
+      m.line !== undefined &&
+      (!Array.isArray(m.line) ||
+        m.line.length !== 4 ||
+        !m.line.every(x => isNum(x, -10000, 10000)))
+    )
+      return bad(`mark ${i} has an invalid line.`)
+    if (
+      m.curve !== undefined &&
+      (!isObj(m.curve) ||
+        !only(m.curve, ['points', 'closed', 'tension']) ||
+        !Array.isArray(m.curve.points) ||
+        m.curve.points.length < 2 ||
+        m.curve.points.length > 128 ||
+        !m.curve.points.every(p => pair(p, -10000, 10000)) ||
+        (m.curve.closed !== undefined && typeof m.curve.closed !== 'boolean') ||
+        (m.curve.tension !== undefined && !isNum(m.curve.tension, 0, 1)))
+    )
+      return bad(`mark ${i} has an invalid curve.`)
+    if (
+      m.arc !== undefined &&
+      (!isObj(m.arc) ||
+        !only(m.arc, ['cx', 'cy', 'r', 'inner', 'start', 'end']) ||
+        !isNum(m.arc.cx, -10000, 10000) ||
+        !isNum(m.arc.cy, -10000, 10000) ||
+        !isNum(m.arc.r, 0.5, 10000) ||
+        (m.arc.inner !== undefined && !isNum(m.arc.inner, 0, 10000)) ||
+        !isNum(m.arc.start, -720, 720) ||
+        !isNum(m.arc.end, -720, 720))
+    )
+      return bad(`mark ${i} has an invalid arc.`)
+    if (
+      m.wave !== undefined &&
+      (!isObj(m.wave) ||
+        !only(m.wave, ['y', 'amp', 'freq', 'phase', 'closeBottom']) ||
+        (m.wave.y !== undefined && !isNum(m.wave.y, -10000, 10000)) ||
+        !isNum(m.wave.amp, 0, 5000) ||
+        !isNum(m.wave.freq, 0.1, 64) ||
+        (m.wave.phase !== undefined && !isNum(m.wave.phase, -100, 100)) ||
+        (m.wave.closeBottom !== undefined &&
+          typeof m.wave.closeBottom !== 'boolean'))
+    )
+      return bad(`mark ${i} has an invalid wave.`)
+    if (
+      m.grid !== undefined &&
+      (!isObj(m.grid) ||
+        !only(m.grid, ['cols', 'rows']) ||
+        !isInt(m.grid.cols, 1, 64) ||
+        !isInt(m.grid.rows, 1, 64))
+    )
+      return bad(`mark ${i} has an invalid grid.`)
+    if (
+      m.path !== undefined &&
+      (typeof m.path !== 'string' ||
+        m.path.length > SHAPE_LIMITS.path ||
+        !PATH_RE.test(m.path))
+    )
+      return bad(`mark ${i} has invalid path data.`)
+    if (m.label !== undefined && !isStr(m.label, 200))
+      return bad(`mark ${i} has an invalid label.`)
+    if (m.at !== undefined && !pair(m.at, -10000, 10000))
+      return bad(`mark ${i} has an invalid at coordinate.`)
+    if (m.anchor !== undefined && !oneOf(m.anchor, ['start', 'middle', 'end']))
+      return bad(`mark ${i} has an invalid anchor.`)
+    if (m.size !== undefined && !isNum(m.size, 4, 400))
+      return bad(`mark ${i} has an invalid text size.`)
+    if (m.weight !== undefined && !isInt(m.weight, 100, 900))
+      return bad(`mark ${i} has an invalid font weight.`)
+    if (
+      m.font !== undefined &&
+      (typeof m.font !== 'string' ||
+        (!m.font.startsWith('sys:') && !c.fonts.has(m.font)))
+    )
+      return bad(`mark ${i} names a font the site does not have.`)
+    if (m.fill !== undefined) {
+      const pb = paintBad(c, m.fill)
+      if (pb) return bad(`mark ${i} ${pb}`)
+    }
+    if (m.stroke !== undefined && strokeBad(c, m.stroke))
+      return bad(`mark ${i} has an invalid stroke.`)
+    if (m.opacity !== undefined && !isNum(m.opacity, 0, 1))
+      return bad(`mark ${i} has an invalid opacity.`)
+    if (m.blur !== undefined && !isNum(m.blur, 0, 40))
+      return bad(`mark ${i} has an invalid blur.`)
+    if (
+      m.rotate !== undefined &&
+      !isNum(m.rotate, -360, 360) &&
+      !(
+        Array.isArray(m.rotate) &&
+        m.rotate.length === 3 &&
+        m.rotate.every(x => isNum(x, -10000, 10000))
+      )
+    )
+      return bad(`mark ${i} has an invalid rotate.`)
+    if (m.repeat !== undefined) {
+      const r = m.repeat
+      if (
+        !isObj(r) ||
+        !only(r, ['count', 'step', 'rotate', 'scale', 'opacity']) ||
+        !isInt(r.count, 2, 64) ||
+        (r.step !== undefined && !pair(r.step, -10000, 10000)) ||
+        (r.scale !== undefined && !isNum(r.scale, 0.1, 4)) ||
+        (r.opacity !== undefined && !pair(r.opacity, 0, 1)) ||
+        (r.rotate !== undefined &&
+          !isNum(r.rotate, -360, 360) &&
+          !(
+            Array.isArray(r.rotate) &&
+            r.rotate.length === 3 &&
+            r.rotate.every(x => isNum(x, -10000, 10000))
+          ))
+      )
+        return bad(`mark ${i} has an invalid repeat.`)
+    }
+  }
+  const expanded = expandMarks(v as never, [100, 100])
+  if (expanded.over)
+    return bad(`expands beyond ${MAX_MARKS} marks.`, 'RESOURCE_LIMIT_EXCEEDED')
+  return null
 }
 
 export function propBad(
@@ -671,34 +1193,31 @@ export function propBad(
         : bad('is not a valid pattern.')
     case 'geometry': {
       const m = geometryBad(v)
+      if (m) return bad(m)
+      if (isObj(v) && v.type === 'chart' && Array.isArray(v.series)) {
+        for (const s of v.series)
+          if (isObj(s) && s.color !== undefined && colorBad(c, s.color))
+            return bad('names a chart series colour that is not allowed.')
+      }
+      if (isObj(v) && v.type === 'diagram' && Array.isArray(v.nodes)) {
+        for (const n of v.nodes)
+          if (isObj(n) && n.fill !== undefined && colorBad(c, n.fill))
+            return bad('names a diagram node fill colour that is not allowed.')
+      }
+      return null
+    }
+    case 'paint': {
+      const m = paintBad(c, v)
       return m ? bad(m) : null
     }
-    case 'paint':
-      if (v === 'none') return null
-      if (isObj(v) && !Object.hasOwn(v, 'style'))
-        return only(v, ['from', 'to', 'angle']) &&
-          !colorBad(c, v.from) &&
-          !colorBad(c, v.to) &&
-          (v.angle === undefined || isNum(v.angle, 0, 360))
-          ? null
-          : bad(
-              'is not a valid gradient; it takes {"from":<colour>,"to":<colour>,"angle"?:0 to 360}, for example {"from":"brand","to":"ink","angle":135}',
-            )
-      return colorBad(c, v)
-        ? bad(
-            'is not a paint; it takes a site colour name, a #rrggbb colour, a gradient or "none", for example "brand", "#1f2937", {"from":"brand","to":"ink","angle":135} or "none"',
-          )
-        : null
     case 'stroke':
-      return isObj(v) &&
-        only(v, ['color', 'width', 'dash']) &&
-        !colorBad(c, v.color) &&
-        isNum(v.width, 0, 200) &&
-        (v.dash === undefined || pair(v.dash, 0, 1000))
+      return !strokeBad(c, v)
         ? null
         : bad(
             'is not a valid stroke; it takes {"color":<colour>,"width":0 to 200,"dash"?:[on,off]}, for example {"color":"ink","width":2}',
           )
+    case 'marks':
+      return marksBad(c, v)
     case 'list':
       return listBad(c, f, v, key, refs, code)
     default:
@@ -883,6 +1402,18 @@ export function checkNode(c: Ctx, t: TCtx, e: Entry) {
           : 'Only a group holds shapes.',
         'children',
       )
+    if (
+      gt === 'group' &&
+      (w.props!.geometry as { combine?: unknown }).combine === 'subtract'
+    )
+      for (const cutter of (w.children ?? []).slice(1))
+        if (cutter.motion !== undefined)
+          add(
+            c,
+            cutter,
+            'A mask cutter part in a subtract shape cannot carry motion.',
+            'motion',
+          )
     if (e.parent?.w.kind === 'button')
       for (const layout of [false, 'tablet', true] as const)
         if (effectivePlacement(w, layout).mode !== 'behind') {

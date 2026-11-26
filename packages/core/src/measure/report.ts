@@ -1,5 +1,5 @@
 import type { Layout, Node, SiteDocument } from '../document/index.ts'
-import { shownOn } from '../layout/placement.ts'
+import { shownOn, styleHidden } from '../document/visibility.ts'
 import { WIDTH_OF } from './checks.ts'
 import { unrolledTrees } from './unrolled.ts'
 import type { Cell, Finding, FindingStatus, Profile, Report } from './types.ts'
@@ -39,21 +39,22 @@ const same = (a: Partial<Cell>, b: Cell) =>
     k => a[k] === undefined || a[k] === b[k],
   )
 
-/** Hidden at a layout: by `hide` (tablet follows desktop) or by the style's `hidden`, which cascades base, tablet, phone. */
-const hiddenAt = (n: Node, layout: Layout) => {
-  if (!shownOn(n, layout)) return true
-  const s = n.style
-  const base = s?.base?.hidden
-  if (layout === 'desktop') return !!base
-  const tablet = s?.tablet?.hidden ?? base
-  return !!(layout === 'tablet' ? tablet : (s?.phone?.hidden ?? tablet))
-}
+/** Hidden at a layout/scheme: by `hide` (tablet follows desktop) or by style `hidden` (unless revealed by a `when` state). */
+const hiddenAt = (n: Node, layout: Layout, dark = false) =>
+  !shownOn(n, layout) ||
+  (!n.style?.when?.some(x => x.decl?.hidden === false) &&
+    styleHidden(n.style, layout, dark))
 
-/** Each node of the page, header and footer (after instances are unrolled) not hidden at `layout`, itself or through an ancestor. */
-function observable(doc: SiteDocument, page: string, layout: Layout) {
+/** Each node of the page, header and footer (after instances are unrolled) not hidden at `layout` and scheme, itself or through an ancestor. */
+function observable(
+  doc: SiteDocument,
+  page: string,
+  layout: Layout,
+  dark = false,
+) {
   const seen = new Set<string>()
   const go = (n: Node, hidden: boolean) => {
-    const h = hidden || hiddenAt(n, layout)
+    const h = hidden || hiddenAt(n, layout, dark)
     if (!h) seen.add(n.id)
     for (const k of n.children ?? []) go(k, h)
   }
@@ -82,9 +83,10 @@ export function compareReports(
       after.incomplete.some(i => same(i, f))
     )
       return 'unchecked'
-    const k = `${f.page}|${layoutOf(f.width)}`
+    const dark = f.theme === 'dark'
+    const k = `${f.page}|${layoutOf(f.width)}|${dark ? 'd' : 'l'}`
     if (!shown.has(k))
-      shown.set(k, observable(afterDoc, f.page, layoutOf(f.width)))
+      shown.set(k, observable(afterDoc, f.page, layoutOf(f.width), dark))
     if (f.nodes.length > 0 && !f.nodes.some(id => shown.get(k)!.has(id)))
       return 'unobservable'
     return keys.has(f.key) ? 'present' : 'fixed'

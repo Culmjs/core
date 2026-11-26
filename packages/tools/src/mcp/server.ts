@@ -18,6 +18,7 @@ import {
   SCHEMA_VERSION,
   find as findNode,
   type Data,
+  type Look,
   type Manifest,
   type Problem,
   type Registry,
@@ -55,6 +56,8 @@ import { examples, JSON_GUIDE, jsonEditSchema } from './json-authoring.ts'
 import { isObj } from '../shared.ts'
 import type { fetchFor } from '../folder/fetch.ts'
 import type { readHeld } from '../folder/held.ts'
+import type { ImageConfig, ImageProvider } from '../image/providers.ts'
+import { renderImage, SIZE_PRESETS } from '../render/render.ts'
 
 export type McpOptions = {
   store: SiteStore
@@ -87,6 +90,12 @@ export type McpOptions = {
     { ok: true; manifest: Manifest } | { ok: false; problems: Problem[] }
   >
   folder?: boolean
+  /** Project directory for standalone `render` output containment and held assets. */
+  cwd?: string
+  /** Optional image generation config from `culm.json`. */
+  images?: ImageConfig
+  /** Optional image generation provider override (used by tests or embedded hosts). */
+  imageProvider?: ImageProvider
   /** Compact JSON-only operation writer with explicit rather than per-write browser measurement. */
   jsonOps?: boolean
 }
@@ -272,6 +281,25 @@ const TOOLS = [
     'Build the site to its output folder and summarise the manifest.',
     schema(),
   ],
+  [
+    'render',
+    `Export any standalone JSON node/shape or existing site node/page as PNG, WebP, or SVG with automatic measure checks. size presets: ${Object.keys(SIZE_PRESETS).join(', ')} or "WIDTHxHEIGHT".`,
+    schema({
+      out: str,
+      node: { type: 'object' },
+      page: str,
+      id: str,
+      size: {},
+      width: num,
+      height: num,
+      scale: num,
+      format: { enum: ['png', 'webp', 'svg'] },
+      transparent: { type: 'boolean' },
+      dark: { type: 'boolean' },
+      look: { type: 'object' },
+      fonts: { type: 'array' },
+    }),
+  ],
 ].map(([name, description, inputSchema]) => ({
   name,
   description,
@@ -416,7 +444,7 @@ const summary = (
 const HINT = 'All ids: read, or diff(from, to).'
 
 const JSX_INSTRUCTIONS = [
-  'Culm builds a site from HTML/CSS, literal JSX or JSON nodes. Write {baseRevision,page,html,css?}, {baseRevision,page,json:{kind:"text",text:"Hello"}}, or JSX as below. No registered block is needed. A new folder site starts with NO pages. Its header is a Row (id header.bar) holding Text header.name ("New site"), Menu header.nav and a hidden Button header.button; its footer is a Column (id footer.bar) holding Menu footer.nav and Text footer.note ("Footer"); fonts sys:sans, text sizes 11 to 96. So do not read first: call describe once for the revision, then write.',
+  'Culm builds a site from HTML/CSS, literal JSX or JSON nodes. Write {baseRevision,page,html,css?}, {baseRevision,page,json:{kind:"text",text:"Hello"}}, or JSX as below. No registered block is needed. An empty site starts with NO pages; culm init creates the 4-page bakery starter (or pass --blank for a minimal single-page site). The default blank header is a Row (id header.bar) holding Text header.name ("New site"), Menu header.nav and a hidden Button header.button; its footer is a Column (id footer.bar) holding Menu footer.nav and Text footer.note ("Footer"); fonts sys:sans, text sizes 11 to 96 (displayMax 240). Call describe once for pages and the revision, then write.',
   'One-shot: ONE write {jsx, baseRevision} holding the whole site: <Site fonts colors look /> <Header>...</Header> <Footer>...</Footer> <Page path="/" title="Home">...</Page> (one <Page> per page; no page argument). It is applied in one batch, all or nothing. The reply is all you need to go on: the new revision, findings (each with node id and JSX path), warnings, and an index of every tree (top-level sections with id, kind, first words). Fix the findings with write {target: "<node id>", jsx, baseRevision: <revision of the reply>}: only that part is replaced, the rest is not resent. Give id="..." to the parts you may change later (hero, pricing); a node without one gets a readable id (h1freshbread).',
   'Edit: find {text | kind | id | selector such as "Row > Text[level=1]" or "Button[text*=Order]", tree?} returns each match as small JSX with its id, tree, path and the revision; then write {target: id, jsx: the ONE element that replaces it, baseRevision}. No read, no resend of the other parts. page + jsx writes one whole tree (page id, "header" or "footer"), as before.',
   'CSS-style values are converted, not refused: width "100%" (fill) or "50%", "24px", "1.5rem", padding "8px 16px", rgba(...) and named colours, a CSS box-shadow string, letterSpacing in px, a font-family name (the Google font is fetched), a text size outside the site range (clamped). A setting that does not apply is moved or dropped (bg on a Shape is its fill, color on a Divider its line, justify on a Box makes it a Column). Each is listed in warnings with its path, line and column; write Culm forms to avoid the warnings.',
@@ -438,7 +466,14 @@ export const INSTRUCTIONS =
 
 export function createMcpServer(o: McpOptions): Server {
   const { store, registry, site, allow, locate } = o
-  const sectionTools = ['describe', 'find', 'write', 'measure', 'build']
+  const sectionTools = [
+    'describe',
+    'find',
+    'write',
+    'measure',
+    'build',
+    'render',
+  ]
   const compact = o.jsonOps
   const exposed = compact
     ? TOOLS.filter(t => sectionTools.includes(String(t.name))).map(t =>
@@ -446,7 +481,7 @@ export function createMcpServer(o: McpOptions): Server {
           ? {
               ...t,
               description:
-                'Commit 1–32 ordered insert/update/move/remove/theme operations atomically. Each insert.node is one JSON section; update merges fields on an id. Give motion as {trigger,effect,settings?} or {trigger,steps}; update.motion:null clears it. Move defaults to the page root. Returns revision and section ids.',
+                'Commit 1–32 ordered insert/update/move/remove/theme/addPage/removePage/setPage operations atomically. Pass page:"header"|"footer" to edit chrome. Each insert.node is one JSON section; update merges fields (props, set, slot, placement, hide, state, on, style, phone, tablet, hover, dark, motion) on an id. Give motion as {trigger,effect,settings?} or {trigger,steps}; update.motion:null clears it. Move defaults to the page root. Returns revision and section ids.',
               inputSchema: schema(
                 { baseRevision: num, page: str, key: str, ops: jsonEditSchema },
                 ['baseRevision', 'ops'],
@@ -456,7 +491,7 @@ export function createMcpServer(o: McpOptions): Server {
             ? {
                 ...t,
                 description:
-                  'Revision, pages, display range. Optional example: figure, group, phone-row or display.',
+                  'Revision, pages, display range. Optional example: figure, group, phone-row, display, motion, chart, diagram or poster.',
               }
             : t.name === 'find'
               ? {
@@ -829,16 +864,30 @@ export function createMcpServer(o: McpOptions): Server {
         }
       }
       // the report of the page just written; the write is kept whatever it says
+      const committed =
+        (await store.get(site, sum.revision as number)) ??
+        ((await store.head(site)) as { doc?: SiteDocument }).doc
       if (a.ops !== undefined) {
-        const committed = await store.get(site, sum.revision as number)
+        const addedPage = b.ops.find(op => op.op === 'addPage') as
+          { page?: string; slug?: string } | undefined
+        const pageId =
+          a.page ??
+          addedPage?.page ??
+          (addedPage?.slug &&
+            committed?.pages.find(p => p.slug === addedPage.slug)?.id) ??
+          'home'
+        const treeRoot =
+          pageId === 'header'
+            ? committed?.header
+            : pageId === 'footer'
+              ? committed?.footer
+              : committed?.pages.find(p => p.id === pageId)?.root
         return reply(
           fit(
             {
               revision: sum.revision,
-              sections:
-                committed?.pages
-                  .find(p => p.id === (a.page ?? 'home'))
-                  ?.root.children?.map(n => n.id) ?? [],
+              ...(seen ? { replayed: true } : {}),
+              sections: treeRoot?.children?.map(n => n.id) ?? [],
               ...(b.warnings.length
                 ? {
                     warningCount: b.warnings.length,
@@ -851,8 +900,10 @@ export function createMcpServer(o: McpOptions): Server {
         )
       }
       if (b.warnings.length) sum.warnings = b.warnings
-      const head = await store.head(site)
-      const first = 'doc' in head ? head.doc.pages[0]?.id : undefined
+      if (seen) sum.replayed = true
+      const docAtRevision =
+        committed ?? ((await store.head(site)) as { doc?: SiteDocument }).doc
+      const first = docAtRevision?.pages[0]?.id
       const written = b.trees.flatMap(t =>
         typeof t === 'object' ? [t.page] : [],
       )
@@ -862,9 +913,10 @@ export function createMcpServer(o: McpOptions): Server {
         classes: [1, 2],
       })
       const m = JSON.parse(mr.content[0]!.text) as Obj
-      const paths =
-        'doc' in head ? pathIndex(head.doc) : new Map<string, string>()
-      if ('doc' in head) sum.index = indexOf(head.doc)
+      const paths = docAtRevision
+        ? pathIndex(docAtRevision)
+        : new Map<string, string>()
+      if (docAtRevision) sum.index = indexOf(docAtRevision)
       sum.hint =
         'Nothing needs a read: index lists what exists, findings name the node id and JSX path. Fix with write {target: id, jsx}; to find another part use find.'
       const body: Obj = mr.isError
@@ -1157,6 +1209,83 @@ export function createMcpServer(o: McpOptions): Server {
             styles,
           },
           ['pages', 'scripts', 'styles'],
+        ),
+      )
+    },
+
+    async render(a) {
+      if (a.out !== undefined && typeof a.out !== 'string')
+        return fail([bad('out must be a file path.', 'out')])
+      if (!o.cwd && a.out !== undefined)
+        return fail([
+          {
+            code: 'UNSUPPORTED_CAPABILITY',
+            message:
+              'This server has no project folder to write image files into. Omit out with format:"svg" or run from a folder site.',
+          },
+        ])
+      const h =
+        a.node === undefined || a.page !== undefined || a.id !== undefined
+          ? await headOf()
+          : await store.head(site).catch(() => undefined)
+      if (h && 'content' in h) return h
+      const doc = h && 'doc' in h ? h.doc : undefined
+      const held = o.held ? await o.held() : undefined
+      const res = await renderImage(
+        {
+          ...(a.out !== undefined ? { out: a.out as string } : {}),
+          ...(a.node !== undefined ? { node: a.node } : {}),
+          ...(a.page !== undefined ? { page: a.page as string } : {}),
+          ...(a.id !== undefined ? { id: a.id as string } : {}),
+          ...(a.size !== undefined ? { size: a.size as string } : {}),
+          ...(a.width !== undefined ? { width: a.width as number } : {}),
+          ...(a.height !== undefined ? { height: a.height as number } : {}),
+          ...(a.scale !== undefined ? { scale: a.scale as number } : {}),
+          ...(a.format !== undefined
+            ? { format: a.format as 'png' | 'webp' | 'svg' }
+            : {}),
+          ...(a.transparent !== undefined
+            ? { transparent: a.transparent as boolean }
+            : {}),
+          ...(a.dark !== undefined ? { dark: a.dark as boolean } : {}),
+          ...(isObj(a.look) ? { look: a.look as Partial<Look> } : {}),
+          ...(Array.isArray(a.fonts) ? { fonts: a.fonts } : {}),
+        },
+        {
+          cwd: o.cwd,
+          containInDir: true,
+          doc,
+          registry,
+          data: o.data,
+          ...(held ? { fonts: held.fonts, icons: held.icons } : {}),
+          ...(o.assets ? { assets: o.assets } : {}),
+          ...(o.browser ? { browser: o.browser } : {}),
+          ...(o.executable ? { executable: o.executable } : {}),
+          images: o.images,
+          imageProvider: o.imageProvider,
+        },
+      )
+      if (!res.ok) return fail(res.problems)
+      return reply(
+        fit(
+          {
+            ok: true,
+            ...(res.out ? { out: res.out } : {}),
+            format: res.format,
+            width: res.width,
+            height: res.height,
+            scale: res.scale,
+            bytes: res.bytes,
+            sha256: res.sha256,
+            ...(res.svg && !res.out ? { svg: res.svg } : {}),
+            findings: res.findings.map(f => ({
+              check: f.check,
+              nodes: f.nodes,
+              message: f.message,
+              ...(f.fix ? { fix: f.fix } : {}),
+            })),
+          },
+          ['findings'],
         ),
       )
     },

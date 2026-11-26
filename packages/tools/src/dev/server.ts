@@ -160,12 +160,18 @@ export async function startDev(
     const real = await resolveFile(root, base, rest)
     if (!real) return end(res, 404)
     try {
+      const ext = extname(real).toLowerCase()
       res
         .writeHead(200, {
-          'content-type':
-            MIME[extname(real).toLowerCase()] ?? 'application/octet-stream',
+          'content-type': MIME[ext] ?? 'application/octet-stream',
           'x-content-type-options': 'nosniff',
           'cache-control': 'no-cache',
+          ...(ext === '.svg'
+            ? {
+                'content-security-policy':
+                  "default-src 'none'; style-src 'unsafe-inline'",
+              }
+            : {}),
         })
         .end(await readFile(real))
     } catch {
@@ -216,10 +222,15 @@ export async function startDev(
         .end(page(html))
     if (pages.size === 0)
       return void res
-        .writeHead(503, { 'content-type': MIME['.html']! })
+        .writeHead(problems.length ? 503 : 200, {
+          'content-type': MIME['.html']!,
+          'cache-control': 'no-cache',
+        })
         .end(
           page(
-            '<!doctype html><title>Culm</title><body>The project has problems.</body>',
+            problems.length
+              ? '<!doctype html><title>Culm</title><body>The project has problems.</body>'
+              : '<!doctype html><title>Culm</title><body>No pages yet.</body>',
           ),
         )
     end(res, 404)

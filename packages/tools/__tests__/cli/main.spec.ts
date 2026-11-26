@@ -34,7 +34,7 @@ async function run(args: string[], cwd: string) {
 }
 
 const childArgs = (...args: string[]) => [
-  '--conditions=source',
+  '--conditions=@culmjs/source',
   '--import',
   import.meta.resolve('tsx'),
   new URL('./culm.ts', import.meta.url).pathname,
@@ -207,7 +207,7 @@ test('mcp defaults to the five authoring tools over stdio, with no extra stdout'
       .find(m => m.id === 2)
       ?.result?.tools?.map(t => t.name)
       .sort(),
-    ['build', 'describe', 'find', 'measure', 'write'],
+    ['build', 'describe', 'find', 'measure', 'render', 'write'],
   )
 })
 
@@ -400,7 +400,7 @@ test('formatLocated: file:line:column, the code or the check, the message, then 
   )
 })
 
-test('tools index exports exactly the nine names', () => {
+test('tools index exports exactly the ten names', () => {
   assert.deepEqual(Object.keys(tools).sort(), [
     'authoringSchema',
     'buildSite',
@@ -410,6 +410,7 @@ test('tools index exports exactly the nine names', () => {
     'measureSince',
     'openProject',
     'protect',
+    'renderImage',
     'runMeasure',
   ])
 })

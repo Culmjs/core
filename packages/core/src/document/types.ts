@@ -503,7 +503,9 @@ export type Pattern = {
 export type FxValue = {
   [k: string]: string | number | boolean | string[] | undefined
 }
-/** What a shape draws (props.geometry). Absent optional fields take the defaults the compiler states. `view` is the proportion (rect, ellipse, line) or the drawing's own size (path, group). */
+/** A single stop in a shape gradient. `at` is 0 to 100. */
+export type ShapeStop = { color: Color; at: number; alpha?: number }
+/** What a shape draws (props.geometry). Absent optional fields take the defaults the compiler states. `view` is the proportion (rect, ellipse, line) or the drawing's own size (path, group, scene, chart, diagram, contours, stamp). */
 export type ShapeGeometry =
   | {
       type: 'rect'
@@ -526,17 +528,139 @@ export type ShapeGeometry =
       view?: [number, number]
       combine?: 'layer' | 'union' | 'subtract'
     }
+  | { type: 'scene'; view?: [number, number] }
+  | {
+      type: 'curve'
+      points: [number, number][]
+      closed?: boolean
+      tension?: number
+      view?: [number, number]
+    }
+  | {
+      type: 'arc'
+      cx?: number
+      cy?: number
+      r?: number
+      inner?: number
+      start: number
+      end: number
+      view?: [number, number]
+    }
+  | {
+      type: 'wave'
+      y?: number
+      amp: number
+      freq: number
+      phase?: number
+      closeBottom?: boolean
+      view?: [number, number]
+    }
+  | {
+      type: 'chart'
+      chart: 'bar' | 'line' | 'area' | 'spark' | 'donut'
+      series: { name?: string; values: number[]; color?: Color }[]
+      labels?: string[]
+      view?: [number, number]
+      grid?: boolean
+      legend?: boolean
+    }
+  | {
+      type: 'diagram'
+      dir?: 'LR' | 'TB'
+      nodes: {
+        id: string
+        label: string
+        sub?: string
+        col?: number
+        row?: number
+        fill?: Color
+      }[]
+      edges: [string, string, string?][]
+      view?: [number, number]
+    }
+  | {
+      type: 'contours'
+      seed: number
+      bands?: number
+      scale?: number
+      view?: [number, number]
+    }
+  | {
+      type: 'stamp'
+      text: string
+      center?: string
+      rings?: 1 | 2
+      teeth?: number
+      rotate?: number
+      view?: [number, number]
+    }
 export type ShapePaint =
-  Color | { from: Color; to: Color; angle?: number } | 'none'
+  | Color
+  | {
+      from?: Color
+      to?: Color
+      stops?: ShapeStop[]
+      angle?: number
+      radial?: [number, number, number]
+    }
+  | 'none'
 export type ShapeStroke = {
   color: Color
   width: number
   dash?: [number, number]
 }
+export type MarkRepeat = {
+  count: number
+  step?: [number, number]
+  rotate?: number | [number, number, number]
+  scale?: number
+  opacity?: [number, number]
+}
+export type SceneMark = {
+  rect?: [number, number, number, number, number?]
+  circle?: [number, number, number]
+  ellipse?: [number, number, number, number]
+  line?: [number, number, number, number]
+  curve?: {
+    points: [number, number][]
+    closed?: boolean
+    tension?: number
+  }
+  arc?: {
+    cx: number
+    cy: number
+    r: number
+    inner?: number
+    start: number
+    end: number
+  }
+  wave?: {
+    y?: number
+    amp: number
+    freq: number
+    phase?: number
+    closeBottom?: boolean
+  }
+  grid?: { cols: number; rows: number }
+  path?: string
+  label?: string
+  at?: [number, number]
+  anchor?: 'start' | 'middle' | 'end'
+  size?: number
+  weight?: number
+  font?: FontRef
+  fill?: ShapePaint
+  stroke?: ShapeStroke
+  opacity?: number
+  blur?: number
+  rotate?: number | [number, number, number]
+  repeat?: MarkRepeat
+}
 export type PropValue =
   | ShapeGeometry
   | ShapePaint
   | ShapeStroke
+  | SceneMark[]
   | string
   | number
   | boolean

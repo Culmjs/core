@@ -250,6 +250,30 @@ export function checkDocument(
           `The look has a field this version does not know: ${k.slice(0, 40)}.`,
           `look.${k.slice(0, 40)}`,
         )
+    if (look.dark !== 'light' && look.dark !== 'dark' && look.dark !== 'auto')
+      bad('The look dark scheme must be light, dark or auto.', 'look.dark')
+    if (
+      !Number.isFinite(look.corners) ||
+      look.corners < 0 ||
+      look.corners > 200
+    )
+      bad('The look corners must be a number from 0 to 200.', 'look.corners')
+    if (look.custom !== undefined && look.custom !== true)
+      bad('The look custom flag must be true.', 'look.custom')
+    const docFonts = new Set(Array.isArray(doc.fonts) ? doc.fonts : [])
+    for (const fk of ['headingFont', 'bodyFont', 'labelFont'] as const) {
+      const f = look[fk]
+      if (f === undefined) continue
+      if (
+        !isFontRef(f) ||
+        (f.startsWith('cat:') && !Object.hasOwn(FONTS, f.slice(4))) ||
+        (f.startsWith('up:') && !docFonts.has(f))
+      )
+        bad(
+          `The look ${fk} uses a font that is invalid or missing from fonts.`,
+          `look.${fk}`,
+        )
+    }
     for (const m of checkLook(look as Look)) bad(m, 'look')
   }
   if (doc.styles !== undefined) {

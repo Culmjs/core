@@ -283,17 +283,18 @@ export const dropdownRules =
 /** `divide`: a thin line where the items of a row, a column, a list or a grid touch. `sigs` is the layout of each layer: `x` (side by side), `y` (stacked) or `gN` (a grid of N columns); a layer is written only where it differs from the one before. */
 export const divideRules =
   (sigs: [string, string, string]) => (cls: string) => {
+    const item = ':not([data-cm-m])'
     const line = (g: string) =>
       g === 'x'
-        ? `.${cls}>*+*{border-inline-start-width:1px}`
+        ? `.${cls}>${item}+${item}{border-inline-start-width:1px}`
         : g === 'y'
-          ? `.${cls}>*+*{border-top-width:1px}`
-          : `.${cls}>:nth-child(n+${+g.slice(1) + 1}){border-top-width:1px}${g === 'g1' ? '' : `.${cls}>:not(:nth-child(${g.slice(1)}n+1)){border-inline-start-width:1px}`}`
-    let css = `.${cls}>*{border:0 solid var(--s-line)}${line(sigs[0])}`
+          ? `.${cls}>${item}+${item}{border-top-width:1px}`
+          : `.${cls}>:nth-child(n+${+g.slice(1) + 1} of ${item}){border-top-width:1px}${g === 'g1' ? '' : `.${cls}>:not(:nth-child(${g.slice(1)}n+1) of ${item}){border-inline-start-width:1px}`}`
+    let css = `.${cls}>${item}{border:0 solid var(--s-line)}${line(sigs[0])}`
     if (sigs[1] !== sigs[0])
-      css += `@media (max-width:1024px){.${cls}>*{border-width:0}${line(sigs[1])}}`
+      css += `@media (max-width:1024px){.${cls}>${item}{border-width:0}${line(sigs[1])}}`
     if (sigs[2] !== sigs[1])
-      css += `@media (max-width:600px){.${cls}>*{border-width:0}${line(sigs[2])}}`
+      css += `@media (max-width:600px){.${cls}>${item}{border-width:0}${line(sigs[2])}}`
     return css
   }
 /** The links of a menu answering a pointer or focus (style `linkHover`; the layers write the --s-lh-* values this reads). Radius and room are on every link, so nothing shifts on hover. */

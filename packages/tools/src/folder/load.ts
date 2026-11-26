@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import { posix } from 'node:path'
+import { posix, resolve } from 'node:path'
 import { ID_RE, PLAIN, isObj } from '../shared.ts'
 import { refusal, walkFiles } from './files.ts'
 import {
@@ -112,6 +112,34 @@ export const defaultSlot = (parent: string | undefined): Slot =>
         ? { cols: 1, rows: 1 }
         : {}
 
+export const INSTANCE_FIELDS = new Set([
+  'slot',
+  'placement',
+  'hide',
+  'showIf',
+  'showIfAny',
+  'locked',
+  'overrides',
+  'bind',
+  'children',
+])
+
+export function folderFingerprint(
+  files: ReadonlyMap<string, string>,
+  refused: ReadonlyMap<string, string> = new Map(),
+): string {
+  const h = createHash('sha256')
+  for (const [p, t] of [...files].sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  ))
+    h.update(`F:${p.length}:${p}:${t.length}:${t}\0`)
+  for (const [p, r] of [...refused].sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  ))
+    h.update(`R:${p.length}:${p}:${r.length}:${r}\0`)
+  return h.digest('hex')
+}
+
 const TARGET_KEYS = ['scrollTo', 'open', 'close', 'play', 'pause']
 
 async function build(
@@ -129,7 +157,7 @@ async function build(
     return f
   }
   const origins = new Map<string, Origin>()
-  const trees = new Map<string, TreeRef>()
+  const trees = new Map<string, TreeRef[]>()
   const pageFiles = new Map<string, string>()
   const pieceFiles = new Map<string, string>()
   const map = makeSourceMap({
@@ -141,9 +169,19 @@ async function build(
   })
   const record = (tree: TreeRef, id: string, o: Origin) => {
     origins.set(`${treeKey(tree)}|${id}`, o)
-    if (typeof tree !== 'string' && 'component' in tree) {
-      if (!trees.has(id)) trees.set(id, tree)
-    } else trees.set(id, tree)
+    const list = trees.get(id) ?? []
+    const key = treeKey(tree)
+    if (!list.some(t => treeKey(t) === key)) {
+      if (typeof tree !== 'string' && 'component' in tree) list.push(tree)
+      else {
+        const firstComp = list.findIndex(
+          t => typeof t !== 'string' && 'component' in t,
+        )
+        if (firstComp >= 0) list.splice(firstComp, 0, tree)
+        else list.push(tree)
+      }
+      trees.set(id, list)
+    }
   }
 
   const say = (
@@ -272,7 +310,53 @@ async function build(
     )
 
   const pieces = new Map<string, Component>()
+  const attemptedPieces = new Set<string>()
   const stack: string[] = []
+
+  function loadPiece(rel: string): Component | undefined {
+    const existing = pieces.get(rel)
+    if (existing) return existing
+    if (attemptedPieces.has(rel)) return undefined
+    attemptedPieces.add(rel)
+    const v = parse(rel).value
+    let id = derivedId(rel, [])
+    if (!isObj(v) || !isObj(v.root)) {
+      bad('A piece file needs a "root".', rel, [])
+      return undefined
+    }
+    if (v.id !== undefined) {
+      if (typeof v.id === 'string' && ID_RE.test(v.id)) id = v.id
+      else {
+        bad('A piece "id" is 1 to 20 lowercase letters and digits.', rel, [
+          'id',
+        ])
+        return undefined
+      }
+    }
+    const twin = [...pieces.entries()].find(([, c]) => c.id === id)
+    if (twin) {
+      bad(`The piece id "${id}" is also used by ${twin[0]}.`, rel, ['id'])
+      bad(`The piece id "${id}" is also used by ${rel}.`, twin[0], ['id'])
+      return undefined
+    }
+    const comp: Component = {
+      id,
+      name: typeof v.name === 'string' && v.name ? v.name : rel,
+      root: undefined as unknown as Node,
+      props: Array.isArray(v.settings) ? (v.settings as ComponentProp[]) : [],
+      variants: Array.isArray(v.variants)
+        ? (v.variants as Component['variants'])
+        : [],
+    }
+    pieceFiles.set(id, rel)
+    stack.push(rel)
+    const root = nodeOf(rel, ['root'], v.root, undefined, { component: id })
+    stack.pop()
+    if (!root) return undefined
+    comp.root = root
+    pieces.set(rel, comp)
+    return comp
+  }
 
   function useOf(
     file: string,
@@ -305,53 +389,37 @@ async function build(
       )
       return undefined
     }
-    let comp = pieces.get(rel)
-    if (!comp) {
-      const v = parse(rel).value
-      let id = derivedId(rel, [])
-      if (!isObj(v) || !isObj(v.root)) {
-        bad('A piece file needs a "root".', rel, [])
-        return undefined
-      }
-      if (v.id !== undefined) {
-        if (typeof v.id === 'string' && ID_RE.test(v.id)) id = v.id
-        else {
-          bad('A piece "id" is 1 to 20 lowercase letters and digits.', rel, [
-            'id',
-          ])
-          return undefined
-        }
-      }
-      const twin = [...pieces.entries()].find(([, c]) => c.id === id)
-      if (twin) {
-        bad(`The piece id "${id}" is also used by ${twin[0]}.`, rel, ['id'])
-        bad(`The piece id "${id}" is also used by ${rel}.`, twin[0], ['id'])
-        return undefined
-      }
-      comp = {
-        id,
-        name: typeof v.name === 'string' && v.name ? v.name : rel,
-        root: undefined as unknown as Node,
-        props: Array.isArray(v.settings) ? (v.settings as ComponentProp[]) : [],
-        variants: [],
-      }
-      pieceFiles.set(id, rel)
-      stack.push(rel)
-      const root = nodeOf(rel, ['root'], v.root, undefined, { component: id })
-      stack.pop()
-      if (!root) return undefined
-      comp.root = root
-      pieces.set(rel, comp)
-    }
+    const comp = loadPiece(rel)
+    if (!comp) return undefined
     const id = written(file, path, raw)
     const nodeId = id ?? derivedId(file, path)
     const set: Record<string, PropValue> = {}
     let useName: string | undefined
+    let useSlot: Slot | undefined
+    let useChildren: Node[] | undefined
+    const nodeExtra: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(raw)) {
       if (k === 'use' || k === 'id') continue
       if (k === 'name' && !comp.props.some(p => p.key === 'name')) {
         if (typeof v === 'string' && v) useName = v
         else bad('"name" must be text.', file, [...path, k])
+        continue
+      }
+      if (INSTANCE_FIELDS.has(k) && !comp.props.some(p => p.key === k)) {
+        if (k === 'slot') {
+          if (isObj(v)) useSlot = v as Slot
+          else bad('"slot" must be an object.', file, [...path, k])
+        } else if (k === 'children') {
+          if (Array.isArray(v))
+            useChildren = v.flatMap(
+              (c, i) =>
+                nodeOf(file, [...path, 'children', i], c, 'instance', tree) ??
+                [],
+            )
+          else bad('"children" must be a list.', file, [...path, k])
+        } else {
+          nodeExtra[k] = v
+        }
         continue
       }
       if (!comp.props.some(p => p.key === k)) {
@@ -376,9 +444,11 @@ async function build(
       kind: 'instance',
       name:
         useName ?? kindSpec('instance', registry.kinds())?.label ?? 'Component',
-      slot: defaultSlot(parent),
+      slot: useSlot ?? defaultSlot(parent),
       component: comp.id,
       ...(Object.keys(set).length ? { set } : {}),
+      ...(nodeExtra as object),
+      ...(useChildren !== undefined ? { children: useChildren } : {}),
     }
   }
 
@@ -563,10 +633,19 @@ async function build(
   const header = chrome('header', 'Header')
   const footer = chrome('footer', 'Footer')
 
+  for (const file of files.keys())
+    if (
+      /^pieces\/.+\.json$/.test(file) &&
+      !refused.has(file) &&
+      !pieces.has(file) &&
+      !attemptedPieces.has(file)
+    )
+      loadPiece(file)
+
   for (const rel of refused.keys())
     if (!reported.has(rel)) problems.push(refusal(rel, refused.get(rel)!))
 
-  // ---- a trigger or an opens that names a node whose id is not written in the file
+  // ---- a trigger, opens, labelledBy or motion step that names a node whose id is not written in the file
   const docTrees: [TreeRef, Node][] = [
     ...pages.map(p => [{ page: p.id }, p.root] as [TreeRef, Node]),
     ['header', header],
@@ -582,11 +661,21 @@ async function build(
       const refs: [string, JsonPath][] = []
       if (typeof n.props?.opens === 'string')
         refs.push([n.props.opens, ['props', 'opens']])
+      if (typeof n.props?.labelledBy === 'string')
+        refs.push([n.props.labelledBy, ['props', 'labelledBy']])
       for (const [i, t] of (Array.isArray(n.on) ? n.on : []).entries()) {
         const d = (t?.do ?? {}) as Record<string, unknown>
         const k = TARGET_KEYS.find(x => typeof d[x] === 'string')
         if (k) refs.push([d[k] as string, ['on', i, 'do', k]])
       }
+      if (n.motion && 'steps' in n.motion)
+        for (const [i, s] of n.motion.steps.entries())
+          if (
+            typeof s.target === 'object' &&
+            s.target !== null &&
+            typeof s.target.id === 'string'
+          )
+            refs.push([s.target.id, ['motion', 'steps', i, 'target', 'id']])
       for (const [target, rel] of refs) {
         const there = origins.get(`${treeKey(tree)}|${target}`)
         if (there && there.form !== 'in-short' && !there.written)
@@ -637,13 +726,53 @@ export const loadFiles = (
   refused: ReadonlyMap<string, string> = new Map(),
 ): Promise<Loaded> => build(files, registry, refused, opts)
 
+const cloneLoaded = (l: Loaded): Loaded => ({
+  ...l,
+  doc: l.doc === undefined ? undefined : structuredClone(l.doc),
+  data: structuredClone(l.data),
+  problems: [...l.problems],
+  notices: [...l.notices],
+  files: [...l.files],
+})
+
+const folderCache = new Map<
+  string,
+  {
+    fp: string
+    registry: Registry
+    alreadyReported: boolean
+    loaded: Loaded
+  }
+>()
+
 export async function loadFolder(
   dir: string,
   registry: Registry,
   opts: LoadOptions = {},
 ): Promise<Loaded> {
   const { files, refused, unreadable } = await readFolder(dir)
+  if (unreadable) {
+    const loaded = await build(files, registry, refused, opts)
+    loaded.problems.unshift(unreadable)
+    return loaded
+  }
+  const abs = resolve(dir)
+  const fp = folderFingerprint(files, refused)
+  const alreadyReported = Boolean(opts.alreadyReported)
+  const cached = folderCache.get(abs)
+  if (
+    cached &&
+    cached.fp === fp &&
+    cached.registry === registry &&
+    cached.alreadyReported === alreadyReported
+  )
+    return cloneLoaded(cached.loaded)
   const loaded = await build(files, registry, refused, opts)
-  if (unreadable) loaded.problems.unshift(unreadable)
+  folderCache.set(abs, {
+    fp,
+    registry,
+    alreadyReported,
+    loaded: cloneLoaded(loaded),
+  })
   return loaded
 }

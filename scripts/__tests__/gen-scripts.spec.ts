@@ -28,7 +28,8 @@ test('each script is within its ceiling, all appendices included', () => {
   const base = BASE_SCRIPT + OPEN_SCRIPT + EMAIL_SCRIPT
   assert.ok(byteLength(base) <= 10_000)
   assert.ok(byteLength(STATES_SCRIPT) <= 6_193)
-  assert.ok(byteLength(base + STATES_SCRIPT) <= 20_000)
+  assert.ok(byteLength(TIMELINE_SCRIPT) <= 8_192)
+  assert.ok(byteLength(`${base};${STATES_SCRIPT};${TIMELINE_SCRIPT}`) <= 20_000)
 })
 
 test('the shipped scripts use no syntax newer than ES2017 and make no request and touch no storage', () => {

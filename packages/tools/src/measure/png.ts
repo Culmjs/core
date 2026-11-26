@@ -5,30 +5,41 @@ export type Image = { width: number; height: number; rgba: Uint8Array }
 /** Decodes the PNGs Chrome writes: 8-bit RGB or RGBA, not interlaced. Anything else throws. */
 export function decodePng(png: Uint8Array): Image {
   const b = Buffer.from(png)
-  if (b.readUInt32BE(0) !== 0x89504e47) throw new Error('Not a PNG.')
+  if (b.length < 8 || b.readUInt32BE(0) !== 0x89504e47)
+    throw new Error('Not a PNG.')
   let width = 0
   let height = 0
   let channels = 0
+  let sawIhdr = false
   const idat: Buffer[] = []
   for (let p = 8; p < b.length;) {
+    if (p + 8 > b.length) throw new Error('Truncated PNG chunk.')
     const len = b.readUInt32BE(p)
+    if (p + 12 + len > b.length) throw new Error('Truncated PNG chunk.')
     const type = b.toString('latin1', p + 4, p + 8)
     const data = b.subarray(p + 8, p + 8 + len)
     if (type === 'IHDR') {
+      if (len < 13) throw new Error('Invalid PNG header.')
       width = data.readUInt32BE(0)
       height = data.readUInt32BE(4)
+      if (width === 0 || height === 0 || width * height > 100_000_000)
+        throw new Error('Invalid PNG dimensions.')
       const [depth, color, , , interlace] = data.subarray(8, 13)
       if (depth !== 8 || (color !== 2 && color !== 6) || interlace !== 0)
         throw new Error(
           'Only 8-bit RGB and RGBA PNGs that are not interlaced are read.',
         )
       channels = color === 6 ? 4 : 3
+      sawIhdr = true
     } else if (type === 'IDAT') idat.push(data)
     else if (type === 'IEND') break
     p += 12 + len
   }
+  if (!sawIhdr) throw new Error('Missing PNG header.')
   const raw = inflateSync(Buffer.concat(idat))
   const stride = width * channels
+  if (raw.length < height * (stride + 1))
+    throw new Error('Truncated PNG pixel data.')
   const rgba = new Uint8Array(width * height * 4)
   let prev = Buffer.alloc(stride)
   for (let y = 0; y < height; y++) {

@@ -572,10 +572,10 @@ export function prepareStyles(
     // (the base rule already hides it at every width, so no phone copy that would beat the dark show rule)
     if (
       st.phone?.hidden ??
-      (st.dark?.hidden === false
-        ? undefined
-        : st.tablet?.hidden === false
-          ? false
+      (st.tablet?.hidden !== undefined
+        ? st.tablet.hidden
+        : st.dark?.hidden === false
+          ? undefined
           : st.base?.hidden)
     )
       r.phone.push('display:none')
@@ -670,7 +670,7 @@ export function prepareStyles(
           ? {
               key: 'slashes',
               rules: (cls: string) =>
-                `.${cls}>*+*::before{content:"/";content:"/" / "";margin-inline-end:8px;color:var(--s-muted)}`,
+                `.${cls}>:not([data-cm-m])+:not([data-cm-m])::before{content:"/";content:"/" / "";margin-inline-end:8px;color:var(--s-muted)}`,
             }
           : undefined
     const own1 = rows
@@ -1090,7 +1090,7 @@ export function prepareStyles(
       css += `@media (min-width:901px){${sided
         .map(({ id, w }) => {
           const s = `.s-site:has(.${classOf.get(id)})`
-          return `${s}{display:grid;grid-template-columns:${w}px minmax(0,1fr);grid-template-rows:1fr auto}${s}>.s-header{grid-row:1/3;grid-column:1;position:sticky;top:0;height:100vh;overflow:auto;align-self:start}${s}>.s-header>section{height:100%}${s}>main{grid-column:2;grid-row:1}${s}>.s-footer{grid-column:2;grid-row:2}`
+          return `${s}{display:grid;grid-template-columns:${w}px minmax(0,1fr);grid-template-rows:1fr auto}${s}>.s-header{grid-row:1/3;grid-column:1;position:sticky;top:0;height:100vh;overflow:auto;align-self:start}${s}>.s-header>*{height:100%}${s}>main{grid-column:2;grid-row:1}${s}>.s-footer{grid-column:2;grid-row:2}`
         })
         .join('')}}`
     // spotlight sits in a ::after under the content, as grain does in a ::before (the glow itself is --s-sp, written by the block's layers)
