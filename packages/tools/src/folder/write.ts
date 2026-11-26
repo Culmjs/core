@@ -342,10 +342,17 @@ export function fileEdits(
   }
 
   // ---- files of pieces and pages: where each lives, including the ones this batch creates
-  const pieceFiles = new Map<string, string>()
-  for (const c of after.components)
-    pieceFiles.set(c.id, map.pieceFile(c.id) ?? `pieces/${c.id}.json`)
   const taken = new Set(orig.keys())
+  const pieceFiles = new Map<string, string>()
+  for (const c of after.components) {
+    let file = map.pieceFile(c.id)
+    if (!file) {
+      file = `pieces/${c.id}.json`
+      for (let n = 2; taken.has(file); n++) file = `pieces/${c.id}-${n}.json`
+      taken.add(file)
+    }
+    pieceFiles.set(c.id, file)
+  }
   const pageName = (p: Page) => {
     const stem = p.slug === '/' ? 'home' : p.slug.slice(1).replace(/\//g, '-')
     let name = `${stem}.json`

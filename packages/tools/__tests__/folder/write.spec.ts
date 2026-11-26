@@ -461,6 +461,43 @@ test('makeComponent writes pieces/<component id>.json and replaces the node with
   assert.equal(d.again.doc!.components.length, 0)
 })
 
+test('a new piece takes a free file name', async () => {
+  let was = ''
+  const r = await run(
+    [
+      {
+        op: 'makeComponent',
+        tree: home,
+        id: 'intro',
+        component: 'card',
+        name: 'Card',
+      },
+    ],
+    async dir => {
+      const t = (await read(dir, 'pieces/visit-card.json')).replace(
+        '"settings"',
+        '"id": "promo",\n  "settings"',
+      )
+      await writeFile(join(dir, 'pieces/card.json'), t)
+      await rm(join(dir, 'pieces/visit-card.json'))
+      for (const f of ['home', 'menu', 'about'].map(n => `pages/${n}.json`))
+        await writeFile(
+          join(dir, f),
+          (await read(dir, f)).replaceAll('visit-card.json', 'card.json'),
+        )
+      was = t
+    },
+  )
+  assert.equal(await read(r.dir, 'pieces/card.json'), was)
+  assert.ok(r.edits.write['pieces/card-2.json'])
+  assert.ok(!r.edits.write['pieces/card.json'])
+  assert.deepEqual(r.again.problems, [])
+  assert.deepEqual(r.again.doc!.components.map(c => c.id).sort(), [
+    'card',
+    'promo',
+  ])
+})
+
 test('comments and key order of every untouched part of an edited file are unchanged', async () => {
   const r = await run([
     { op: 'setText', tree: home, id: 'intro', text: 'Changed' },

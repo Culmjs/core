@@ -250,6 +250,33 @@ test('a file that changed between plan and write is SOURCE_CONFLICT and nothing 
   assert.ok(!readdirSync(join(dir, '.culm')).includes('lock'))
 })
 
+test('a commit whose files do not load to the planned document is refused', async () => {
+  let doc: SiteDocument | undefined
+  let on = false
+  const o2 = await open(two(), {
+    after: n => {
+      // the plan keeps a key set to undefined: JSON cannot, so the files load without it
+      if (on && n === 3)
+        Object.assign(doc!.pages[1]!.root.children![0]!, { name: undefined })
+    },
+  })
+  const wrapped: SiteStore = {
+    ...o2.store,
+    commit: (site, c) => {
+      doc = c.doc
+      return o2.store.commit(site, c)
+    },
+  }
+  const r0 = (await headOf(o2.store)).revision
+  const files = () =>
+    Object.entries(snap(o2.dir)).filter(([p]) => !p.startsWith('.culm'))
+  const before = files()
+  on = true
+  const r = await apply(wrapped, o2.registry, req(r0, 'k', [set('t1', 'A')]))
+  assert.equal(codeOf(r), 'SOURCE_CONFLICT')
+  assert.deepEqual(files(), before)
+})
+
 test('a second process holding the lock makes commit wait and then succeed', async () => {
   const { dir, registry, store } = await open(two())
   const r0 = (await headOf(store)).revision

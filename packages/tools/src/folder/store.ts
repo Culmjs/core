@@ -16,7 +16,7 @@ import {
 } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
-import type { Registry } from '@culmjs/core'
+import type { Registry, SiteDocument } from '@culmjs/core'
 import type { ApplyResult, SiteStore } from '@culmjs/core/ops'
 import { loadFiles, loadFolder, readFolder } from './load.ts'
 import type { Loaded } from './load.ts'
@@ -24,6 +24,13 @@ import type { Located } from './plugins.ts'
 import { fileEdits } from './write.ts'
 import { shaderInput, shaderParentOk, shaderPath } from './shaders.ts'
 import { inside, resolveFile } from './files.ts'
+
+// `styles` is left out: the loader re-derives the look-derived site styles, the plan keeps the old ones after setLook (siteStyles.ts:50-55).
+const sameDoc = (a: SiteDocument, b: SiteDocument) => {
+  const x = { ...a, styles: undefined }
+  const y = { ...b, styles: undefined }
+  return isDeepStrictEqual(x, y)
+}
 
 export const KEPT_REVISIONS = 200
 export const LOCK_STALE_MS = 60_000
@@ -662,7 +669,11 @@ export async function fileStore(
         for (const f of loaded.files)
           if (!covered(f.path)) verifyMap.set(f.path, f.text)
         const verified = await loadFiles(verifyMap, registry)
-        if (!verified.doc || verified.problems.length)
+        if (
+          !verified.doc ||
+          verified.problems.length ||
+          !sameDoc(verified.doc, c.doc)
+        )
           return end<Refusal>({
             ok: false,
             code: 'SOURCE_CONFLICT',
