@@ -415,6 +415,7 @@ test('OP_NAMES lists the operations in table order, each once', () => {
       'setLook',
       'setSiteStyles',
       'setFonts',
+      'addCustomEffect',
     ],
   )
   assert.equal(new Set(OP_NAMES).size, OP_NAMES.length)
@@ -436,7 +437,7 @@ test('a refusal carries problems and no document, whichever step refused', () =>
 })
 
 test('an unknown operation name lists the allowed names', () => {
-  assert.equal(OP_NAMES.length, 27)
+  assert.equal(OP_NAMES.length, 28)
   const ps = refused(run([{ op: 'paint' }]))
   assert.deepEqual(ps[0].allowed, OP_NAMES)
 })
@@ -600,7 +601,7 @@ test('the note lists every new dead link, not one that was dead before', () => {
 })
 
 test('after plan, created and changed are the ids of the diff, for every operation', () => {
-  const registry = kitRegistry()
+  const registry = kitRegistry({ gpu: { enabled: true } })
   const pair = (t: unknown, id: string) => `${JSON.stringify(t)}|${id}`
   let doc = siteWith([text('t', 'Hello')])
   let seen = 0

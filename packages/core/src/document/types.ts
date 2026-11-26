@@ -1,4 +1,5 @@
 import type { Motion } from './motion.ts'
+import type { ShaderSettings } from './shader/types.ts'
 
 export type LookFamily = string
 
@@ -773,6 +774,13 @@ export type Page = {
 
 export type Language = { code: string; dir?: 'rtl' }
 
+/** Site-owned fragment data. Execution and review permissions belong to the host. */
+export type CustomEffect = {
+  name: string
+  source: string
+  settings: ShaderSettings
+}
+
 export type SiteDocument = {
   schemaVersion: number
   name: string
@@ -780,6 +788,7 @@ export type SiteDocument = {
   header: Node
   footer: Node
   components: Component[]
+  customEffects?: CustomEffect[]
   fonts: FontRef[]
   styles?: SiteStyles
   look: Look

@@ -566,14 +566,20 @@ type Want = {
 
 /**
  * Before core sees a batch of operations on a folder site: fetches what it names (a Google family in `setFonts`), stores it in the
- * folder, and returns the operations with each such entry written as `up:<name>`. Any failure is a refusal, and nothing is kept.
+ * folder, and returns the operations with each such entry written as `up:<name>`.
+ * With `defer`, only normalize and inspect held files; the returned `publish()`
+ * performs the ordinary fetch and returns its problems after the caller checks the normalized batch.
  */
 export async function fetchFor(
   dir: string,
   doc: SiteDocument,
   ops: unknown[],
   o: FetchOptions = {},
-): Promise<{ ok: true; ops: unknown[] } | { ok: false; problems: Problem[] }> {
+  defer = false,
+): Promise<
+  | { ok: true; ops: unknown[]; publish?: () => Promise<Problem[]> }
+  | { ok: false; problems: Problem[] }
+> {
   const hosts = o.hosts ?? HOSTS
   const get = o.get ?? makeGet()
   const heldAll = await readHeld(dir)
@@ -674,92 +680,7 @@ export async function fetchFor(
         },
       ],
     }
-  // pass 2: fetch everything into memory; any failure ends it before a file is written
-  const got: Fetched[] = []
-  for (const [slug, ws] of families) {
-    const asked = new Map<string, Pair>()
-    for (const w of ws)
-      for (const wt of w.weights)
-        for (const i of w.italic ? [0, 1] : [0])
-          asked.set(`${i},${wt}`, [i as 0 | 1, wt])
-    try {
-      const g = await fetchFamily(
-        ws[0]!.family,
-        [...asked.values()],
-        held[slug],
-        hosts,
-        get,
-      )
-      if (g) got.push(g)
-    } catch (e) {
-      return {
-        ok: false,
-        problems: [
-          {
-            code: 'FETCH_FAILED',
-            message: `Could not fetch the font "${ws[0]!.family}": ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`,
-            op: ws[0]!.op,
-          },
-        ],
-      }
-    }
-  }
-  const icons: Icon[] = []
-  const sets = new Map<string, [name: string, op: number][]>()
-  for (const [n, op] of wantIcons) {
-    const [set, name] = n.split(':') as [string, string]
-    sets.set(set, [...(sets.get(set) ?? []), [name, op]])
-  }
-  for (const [set, ns] of sets) {
-    let op = Math.min(...ns.map(x => x[1]))
-    const list = ns
-      .map(x => `${set}:${x[0]}`)
-      .join(', ')
-      .slice(0, 120)
-    try {
-      icons.push(
-        ...(await fetchSet(
-          dir,
-          set,
-          ns.map(x => x[0]),
-          hosts,
-          get,
-        )),
-      )
-    } catch (e) {
-      const m = (e instanceof Error ? e.message : String(e)).slice(0, 200)
-      if (e instanceof IconError)
-        op = wantIcons.find(([n]) => n === e.full)?.[1] ?? op
-      return {
-        ok: false,
-        problems: [
-          e instanceof Policy
-            ? { code: 'POLICY_VIOLATION', message: m, rule: 'icon-licence', op }
-            : {
-                code: 'FETCH_FAILED',
-                message: `Could not fetch the icon ${list}: ${m}`,
-                op,
-              },
-        ],
-      }
-    }
-  }
-  try {
-    if (got.length) await store(dir, got)
-    await storeIcons(dir, icons)
-  } catch (e) {
-    return {
-      ok: false,
-      problems: [
-        {
-          code: 'FETCH_FAILED',
-          message: `Could not store ${got[0] ? `the font "${got[0].font.family}"` : `the icon ${icons[0] ? `${icons[0].set}:${icons[0].name}` : ''}`}: ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`,
-          op: wants[0]?.op ?? wantIcons[0]?.[1] ?? 0,
-        },
-      ],
-    }
-  }
-  const nextOps = ops.map((op, i) =>
+  const normalized = ops.map((op, i) =>
     wants.some(w => w.op === i) && isObj(op) && Array.isArray(op.fonts)
       ? {
           ...op,
@@ -770,9 +691,96 @@ export async function fetchFor(
         }
       : op,
   )
-  return fetchImagesFor(dir, nextOps, heldAll.generated, {
+  const imgRes = await fetchImagesFor(dir, normalized, heldAll.generated, {
     config: o.images,
     provider: o.imageProvider,
     offline: o.offline,
   })
+  if (!imgRes.ok) return imgRes
+  const ready = { ok: true as const, ops: imgRes.ops }
+  if (!wantIcons.length && !families.size) return ready
+  if (defer) return { ...ready, publish }
+  const failed = await publish()
+  return failed.length ? { ok: false, problems: failed } : ready
+
+  // All I/O that can publish held assets (including icon licences) follows
+  // normalization. MCP can check these exact ops before it runs this phase.
+  async function publish(): Promise<Problem[]> {
+    const got: Fetched[] = []
+    for (const [slug, ws] of families) {
+      const asked = new Map<string, Pair>()
+      for (const w of ws)
+        for (const wt of w.weights)
+          for (const i of w.italic ? [0, 1] : [0])
+            asked.set(`${i},${wt}`, [i as 0 | 1, wt])
+      try {
+        const g = await fetchFamily(
+          ws[0]!.family,
+          [...asked.values()],
+          held[slug],
+          hosts,
+          get,
+        )
+        if (g) got.push(g)
+      } catch (e) {
+        return [
+          {
+            code: 'FETCH_FAILED',
+            message: `Could not fetch the font "${ws[0]!.family}": ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`,
+            op: ws[0]!.op,
+          },
+        ]
+      }
+    }
+    const icons: Icon[] = []
+    const sets = new Map<string, [name: string, op: number][]>()
+    for (const [n, op] of wantIcons) {
+      const [set, name] = n.split(':') as [string, string]
+      sets.set(set, [...(sets.get(set) ?? []), [name, op]])
+    }
+    for (const [set, ns] of sets) {
+      let op = Math.min(...ns.map(x => x[1]))
+      const list = ns
+        .map(x => `${set}:${x[0]}`)
+        .join(', ')
+        .slice(0, 120)
+      try {
+        icons.push(
+          ...(await fetchSet(
+            dir,
+            set,
+            ns.map(x => x[0]),
+            hosts,
+            get,
+          )),
+        )
+      } catch (e) {
+        const m = (e instanceof Error ? e.message : String(e)).slice(0, 200)
+        if (e instanceof IconError)
+          op = wantIcons.find(([n]) => n === e.full)?.[1] ?? op
+        return [
+          e instanceof Policy
+            ? { code: 'POLICY_VIOLATION', message: m, rule: 'icon-licence', op }
+            : {
+                code: 'FETCH_FAILED',
+                message: `Could not fetch the icon ${list}: ${m}`,
+                op,
+              },
+        ]
+      }
+    }
+    try {
+      if (got.length) await store(dir, got)
+      await storeIcons(dir, icons)
+    } catch (e) {
+      return [
+        {
+          code: 'FETCH_FAILED',
+          message: `Could not store ${got[0] ? `the font "${got[0].font.family}"` : `the icon ${icons[0] ? `${icons[0].set}:${icons[0].name}` : ''}`}: ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`,
+          op: wants[0]?.op ?? wantIcons[0]?.[1] ?? 0,
+        },
+      ]
+    }
+    return []
+  }
 }

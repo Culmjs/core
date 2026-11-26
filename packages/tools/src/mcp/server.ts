@@ -47,6 +47,7 @@ import { locateFinding } from '../folder/locateFinding.ts'
 import { measureSince, runMeasure } from '../measure/run.ts'
 import { measureReply } from './measureReply.ts'
 import { createHash } from 'node:crypto'
+import { canonicalJson } from '@culmjs/core/internal/projection'
 import { emit } from '../jsx/tree.ts'
 import { diagnose, locate as locateJsx } from '../jsx/write.ts'
 import { buildRequest } from '../jsx/batch.ts'
@@ -82,6 +83,8 @@ export type McpOptions = {
     ops: unknown[],
     doc: SiteDocument,
     offline?: boolean,
+    /** Supply a publish callback so final validation can precede asset writes. */
+    defer?: boolean,
   ): ReturnType<typeof fetchFor>
   /** Folder sites: what the folder holds (fonts), read again for each measure. */
   held?(): ReturnType<typeof readHeld>
@@ -102,6 +105,15 @@ export type McpOptions = {
 
 type Obj = Record<string, unknown>
 type Result = { content: { type: 'text'; text: string }[]; isError?: true }
+type OrderedWrite = {
+  identity: string
+  response(doc: SiteDocument | undefined, revision: number): Result
+}
+class AssetRefusal extends Error {
+  constructor(readonly problems: Problem[]) {
+    super('Asset fetch refused.')
+  }
+}
 type Head = Exclude<
   Awaited<ReturnType<SiteStore['head']>>,
   { problems: Problem[] }
@@ -137,6 +149,7 @@ const batch = (key: Obj) =>
       ...key,
       ops: {
         type: 'array',
+        maxItems: 200,
         items: {
           type: 'object',
           properties: { op: str },
@@ -319,28 +332,31 @@ function reply(body: Obj): Result {
 }
 function refuse(problems: Problem[], locate?: McpOptions['locate']): Result {
   const ps = problems.slice(0, 20).map(p => (locate ? locate(p) : p))
-  return {
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify({ problems: ps }).slice(0, READ_CAP),
-      },
-    ],
-    isError: true,
-  }
+  return refuseMany(ps)
 }
 
 /** A refusal with every problem that fits the cap, in the order given (by place in the JSX); `more` counts the ones left out. */
 function refuseMany(problems: Problem[], extra: Obj = {}): Result {
   for (let n = problems.length; ; n = Math.floor(n * 0.8)) {
-    const text = JSON.stringify({
+    const body = {
       ...extra,
       problems: problems.slice(0, n),
       ...(n < problems.length ? { more: problems.length - n } : {}),
-    })
-    if (text.length <= READ_CAP || n <= 1)
+    }
+    let text = JSON.stringify(body)
+    if (n === 1 && text.length > READ_CAP) {
+      // One oversized diagnostic (e.g. an invalid setting name). Shorten fields,
+      // never slice the serialized JSON in the middle of a string.
+      const summary: Obj = {}
+      for (const [key, v] of Object.entries(problems[0]!)) {
+        if (typeof v === 'string') summary[key] = v.slice(0, 160)
+        else if (typeof v === 'number') summary[key] = v
+      }
+      text = JSON.stringify({ ...body, problems: [summary], cut: true })
+    }
+    if (text.length <= READ_CAP)
       return {
-        content: [{ type: 'text', text: text.slice(0, READ_CAP) }],
+        content: [{ type: 'text', text }],
         isError: true,
       }
   }
@@ -481,7 +497,7 @@ export function createMcpServer(o: McpOptions): Server {
           ? {
               ...t,
               description:
-                'Commit 1–32 ordered insert/update/move/remove/theme/addPage/removePage/setPage operations atomically. Pass page:"header"|"footer" to edit chrome. Each insert.node is one JSON section; update merges fields (props, set, slot, placement, hide, state, on, style, phone, tablet, hover, dark, motion) on an id. Give motion as {trigger,effect,settings?} or {trigger,steps}; update.motion:null clears it. Move defaults to the page root. Returns revision and section ids.',
+                'Commit 1–32 ordered insert/update/move/remove/theme/addPage/removePage/setPage/addCustomEffect operations atomically. Pass page:"header"|"footer" to edit chrome. Each insert.node is one JSON section; update merges fields (props, set, slot, placement, hide, state, on, style, phone, tablet, hover, dark, motion) on an id. Give motion as {trigger,effect,settings?}, {trigger,steps}, or {trigger:"enter-view",gpu:"mist"} after addCustomEffect {effect:{name,source,settings}}; update.motion:null clears it. Move defaults to the page root. Returns revision and section ids.',
               inputSchema: schema(
                 { baseRevision: num, page: str, key: str, ops: jsonEditSchema },
                 ['baseRevision', 'ops'],
@@ -541,13 +557,51 @@ export function createMcpServer(o: McpOptions): Server {
   /** The batch with what it names fetched into the folder (`plan` and `apply` agree on it); a refusal, or the ops to run. */
   const fetched = async (a: Obj, doc: SiteDocument, offline = false) => {
     if (!o.fetch || !Array.isArray(a.ops)) return { ops: a.ops }
-    const r = await o.fetch(a.ops, doc, offline)
-    return r.ok ? { ops: r.ops } : { refusal: fail(r.problems) }
+    const r = await o.fetch(a.ops, doc, offline, !offline)
+    return r.ok
+      ? { ops: r.ops, publish: r.publish }
+      : { refusal: fail(r.problems) }
   }
   // `measure` continues from the report it made, not a second run
   let last: { key: string; rows: Obj[]; meta: Obj } | undefined
 
-  const tools: Record<string, (a: Obj) => Promise<Result>> = {
+  const replayReceipt = (
+    receipt: { identity: string; text: string },
+    identity: string,
+  ): Result => {
+    if (receipt.identity !== identity)
+      return fail([
+        {
+          code: 'KEY_CONFLICT',
+          message: 'This key was used for other content.',
+          path: 'key',
+        },
+      ])
+    try {
+      if (typeof receipt.text === 'string' && receipt.text.length <= READ_CAP) {
+        const body: unknown = JSON.parse(receipt.text)
+        if (
+          isObj(body) &&
+          Number.isSafeInteger(body.revision) &&
+          Array.isArray(body.sections)
+        )
+          return { content: [{ type: 'text', text: receipt.text }] }
+      }
+    } catch {
+      /* A damaged store receipt is not an MCP response. */
+    }
+    return fail([
+      {
+        code: 'INVALID_DOCUMENT',
+        message: 'The stored write receipt cannot be read.',
+      },
+    ])
+  }
+
+  const tools: Record<
+    string,
+    (a: Obj, snapshot?: Head, ordered?: OrderedWrite) => Promise<Result>
+  > = {
     async describe(a) {
       const h = await headOf()
       if ('content' in h) return h
@@ -571,6 +625,7 @@ export function createMcpServer(o: McpOptions): Server {
             {
               revision: h.revision,
               name: h.doc.name,
+              ...(registry.gpu?.enabled ? { features: { gpu: true } } : {}),
               ...(h.doc.styles?.textRange
                 ? { textRange: h.doc.styles.textRange }
                 : {}),
@@ -706,19 +761,23 @@ export function createMcpServer(o: McpOptions): Server {
         },
         allow,
       )
-      return r.ok
-        ? reply(summary(r, r.doc, { revision: h.revision }))
-        : fail(r.problems)
+      if (!r.ok) return fail(r.problems)
+      const problems = await f.publish?.()
+      return problems?.length
+        ? fail(problems)
+        : reply(summary(r, r.doc, { revision: h.revision }))
     },
 
-    async apply(a) {
+    async apply(a, snapshot, ordered) {
       const badRev = badBase(a)
       if (badRev) return badRev
-      const h = await headOf()
+      const h = snapshot ?? (await headOf())
       if ('content' in h) return h
       // a key already committed is replayed by core, whatever the revision is now; the fetch still runs (held files: no request)
       const seen =
         typeof a.key === 'string' ? await store.replay(site, a.key) : undefined
+      if (ordered && seen?.receipt)
+        return replayReceipt(seen.receipt, ordered.identity)
       // A seen key resolves from held files only, with no request: a true replay needs nothing new. A batch that would fetch is not a replay.
       const offline = seen ? await fetched(a, h.doc, true) : undefined
       // a reused key whose batch is not what it committed is a key conflict, before any request
@@ -744,7 +803,47 @@ export function createMcpServer(o: McpOptions): Server {
         ])
       const f = offline && !offline.refusal ? offline : await fetched(a, h.doc)
       if (f.refusal) return f.refusal
-      const r = await apply(store, registry, request(a, f.ops), allow)
+      // Keep the same optimistic source read through fetch, compact projection
+      // and core's plan. Even another head read on this server cannot replace it.
+      const transaction: SiteStore =
+        h.readStamp === undefined && !f.publish && !ordered
+          ? store
+          : {
+              head: s =>
+                h.readStamp === undefined && !ordered
+                  ? store.head(s)
+                  : Promise.resolve(h),
+              replay: (s, k) => store.replay(s, k),
+              get: (s, n) => store.get(s, n),
+              commit: async (s, c) => {
+                const problems = await f.publish?.()
+                if (problems?.length) throw new AssetRefusal(problems)
+                const receipt = ordered && {
+                  identity: ordered.identity,
+                  text: ordered.response(c.doc, c.expected + 1).content[0]!
+                    .text,
+                }
+                return store.commit(s, receipt ? { ...c, receipt } : c)
+              },
+            }
+      const r = await apply(
+        transaction,
+        registry,
+        request(a, f.ops),
+        allow,
+      ).catch((e: unknown) => {
+        if (e instanceof AssetRefusal)
+          return { ok: false as const, problems: e.problems }
+        throw e
+      })
+      if (r.ok && ordered) {
+        // The winning receipt is authoritative even if a simultaneous request
+        // projected to the same core ops. Older external stores may not keep it.
+        const saved = await store.replay(site, a.key as string)
+        if (saved?.receipt)
+          return replayReceipt(saved.receipt, ordered.identity)
+        return ordered.response(await store.get(site, r.revision), r.revision)
+      }
       return r.ok
         ? reply(
             summary(r, await store.get(site, r.revision), {
@@ -782,8 +881,6 @@ export function createMcpServer(o: McpOptions): Server {
       for (const k of ['page', 'key', 'title', 'path', 'target'])
         if (a[k] !== undefined && typeof a[k] !== 'string')
           return fail([bad(`${k} must be a text.`, k)])
-      const h = await headOf()
-      if ('content' in h) return h
       const base = a.baseRevision as number
       // a retry with the same content has the same key, so core replays it
       const key =
@@ -815,20 +912,45 @@ export function createMcpServer(o: McpOptions): Server {
           )
           .digest('hex')
           .slice(0, 40)}`
-      const seen = await store.replay(site, key)
-      // a stale base is refused before the JSX is read and before any fetch
-      if (!seen && base !== h.revision)
+      let seen = await store.replay(site, key)
+      const identity =
+        a.ops === undefined
+          ? undefined
+          : createHash('sha256')
+              .update(canonicalJson({ ...a, key: undefined }))
+              .digest('hex')
+      if (identity && seen?.receipt)
+        return replayReceipt(seen.receipt, identity)
+      const h = await headOf()
+      if ('content' in h) return h
+      // A concurrent caller may have won this key between the miss and the
+      // head read. Resolve that win before refusing the base or projecting edits.
+      if (!seen && base !== h.revision) {
+        seen = await store.replay(site, key)
+        if (identity && seen?.receipt)
+          return replayReceipt(seen.receipt, identity)
+        if (!seen)
+          return fail([
+            {
+              code: 'REVISION_CONFLICT',
+              message: `The site is at revision ${h.revision}, not ${base}. Nothing was written; send the same write with baseRevision ${h.revision} (find returns the current ids).`,
+              path: 'baseRevision',
+              revision: h.revision,
+            } as Problem,
+          ])
+      }
+      // the operations are built against the revision the caller read, so a retry builds the same ones
+      const original = base === h.revision ? h.doc : await store.get(site, base)
+      if (!original && identity)
         return fail([
           {
-            code: 'REVISION_CONFLICT',
-            message: `The site is at revision ${h.revision}, not ${base}. Nothing was written; send the same write with baseRevision ${h.revision} (find returns the current ids).`,
-            path: 'baseRevision',
-            revision: h.revision,
-          } as Problem,
+            code: 'UNSUPPORTED_CAPABILITY',
+            path: 'key',
+            message:
+              'This store holds neither the original ordered-write receipt nor its base revision.',
+          },
         ])
-      // the operations are built against the revision the caller read, so a retry builds the same ones
-      const doc =
-        base === h.revision ? h.doc : ((await store.get(site, base)) ?? h.doc)
+      const doc = original ?? h.doc
       const b = buildRequest(doc, registry, a as never)
       const at = { revision: h.revision, baseRevision: h.revision }
       const rejected = (problems: Problem[]) =>
@@ -837,22 +959,53 @@ export function createMcpServer(o: McpOptions): Server {
           ...(!o.jsonOps ? drafts.remember(a) : {}),
         })
       if (!b.ok) return rejected(b.problems)
+      const ordered: OrderedWrite | undefined = identity
+        ? {
+            identity,
+            response: (committed, revision) =>
+              reply(
+                fit(
+                  {
+                    revision,
+                    sections:
+                      committed?.pages
+                        .find(p => p.id === (a.page ?? 'home'))
+                        ?.root.children?.map(n => n.id) ?? [],
+                    ...(b.warnings.length
+                      ? {
+                          warningCount: b.warnings.length,
+                          warning: b.warnings[0]!.message.slice(0, 220),
+                        }
+                      : {}),
+                  },
+                  ['sections'],
+                ),
+              ),
+          }
+        : undefined
       // every problem in the JSX at once, before anything is saved or fetched
       if (!seen) {
         const found = diagnose(b, doc, registry, allow)
         if (found.length) return rejected(found)
       }
       let sum: Obj
+      if (!b.ops.length && !seen && ordered)
+        return ordered.response(h.doc, h.revision)
       if (!b.ops.length && !seen)
         sum = { revision: h.revision, from: base, ops: 0, noop: true }
       else {
-        const res = await tools.apply({ baseRevision: base, key, ops: b.ops })
+        const res = await tools.apply(
+          { baseRevision: base, key, ops: b.ops },
+          h.readStamp === undefined ? undefined : h,
+          ordered,
+        )
         const j = JSON.parse(res.content[0]!.text) as Obj
         if (res.isError)
           return refuseMany(
             ((j.problems as Problem[]) ?? []).map(p => locateJsx(b, p)),
             at,
           )
+        if (ordered) return res
         sum = {
           revision: j.revision,
           from: base,

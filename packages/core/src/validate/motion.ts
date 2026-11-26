@@ -28,6 +28,7 @@ import {
 import { stateIn, type StateScope } from './states.ts'
 import { unrollInstances } from './unroll.ts'
 import { checkTargets, paintedStrokes, presetTarget } from './motionTargets.ts'
+import { checkGpuMotion, gpuOwnerProblems } from './gpu.ts'
 
 type Lookup = (
   scope: StateScope,
@@ -82,6 +83,7 @@ export function checkMotion(c: Ctx, _t: TCtx, e: Entry): void {
   if (m === undefined) return
   const say: Say = (message, path) => add(c, e.w, message, path)
   if (!isObj(m)) return say('Motion must be an object.', 'motion')
+  if (Object.hasOwn(m, 'gpu')) return checkGpuMotion(c, e.w, m)
   const effect = !Object.hasOwn(m, 'steps') && Object.hasOwn(m, 'effect')
   checkKeys(m, effect ? effectKeys : sequenceKeys, 'motion', say)
   const tr = m.trigger
@@ -204,12 +206,18 @@ export function checkComposedMotions(
     const scopes: StateScope[] = []
     let pinView: Map<string, Node> | undefined
     let painted: Set<Node> | undefined
+    let gpuProblems: Map<Node, string> | undefined
     walk(tree, (w, _parent, depth) => {
       const scope = (scopes[depth] = { w, parent: scopes[depth - 1] ?? null })
       const m = w.motion
       if (!m) return
       const say = (message: string, path: string, code?: Code) =>
         addComposed(c, t, authored, tree, w, message, path, code)
+      if ('gpu' in m) {
+        const issue = (gpuProblems ??= gpuOwnerProblems(tree, scheme)).get(w)
+        if (issue) say(issue, 'motion.gpu')
+        return
+      }
       const cutHeader = (path: string) =>
         say(
           'The header is too large or deep to establish this motion state.',

@@ -21,9 +21,13 @@ import {
   OPEN_SCRIPT,
   STATES_SCRIPT,
   TIMELINE_SCRIPT,
+  GPU_HOST_SCRIPT,
+  GPU_LOADER_SCRIPT,
+  GPU_HOST_PATH,
 } from '../scripts/index.ts'
 import { checkedSite } from '../validate/validate.ts'
 import { BUDGETS, byteLength, checkBudgets, type PageStats } from './budgets.ts'
+import { PLAYBACK_TIMELINE_SCRIPT } from '../scripts/scriptsMin.ts'
 import { el } from './elementsBase.ts'
 import {
   stateAttrs,
@@ -35,6 +39,14 @@ import { writeHtml, type HtmlNode } from './html.ts'
 import { type Links } from './links.ts'
 import { prepareStyles } from './styles.ts'
 import { motionCss } from './motion.ts'
+import { lowerGpu } from './gpu.ts'
+import type { CheckedEffect } from '../validate/gpu.ts'
+import {
+  executableHashes,
+  scriptPolicy,
+  withPolicy,
+  type PageScript,
+} from './gpuPolicy.ts'
 
 export type CompileOptions = {
   registry: Registry
@@ -42,6 +54,9 @@ export type CompileOptions = {
   /** `measure` is live plus a `data-id` on every node, for the probe; it is never written to a site. */
   mode?: 'live' | 'edit' | 'measure'
   links?: Links
+  /** Confirmed local media pathnames. A missing poster keeps the authored background.
+   * Without an inventory, posters use the checked local Links.file result. */
+  availableMedia?: ReadonlySet<string>
   lang?: string
   fontBase?: string
   /** The fonts the site's folder holds (`up:<name>`), read by the tools; core opens no file. */
@@ -50,13 +65,15 @@ export type CompileOptions = {
   icons?: SiteIcons
 }
 
-type PageScript = { name: 'base' | 'states' | 'timeline'; code: string }
+export type CompiledAsset = { path: string; content: string }
 export type CompiledPage =
   | {
       ok: true
       html: string
       css: string
       scripts: PageScript[]
+      assets?: CompiledAsset[]
+      gpu?: { usesWasm: boolean }
       stats: PageStats
       problems: Problem[]
     }
@@ -83,6 +100,7 @@ export function checkedInput(doc: SiteDocument, options: CompileOptions) {
       : {}
   return {
     doc: checked.doc,
+    effects: checked.effects,
     problems: registry
       .sources()
       .flatMap(s =>
@@ -133,6 +151,7 @@ export function resolve(doc: SiteDocument, o: CompileOptions) {
     // measure is live in every branch; `ids` is the one place it differs
     mode: o.mode === 'edit' ? ('edit' as const) : ('live' as const),
     ids: o.mode === 'measure',
+    availableMedia: o.availableMedia,
     links: {
       // wrapped, not spread: a class instance keeps its prototype methods and their `this`
       page: (slug: string) => (L ? L.page(slug) : slug),
@@ -247,10 +266,16 @@ const anyElement = (
 ): boolean =>
   typeof e !== 'string' &&
   (f(e) || (e.children ?? []).some(c => anyElement(c, f)))
-const countElements = (e: HtmlNode | string): number =>
+// The GPU reservation counts inside SVG glyphs too. Their checked raw bodies
+// contain only SVG tags and local drawing attributes; never scan script/data.
+const countElements = (e: HtmlNode | string, glyphs: boolean): number =>
   typeof e === 'string'
     ? 0
-    : 1 + (e.children ?? []).reduce((n, c) => n + countElements(c), 0)
+    : 1 +
+      (glyphs && e.raw?.kind === 'icon'
+        ? (e.raw.content.match(/<[a-z]/g)?.length ?? 0)
+        : 0) +
+      (e.children ?? []).reduce((n, c) => n + countElements(c, glyphs), 0)
 
 /** A published header or footer with nothing in it, or hidden, draws no strip. The editor always keeps both, so there is somewhere to drop blocks. */
 const shows = (w: Node, mode: 'edit' | 'live') =>
@@ -274,6 +299,7 @@ export function siteElement(
     doc,
     links: p.links,
     ...(p.fonts ? { fonts: p.fonts } : {}),
+    availableMedia: p.availableMedia,
     ...(p.icons ? { icons: p.icons } : {}),
     mode,
     ...(p.ids ? { ids: true } : {}),
@@ -306,7 +332,7 @@ export function compilePage(
   options: CompileOptions,
 ): CompiledPage {
   try {
-    const { doc: projected, problems } = checkedInput(doc, options)
+    const { doc: projected, effects, problems } = checkedInput(doc, options)
     if (problems.length) return { ok: false, problems }
     const page = projected.pages.find(p => p.id === pageId)
     if (!page)
@@ -320,7 +346,7 @@ export function compilePage(
           },
         ],
       }
-    return build(projected, page, options)
+    return build(projected, page, options, effects)
   } catch (e) {
     return { ok: false, problems: failed(pageId, e) }
   }
@@ -330,22 +356,48 @@ export function build(
   doc: SiteDocument,
   page: SiteDocument['pages'][number],
   options: CompileOptions,
+  effects: ReadonlyMap<string, CheckedEffect> | undefined,
+  siteHashes?: Set<string>,
 ): CompiledPage {
   const p = prepare(doc, [page.root, doc.header, doc.footer], options)
   const { mode } = p
   const mail = { used: false }
-  const hasMotion = (w: Node): boolean =>
-    !!w.motion || !!w.children?.some(hasMotion)
-  const rendered =
-    mode === 'live' && p.trees.some(hasMotion)
-      ? new Map<Node, HtmlNode>()
-      : undefined
+  let hasGpu = false,
+    hasSteps = false
+  if (mode === 'live')
+    for (const tree of p.trees)
+      walk(tree, w => {
+        if (w.motion) {
+          if ('gpu' in w.motion) hasGpu = page.on
+          else hasSteps = true
+        }
+      })
+  const rendered = hasGpu || hasSteps ? new Map<Node, HtmlNode>() : undefined
   const site = siteElement(doc, page, p, mail, rendered)
   const motion =
-    rendered && motionCss(p.trees, site, rendered, options.registry, p)
+    hasSteps && rendered
+      ? motionCss(p.trees, site, rendered, options.registry, p)
+      : undefined
   if (motion?.problems.length) return { ok: false, problems: motion.problems }
-
+  // Pin meters, their table/list wrappers and compound path geometry are now
+  // in the emitted tree. GPU lowering only adds attributes to this subtree.
+  const siteCount = countElements(site, hasGpu)
+  const gpu =
+    hasGpu && rendered && effects
+      ? lowerGpu(
+          site,
+          rendered,
+          p,
+          effects,
+          siteCount + 3 <= BUDGETS.elements,
+          options.availableMedia,
+          options.registry.gpu,
+        )
+      : undefined
   const scripts: PageScript[] = []
+  const timeline = motion?.playbackOnly
+    ? PLAYBACK_TIMELINE_SCRIPT
+    : TIMELINE_SCRIPT
   if (mode === 'live') {
     const open = anyElement(site, e => e.attrs?.['data-s-open'] !== undefined)
     // Decided from what was written, not from the source trees: a node that is not drawn writes nothing for the script to read.
@@ -368,20 +420,27 @@ export function build(
         (mail.used ? EMAIL_SCRIPT : ''),
     })
     if (states) scripts.push({ name: 'states', code: STATES_SCRIPT })
-    if (motion?.timeline)
-      scripts.push({ name: 'timeline', code: TIMELINE_SCRIPT })
+    if (motion?.timeline) scripts.push({ name: 'timeline', code: timeline })
+    if (gpu)
+      scripts.push({
+        name: 'gpuLoader',
+        code: GPU_LOADER_SCRIPT,
+        ...(gpu.worker && { worker: true }),
+      })
   }
 
   const css =
     fontFaceCss(fontsOf(doc, p.shell), p.fontBase, p.fonts) +
     BASE_CSS +
     p.sheet(motion?.inlineClasses, motion?.hostAlpha).css +
-    (motion?.css ?? '')
+    (motion?.css ?? '') +
+    (gpu?.css ?? '')
   const body: HtmlNode[] = [site]
+  if (gpu) body.push(gpu.element)
   const written = scripts.map(s => s.code).join(';')
   if (scripts.length)
     body.push({ tag: 'script', raw: { kind: 'script', content: written } })
-  const html = `<!doctype html>${writeHtml({
+  let html = `<!doctype html>${writeHtml({
     tag: 'html',
     attrs: { lang: p.lang, dir: p.rtl ? 'rtl' : undefined },
     children: [
@@ -403,26 +462,41 @@ export function build(
       { tag: 'body', children: body },
     ],
   })}`
+  if (mode === 'live') {
+    const hashes = executableHashes(scripts)
+    if (siteHashes) hashes.forEach(h => siteHashes.add(h))
+    else html = withPolicy(html, scriptPolicy(hashes, gpu?.worker))
+  }
 
   const stats: PageStats = {
     bytes: byteLength(html),
     styleBytes: byteLength(css),
-    // Charge each raw code string once. Every separator belongs to base.
+    // Preserve the original base joins. The GPU loader pays for its own separator.
     scriptBytes: {
       base: scripts.length
-        ? byteLength(scripts[0].code) + scripts.length - 1
+        ? byteLength(scripts[0].code) + scripts.length - 1 - Number(!!gpu)
         : 0,
       states: byteLength(scripts.find(s => s.name === 'states')?.code ?? ''),
-      ...(motion?.timeline && { timeline: byteLength(TIMELINE_SCRIPT) }),
+      ...(motion?.timeline && { timeline: byteLength(timeline) }),
+      ...(gpu && {
+        gpuLoader: byteLength(GPU_LOADER_SCRIPT) + 1,
+        gpuHost: byteLength(GPU_HOST_SCRIPT),
+      }),
     },
-    elements: body.reduce((n, e) => n + countElements(e), 0),
+    // Site + inert/executable body scripts, plus one reserved live display slot.
+    elements: siteCount + body.length - 1 + Number(!!gpu?.worker),
     depth: p.depth,
+    ...(gpu && { gpuData: gpu.stats }),
   }
   return {
     ok: true,
     html,
     css,
     scripts,
+    ...(gpu && {
+      gpu: { usesWasm: gpu.usesWasm },
+      assets: [{ path: GPU_HOST_PATH, content: GPU_HOST_SCRIPT }],
+    }),
     stats,
     problems: [
       ...cutProblems(p.over),

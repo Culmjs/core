@@ -66,7 +66,7 @@ test('compileSite writes one file per page that is on, and a manifest of scripts
   assert.deepEqual(out.problems, [])
   assert.deepEqual(
     out.files.map(f => f.path),
-    ['index.html', 'about/index.html'],
+    ['index.html', 'about/index.html', '_headers'],
   )
   assert.ok(out.files[0].content.startsWith('<!doctype html>'))
   assert.ok(out.files[0].content.includes('Home'))
@@ -106,7 +106,7 @@ test('files lie at the slug: / is index.html, /a/b is a/b/index.html', () => {
   const out = compileSite(doc, { registry })
   assert.deepEqual(
     out.files.map(f => f.path),
-    ['index.html', 'a/b/index.html'],
+    ['index.html', 'a/b/index.html', '_headers'],
   )
 })
 
@@ -114,7 +114,7 @@ test('no file path can climb out of the output: valid slugs give clean paths, a 
   const doc = twoPages([text('t', 'Home')], [text('u', 'Deep')])
   doc.pages[1].slug = '/a-b/c1'
   const ok = compileSite(doc, { registry })
-  assert.equal(ok.files.length, 2)
+  assert.equal(ok.files.length, 3)
   for (const { path } of ok.files) {
     assert.ok(!path.includes('..') && !path.includes('\\'), path)
     assert.ok(!path.startsWith('/') && !path.includes('//'), path)
@@ -154,7 +154,7 @@ test('a page that is off is not written', () => {
   const out = compileSite(doc, { registry })
   assert.deepEqual(
     out.files.map(f => f.path),
-    ['index.html'],
+    ['index.html', '_headers'],
   )
   assert.deepEqual(
     out.manifest.pages.map(p => p.id),
@@ -185,7 +185,7 @@ test('a page that fails is left out and its problems come back under its path', 
   })
   assert.deepEqual(
     out.files.map(f => f.path),
-    ['index.html'],
+    ['index.html', '_headers'],
   )
   assert.deepEqual(
     out.manifest.pages.map(p => p.id),
@@ -202,7 +202,7 @@ test('the problems of a page that compiled are returned too, under its path', ()
     style: { base: { width: { n: i + 1, unit: 'px' as const } } },
   }))
   const out = compileSite(twoPages([text('t', 'Home')], many), { registry })
-  assert.equal(out.files.length, 2)
+  assert.equal(out.files.length, 3)
   assert.deepEqual(
     out.problems.map(p => [p.code, p.path]),
     [['RESOURCE_LIMIT_EXCEEDED', 'pages.about.css']],
@@ -280,7 +280,7 @@ test('a page at "/" that is off counts as none', () => {
   assert.equal(out.problems.filter(x => x.path === 'pages').length, 1)
   assert.deepEqual(
     out.files.map(f => f.path),
-    ['about/index.html'],
+    ['about/index.html', '_headers'],
   )
 })
 

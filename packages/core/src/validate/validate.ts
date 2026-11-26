@@ -17,6 +17,7 @@ import { isFontRef } from '../style/fonts.ts'
 import { diagnosticId, fieldsOf, isStr, oneOf } from './common.ts'
 import { checkShown } from './required.ts'
 import { checkTrees } from './tree.ts'
+import { checkCustomEffects, checkedRegistrations } from './gpu.ts'
 
 export const TOP_KEYS = fieldsOf<SiteDocument>({
   schemaVersion: true,
@@ -25,6 +26,7 @@ export const TOP_KEYS = fieldsOf<SiteDocument>({
   header: true,
   footer: true,
   components: true,
+  customEffects: true,
   fonts: true,
   styles: true,
   look: true,
@@ -114,7 +116,7 @@ export function validateSite(doc: unknown, registry: Registry): Problem[] {
 export function checkedSite(doc: unknown, registry: Registry) {
   const out: Problem[] = []
   try {
-    return { doc: checkDocument(doc, registry, out), problems: out }
+    return { ...checkDocument(doc, registry, out), problems: out }
   } catch {
     out.push({
       code: 'INVALID_DOCUMENT',
@@ -129,6 +131,8 @@ export function checkDocument(
   registry: Registry,
   out: Problem[],
 ) {
+  const effects = checkedRegistrations(registry, out)
+  const beforeDocument = out.length
   const bad = (message: string, path?: string) =>
     void out.push({
       code: 'INVALID_DOCUMENT',
@@ -305,15 +309,32 @@ export function checkDocument(
       })
     }
   }
-  // A document that is not a site is not handed to the rules.
-  if (out.length) return
-  const projected = checkTrees(doc as unknown as SiteDocument, registry, out)
+  const hasSiteShape = out.length === beforeDocument
+  const custom = checkCustomEffects(doc.customEffects, registry, out)
+  if (!hasSiteShape) return
+  for (const [name, d] of custom) effects.set(name, d)
+  const definitionsOk = !out.length
+  const projected = checkTrees(
+    doc as unknown as SiteDocument,
+    registry,
+    out,
+    new Map([...effects].map(([name, d]) => [name, d.settings])),
+  )
+  // Even when a definition was refused, the attachment reports on its authored owner.
+  if (!definitionsOk) return
   // The two checks below assume a well-formed tree.
   if (!out.length) {
     out.push(...checkShown(doc as unknown as SiteDocument, registry))
   }
   runRules(doc as unknown as SiteDocument, registry, out)
-  return projected
+  if (projected)
+    return {
+      doc:
+        doc.customEffects !== undefined
+          ? { ...projected, customEffects: [...custom.values()] }
+          : projected,
+      effects,
+    }
 }
 
 /** A rule's problem, copied field by field: a rule is outside code, so only the known fields, short and of the right type, reach the result. */

@@ -1,0 +1,17 @@
+variant,profile,round,capture_start_ms,capture_end_ms,p10_green,p90_green,both_contour_bands,effect_ready_ms
+culm-checked-poster,mobile,1,499.7,531.7,153,154,false,461.6
+culm-checked-poster,mobile,1,800.4,831.4,151,155,false,461.6
+culm-checked-poster,mobile,1,1249.8,1281.5,149,157,false,461.6
+culm-checked-poster,mobile,1,2200.4,2230.1,145,161,true,461.6
+culm-checked-poster,mobile,2,499.8,535.5,153,154,false,448
+culm-checked-poster,mobile,2,799.4,834.3,151,155,false,448
+culm-checked-poster,mobile,2,1250.6,1283.4,149,157,false,448
+culm-checked-poster,mobile,2,2199.6,2234.2,145,161,true,448
+culm-trusted-poster,mobile,1,499.4,529.1,105,201,true,441.4
+culm-trusted-poster,mobile,1,799.5,828,104,201,true,441.4
+culm-trusted-poster,mobile,1,1250.1,1275.6,104,201,true,441.4
+culm-trusted-poster,mobile,1,2199.8,2228.2,104,201,true,441.4
+culm-trusted-poster,mobile,2,500.2,538.8,104,201,true,433.7
+culm-trusted-poster,mobile,2,800.7,837.4,104,201,true,433.7
+culm-trusted-poster,mobile,2,1250.2,1287.4,104,201,true,433.7
+culm-trusted-poster,mobile,2,2199.2,2238.2,104,201,true,433.7

@@ -1,10 +1,13 @@
 import type { Problem, SiteDocument } from '../document/index.ts'
-import type { ApplyResult, SiteStore } from './types.ts'
+import type { SiteStore } from './types.ts'
 
 type Rev = { doc: SiteDocument; key?: string }
 type Site = {
   revs: Rev[]
-  keys: Map<string, { request: string; result: ApplyResult; revision: number }>
+  keys: Map<
+    string,
+    NonNullable<Awaited<ReturnType<SiteStore['replay']>>> & { revision: number }
+  >
 }
 
 const copy = <T>(x: T): T => structuredClone(x)
@@ -38,14 +41,26 @@ export function memoryStore(
     },
     async replay(site, key) {
       const k = sites.get(site)?.keys.get(key)
-      return k && copy({ request: k.request, result: k.result })
+      return (
+        k &&
+        copy({
+          request: k.request,
+          result: k.result,
+          ...(k.receipt ? { receipt: k.receipt } : {}),
+        })
+      )
     },
     async commit(site, c) {
       const s = sites.get(site)
       if (!s) return { ok: false, code: 'REVISION_CONFLICT' }
       const seen = s.keys.get(c.key)
       if (seen)
-        return seen.request === c.request
+        return seen.request === c.request &&
+          !(
+            seen.receipt &&
+            c.receipt &&
+            seen.receipt.identity !== c.receipt.identity
+          )
           ? { ok: true, revision: seen.revision, result: copy(seen.result) }
           : { ok: false, code: 'KEY_CONFLICT' }
       if (c.expected !== s.revs.length - 1)
@@ -54,6 +69,7 @@ export function memoryStore(
       s.revs.push({ doc: copy(c.doc), key: c.key })
       s.keys.set(c.key, {
         request: c.request,
+        ...(c.receipt ? { receipt: copy(c.receipt) } : {}),
         result: copy(c.result),
         revision,
       })

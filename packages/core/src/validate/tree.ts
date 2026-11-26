@@ -239,7 +239,12 @@ export function collect(
   return { which, root: root as unknown as Node, entries, comp }
 }
 
-export function checkTrees(doc: SiteDocument, reg: Registry, out: Problem[]) {
+export function checkTrees(
+  doc: SiteDocument,
+  reg: Registry,
+  out: Problem[],
+  gpuSettings: Ctx['gpuSettings'],
+) {
   const look = doc.look
   let styles: SiteStyles
   try {
@@ -255,6 +260,7 @@ export function checkTrees(doc: SiteDocument, reg: Registry, out: Problem[]) {
   const c: Ctx = {
     reg,
     effects: new Map(),
+    gpuSettings,
     kinds: reg.kinds(),
     styles,
     fonts: new Set(doc.fonts),

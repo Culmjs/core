@@ -215,7 +215,13 @@ export function retarget(w: Node, ids: ReadonlyMap<string, string>): void {
     if (d) swapHash(d.goTo)
   }
   const m = w.motion
-  if (m && typeof m === 'object' && 'steps' in m && Array.isArray(m.steps))
+  if (
+    m &&
+    typeof m === 'object' &&
+    !('gpu' in m) &&
+    'steps' in m &&
+    Array.isArray(m.steps)
+  )
     for (const step of m.steps) {
       const t = step?.target
       if (t && typeof t === 'object' && ids.has(t.id)) t.id = ids.get(t.id)!

@@ -9,6 +9,7 @@ import { startDev } from '../dev/server.ts'
 import { expandShortForm } from '../folder/write.ts'
 import { fileStore, withFolderLock, writeAtomic } from '../folder/store.ts'
 import { loadFolder } from '../folder/load.ts'
+import { parseFile } from '../folder/jsonc.ts'
 import type { Problem, SiteDocument, TreeRef } from '@culmjs/core'
 import { fetchFor, type FetchOptions } from '../folder/fetch.ts'
 import { readHeld } from '../folder/held.ts'
@@ -81,22 +82,32 @@ export async function folderMcpOptions(
   fetchOptions?: FetchOptions,
 ) {
   const { loaded } = project
-  // ponytail: one extra load per tool call; read again only on a changed revision or file hash if that costs.
-  const kept = await fileStore(cwd, project.registry)
   let map = loaded.map
   let data = loaded.data
-  const store: typeof kept = {
-    ...kept,
-    async head(site) {
-      const h = await kept.head(site)
-      if ('doc' in h) {
-        const now = await loadFolder(cwd, project.registry)
-        map = now.map
-        data = now.data
+  const store = await fileStore(cwd, project.registry, {
+    onHead(now) {
+      map = now.map
+      data = now.data
+      // Installed plugins and their registry are fixed for this MCP session.
+      // A later opt-out must not leave that registry's GPU grant usable.
+      if (project.registry.gpu?.enabled) {
+        const text = now.files.find(f => f.path === 'culm.json')?.text ?? ''
+        const config = parseFile(text, 1).value
+        if (
+          !isObj(config) ||
+          !isObj(config.features) ||
+          config.features.gpu !== true
+        )
+          return {
+            code: 'UNSUPPORTED_CAPABILITY',
+            file: 'culm.json',
+            path: 'features.gpu',
+            message:
+              'GPU support is no longer enabled. Reopen the folder session to use its current configuration.',
+          }
       }
-      return h
     },
-  }
+  })
   return {
     store,
     registry: project.registry,
@@ -111,8 +122,13 @@ export async function folderMcpOptions(
     executable,
     // the hashes of assets/ and fonts/, read again for each measure
     files: () => fileHashes(cwd),
-    // a Google family or generated image a batch names is fetched once into fonts/ or assets/gen/
-    fetch: (ops: unknown[], doc: SiteDocument, offline?: boolean) =>
+    // a Google family or generated image a batch names is fetched once into fonts/ or assets/gen/ (hosts are a parameter for fake tests)
+    fetch: (
+      ops: unknown[],
+      doc: SiteDocument,
+      offline?: boolean,
+      defer?: boolean,
+    ) =>
       fetchFor(
         cwd,
         doc,
@@ -125,6 +141,7 @@ export async function folderMcpOptions(
               get: () => Promise.reject(new Error('no network for a replay')),
             }
           : { images: project.config.images, ...fetchOptions },
+        defer,
       ),
     held: () => readHeld(cwd),
     assets: (p: string) => readAsset(cwd, p),

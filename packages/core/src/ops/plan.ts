@@ -92,6 +92,7 @@ const TABLE: { [K in Op['op']]: OpFn<K> } = {
   setLook: site.setLook,
   setSiteStyles: site.setSiteStyles,
   setFonts: site.setFonts,
+  addCustomEffect: site.addCustomEffect,
 }
 /** The operation names in the order of the spec's table. */
 export const OP_NAMES: readonly Op['op'][] = [
@@ -100,6 +101,7 @@ export const OP_NAMES: readonly Op['op'][] = [
   'insertBlock', 'setBlockSetting', 'updateBlock',
   'makeComponent', 'setInstance', 'detach', 'removeComponent',
   'addPage', 'removePage', 'setPage', 'movePage', 'setSite', 'setLook', 'setSiteStyles', 'setFonts',
+  'addCustomEffect',
 ] // prettier-ignore
 
 const fail = (

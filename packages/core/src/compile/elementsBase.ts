@@ -20,6 +20,7 @@ export type ElementCtx = {
   links: Links
   /** The fonts the site's folder holds (`up:<name>`), read by the tools; core opens no file. */
   fonts?: SiteFonts
+  availableMedia?: ReadonlySet<string>
   /** The icons the site's folder holds (`set:name`), read by the tools; core opens no file. */
   icons?: SiteIcons
   mode: 'edit' | 'live'

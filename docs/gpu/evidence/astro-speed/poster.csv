@@ -1,0 +1,7 @@
+variant,profile,round,compressed_body_bytes,raw_js_bytes,navigation_to_LCP_ms,LCP_element,navigation_to_FCP_ms,navigation_to_load_ms,navigation_to_TTFB_ms,first_effect_ready_ms,active_at_end,completed_draws_per_second,p95_draw_interval_ms,page_raf_per_second,p95_raf_interval_ms,long_task_ms,CLS,requests,observed_backing_sizes
+culm-checked-poster,mobile,1,7703,10967,212,P,212,399.1,1.5,9628,True,60,17.8,60,16.7,0,0,3,98x200
+culm-trusted-poster,mobile,1,6109,7569,212,P,212,381.8,0.9,427.8,True,60,17.7,60,16.8,0,0,3,98x200
+culm-trusted-poster,mobile,2,6109,7569,212,P,212,382.4,0.9,409.9,True,60,17.7,60,16.8,0,0,3,98x200
+culm-checked-poster,mobile,2,7703,10967,232,P,232,404.6,0.7,9647.6,True,60,17.7,60,16.7,0,0,3,98x200
+culm-checked-poster,mobile,3,7703,10967,208,P,208,384.7,0.8,9625.4,True,60,17.7,60,16.8,0,0,3,98x200
+culm-trusted-poster,mobile,3,6109,7569,212,P,212,382.4,0.9,412.3,True,60,17.7,60,16.8,0,0,3,98x200

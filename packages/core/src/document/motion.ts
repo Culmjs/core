@@ -45,8 +45,18 @@ export type Program =
   | { steps: Step[]; host?: true }
   | { effect: string; settings?: Record<string, number> }
 
-export type Motion = Program & {
+export type StepMotion = Program & {
   trigger: MotionTrigger
   pinPx?: number
   scrollFallback?: 'timeline'
 }
+
+export type GpuMotion = {
+  trigger: 'enter-view'
+  gpu: string
+  settings?: Record<string, number | string>
+  /** One local asset id, never a URL. */
+  poster?: string
+}
+
+export type Motion = StepMotion | GpuMotion

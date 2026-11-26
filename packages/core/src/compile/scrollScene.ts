@@ -24,18 +24,17 @@ const layouts = [
 
 /** Check the actual layout/theme AND declared-state conditions on the same path.
  * Only nodes on paths to queried targets need predicates; other page state is never enumerated. */
-export function scrollScene(
-  root: Node,
+export function renderedFacts(
+  roots: readonly Node[],
   header: Node,
   site: HtmlNode,
   rendered: ReadonlyMap<Node, HtmlNode>,
   classOf: ReadonlyMap<string, string>,
   scheme: Look['dark'],
-  side: boolean,
   conditions: StateConditions,
 ) {
   const parents = new Map<Node, Node | null>()
-  walk(root, (w, p) => void parents.set(w, p))
+  for (const root of roots) walk(root, (w, p) => void parents.set(w, p))
   const memo = new Map<Node, Facts[]>()
   const themes = scheme === 'auto' ? [false, true] : [scheme === 'dark']
 
@@ -54,7 +53,6 @@ export function scrollScene(
       match(n, rendered.get(n))
     return result
   }
-
   function facts(w: Node): Facts[] {
     const known = memo.get(w)
     if (known) return known
@@ -127,7 +125,28 @@ export function scrollScene(
     memo.set(w, result)
     return result
   }
+  return { parents, facts }
+}
 
+export function scrollScene(
+  root: Node,
+  header: Node,
+  site: HtmlNode,
+  rendered: ReadonlyMap<Node, HtmlNode>,
+  classOf: ReadonlyMap<string, string>,
+  scheme: Look['dark'],
+  side: boolean,
+  conditions: StateConditions,
+) {
+  const { parents, facts } = renderedFacts(
+    [root],
+    header,
+    site,
+    rendered,
+    classOf,
+    scheme,
+    conditions,
+  )
   return (owner: Node, targets: (Node | undefined)[]) => {
     let views: Facts[][] | undefined
     const targetViews = () =>

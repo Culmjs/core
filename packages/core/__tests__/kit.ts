@@ -358,8 +358,10 @@ export const KIT_PLUGIN: Plugin = {
 }
 
 /** DEMO_PLUGIN and KIT_PLUGIN. */
-export function kitRegistry(): Registry {
-  const r = createRegistry()
+export function kitRegistry(
+  options?: Parameters<typeof createRegistry>[0],
+): Registry {
+  const r = createRegistry(options)
   r.use(DEMO_PLUGIN)
   r.use(KIT_PLUGIN)
   return r

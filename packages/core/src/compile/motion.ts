@@ -5,6 +5,7 @@ import type {
   Node,
   Problem,
   Step,
+  StepMotion,
 } from '../document/index.ts'
 import { find, orderedChildren, walk } from '../document/tree.ts'
 import { cssEase } from '../scripts/motionEase.ts'
@@ -34,7 +35,7 @@ type Lowered = { tier: 1 | 2; steps: Step[] }
 /** A validated program. The private render projection already has the exact checked
  * steps, including copy-local target IDs, even when it came from a named preset. */
 export function lowerMotion(
-  m: Motion,
+  m: StepMotion,
   registry: Registry,
   owner?: Node,
   ns?: string,
@@ -173,6 +174,7 @@ function inlineTarget(n: Node, el: HtmlNode, style: InlineStyles) {
 
 type Pending = {
   w: Node
+  motion: StepMotion
   owner: HtmlNode
   steps: Step[]
   state?: Binding
@@ -229,12 +231,12 @@ function timelines(
   const layoutOwners = new Set<HtmlNode>()
   const splitRules = new Set<string>()
   let timeline = false
+  let playbackOnly = true
   let alpha = false
-  for (const { w, owner, steps, state, pinChild } of programs) {
+  for (const { w, motion: m, owner, steps, state, pinChild } of programs) {
     const bound: BoundStep[] = []
     const draw = new Set<number>(),
       reveals = new Set<number>()
-    const m = w.motion!
     const transformBox = (n: Node, el: HtmlNode, id: number) => {
       const inl = inlineTarget(n, el, style)
       if (!inl.natural && !inl.restore) return
@@ -333,6 +335,13 @@ function timelines(
     }
     ;(owner.attrs ??= {})['data-culm-motion'] = JSON.stringify(scene)
     timeline = true
+    playbackOnly &&=
+      (trigger === 'enter-view' || trigger === 'load') &&
+      !scene.layout &&
+      !scene.pin &&
+      !scene.child &&
+      !scene.draw &&
+      !scene.native
     const usesReveal = (tracks: Scene['tracks']) => tracks.some(t => !!t[3])
     alpha ||=
       usesReveal(scene.tracks) || !!scene.parts?.some(p => usesReveal(p.tracks))
@@ -347,6 +356,7 @@ function timelines(
       : '')
   return {
     timeline,
+    playbackOnly,
     alpha,
     css: css ? `@media (prefers-reduced-motion:no-preference){${css}}` : '',
   }
@@ -566,7 +576,7 @@ export function motionCss(
       chain[depth] = w
       const m = w.motion,
         owner = rendered.get(w)
-      if (!m || !owner) return
+      if (!m || 'gpu' in m || !owner) return
       // The fallback buys a host even when native CSS is available. Defer only
       // its execution to the host; a host-only program has no CSS branch.
       const { tier, steps } = lowerMotion(
@@ -601,7 +611,7 @@ export function motionCss(
           }
           if (!pinChild) return
         }
-        pending.push({ w, owner, steps, state, pinChild })
+        pending.push({ w, motion: m, owner, steps, state, pinChild })
       }
       if (hostOnly) return
       const t = steps[0].target
@@ -732,6 +742,7 @@ export function motionCss(
         : '') + host.css,
     hostAlpha: host.alpha,
     timeline: host.timeline,
+    playbackOnly: host.playbackOnly,
     problems,
     nativeScroll,
     inlineClasses,

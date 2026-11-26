@@ -5,26 +5,29 @@ import { checkDeclaration } from './declaration.ts'
 import type { Declaration } from './declaration.ts'
 import type { DataSource } from './dataSource.ts'
 import type { Rule } from './rule.ts'
-import { checkedEffect, rise, type EffectDef } from './effect.ts'
+import { checkedEffect, rise, type RegisteredEffect } from './effect.ts'
+import { gpuAuthority, type GpuCapability, type GpuOptions } from './gpu.ts'
+import { contours } from './gpuBuiltins.ts'
 
 export type Plugin = Declaration & {
   blocks?: BlockDef[]
   sources?: DataSource[]
   rules?: Rule[]
-  effects?: EffectDef[]
+  effects?: RegisteredEffect[]
   kinds?: Record<string, KindSpec>
   settingFns?: Record<string, SettingFn>
 }
 
 export type Registry = {
+  readonly gpu?: GpuCapability
   use(plugin: Plugin): void
   block(id: string): BlockDef | undefined
   blocks(): BlockDef[]
   source(name: string): DataSource | undefined
   sources(): DataSource[]
   rules(): Rule[]
-  effect(name: string): EffectDef | undefined
-  effects(): EffectDef[]
+  effect(name: string): RegisteredEffect | undefined
+  effects(): RegisteredEffect[]
   kinds(): ReadonlyMap<string, KindSpec>
   settingFn(name: string): SettingFn | undefined
   /** Each registered plug-in's name and version, in name order. */
@@ -33,12 +36,14 @@ export type Registry = {
 
 const GUIDE_MAX = 500
 
-export function createRegistry(): Registry {
+export function createRegistry({ gpu }: { gpu?: GpuOptions } = {}): Registry {
+  const authority = gpuAuthority(gpu)
   const plugins = new Map<string, number>()
   const blocks = new Map<string, BlockDef>()
   const sources = new Map<string, DataSource>()
   const rules = new Map<string, Rule>()
-  const effects = new Map<string, EffectDef>([[rise.name, rise]])
+  const effects = new Map<string, RegisteredEffect>([[rise.name, rise]])
+  if (authority) effects.set(contours.name, contours)
   const kinds = new Map<string, KindSpec>()
   const fns = new Map<string, SettingFn>()
 
@@ -63,13 +68,17 @@ export function createRegistry(): Registry {
   }
 
   return {
+    get gpu() {
+      return authority?.capability
+    },
     use(p) {
       const problems = checkDeclaration(p)
       if (problems.length)
         throw new Error(
           `Plug-in refused: ${problems.map(x => x.message).join(' ')}`,
         )
-      if (plugins.has(p.name)) throw new Error(`Duplicate plug-in "${p.name}".`)
+      const { name, version } = p
+      if (plugins.has(name)) throw new Error(`Duplicate plug-in "${name}".`)
       // Stage everything first so a refused plug-in registers nothing.
       for (const [what, name, guide] of [
         ...(p.blocks ?? []).map(x => ['Block', x.id, x.guide] as const),
@@ -101,14 +110,21 @@ export function createRegistry(): Registry {
       const e = stage(
         'effect',
         effects,
-        (p.effects ?? []).map(checkedEffect).map(d => [d.name, d]),
+        (p.effects ?? [])
+          .map(d => {
+            if (d?.tier !== 3) return checkedEffect(d)
+            if (!authority)
+              throw new Error('GPU effects require an enabled GPU registry.')
+            return authority.register(d, name, version)
+          })
+          .map(d => [d.name, d]),
       )
       const f = stage(
         'setting function',
         fns,
         Object.entries(p.settingFns ?? {}),
       )
-      plugins.set(p.name, p.version)
+      plugins.set(name, version)
       for (const [m, add] of [
         [blocks, b],
         [sources, s],

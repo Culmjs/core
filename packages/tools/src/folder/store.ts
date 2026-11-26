@@ -2,23 +2,28 @@ import { createHash, randomUUID } from 'node:crypto'
 import {
   access,
   link,
+  lstat,
   mkdir,
   open,
   readdir,
   readFile,
+  readlink,
+  realpath,
   rename,
   rm,
   stat,
   writeFile,
 } from 'node:fs/promises'
-import { dirname, isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import type { Registry } from '@culmjs/core'
 import type { ApplyResult, SiteStore } from '@culmjs/core/ops'
-import { loadFiles, loadFolder } from './load.ts'
+import { loadFiles, loadFolder, readFolder } from './load.ts'
 import type { Loaded } from './load.ts'
 import type { Located } from './plugins.ts'
 import { fileEdits } from './write.ts'
+import { shaderInput, shaderParentOk, shaderPath } from './shaders.ts'
+import { inside, resolveFile } from './files.ts'
 
 export const KEPT_REVISIONS = 200
 export const LOCK_STALE_MS = 60_000
@@ -28,6 +33,7 @@ type Rec = {
   by: 'culm' | 'outside'
   key?: string
   request?: string
+  receipt?: Parameters<SiteStore['commit']>[1]['receipt']
   result?: ApplyResult
   time: number
 }
@@ -41,15 +47,78 @@ type Refusal = {
   problems?: Located[]
 }
 
-/** What a revision holds: culm.json, site.json and the files under pages/, pieces/ and blocks/. */
+/** Revisions hold referenced shader pairs alongside the site's JSON files. */
 const covered = (p: string) =>
-  p === 'culm.json' || p === 'site.json' || /^(pages|pieces|blocks)\//.test(p)
+  p === 'culm.json' ||
+  p === 'site.json' ||
+  /^(pages|pieces|blocks)\//.test(p) ||
+  shaderPath(p)
 /** A path a record or journal may name: covered, relative, no `..`. */
 const safe = (p: string) => covered(p) && !p.includes('..') && !isAbsolute(p)
 const sha = (t: string) => createHash('sha256').update(t).digest('hex')
+const stamp = (files: Loaded['files']) =>
+  sha(JSON.stringify(files.map(f => [f.path, f.sha256])))
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 const code = (e: unknown) => (e as NodeJS.ErrnoException | undefined)?.code
 const HEX = /^[0-9a-f]{64}$/
+
+/** A kept link's current bytes are no witness for the restored revision if a
+ * rename or removal can change its resolution. Check the final physical write
+ * set (after adoption), including mutations to intermediate file links. */
+async function restoreLinksSafe(
+  dir: string,
+  kept: Iterable<string>,
+  paths: string[],
+  was: ReadonlyMap<string, string>,
+) {
+  const changed = new Set(paths)
+  const held = [...kept].filter(p => shaderPath(p) && !changed.has(p))
+  if (!held.length || !paths.some(p => was.has(p))) return true
+  const identity = ({ dev, ino }: { dev: bigint; ino: bigint }) =>
+    `${dev}:${ino}`
+  try {
+    if (!(await shaderParentOk(dir))) return false
+    const root = await realpath(dir)
+    const dependencies = new Set<string>()
+    for (const p of held) {
+      let path = join(root, p)
+      let entry = await lstat(path, { bigint: true })
+      if (!entry.isSymbolicLink()) continue
+      if (!(await resolveFile(dir, 'effects', p.slice('effects/'.length))))
+        return false
+      for (let hops = 0; entry.isSymbolicLink(); hops++) {
+        if (hops === 64) return false
+        const link = await readlink(path)
+        // Resolve the parent as the filesystem sees it (link/.. need not be
+        // the lexical parent). Inspect only directory entries inside the site.
+        const raw = isAbsolute(link) ? link : `${dirname(path)}${sep}${link}`
+        const parent = await realpath(dirname(raw))
+        if (parent !== root && !inside(root, parent)) return false
+        path = join(parent, basename(raw))
+        entry = await lstat(path, { bigint: true })
+        dependencies.add(identity(entry))
+      }
+      if (!entry.isFile() || !inside(join(root, 'effects'), path)) return false
+    }
+    if (!dependencies.size) return true
+    for (const p of changed) {
+      if (!was.has(p)) continue // an absent destination cannot be on an existing link chain
+      const parent = await realpath(dirname(join(root, p)))
+      if (parent !== root && !inside(root, parent)) return false
+      // Rename/unlink mutates the entry, not its ultimate referent. Removing
+      // an independent symlink to the same backing file is harmless.
+      if (
+        dependencies.has(
+          identity(await lstat(join(parent, basename(p)), { bigint: true })),
+        )
+      )
+        return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
 
 const alive = (pid: unknown) => {
   if (typeof pid !== 'number') return true
@@ -167,7 +236,11 @@ export async function writeAtomic(
 export async function fileStore(
   dir: string,
   registry: Registry,
-  options: { after?(step: number): void; now?(): number } = {},
+  options: {
+    after?(step: number): void
+    now?(): number
+    onHead?(loaded: Loaded): Located | void
+  } = {},
 ): Promise<SiteStore> {
   const now = options.now ?? Date.now
   const hook = (n: number) => options.after?.(n)
@@ -195,6 +268,14 @@ export async function fileStore(
     )
   /** Writes through a temporary name and a rename. */
   const put = (path: string, body: string) => putAtomic(culm, path, body)
+  async function projectFile(path: string, body?: string) {
+    if (shaderPath(path) && !(await shaderParentOk(dir)))
+      throw new Error(
+        'Cannot publish shader files through an unsafe effects/ folder.',
+      )
+    if (body === undefined) await rm(join(dir, path), { force: true })
+    else await put(join(dir, path), body)
+  }
   const recPath = (n: number) => join(culm, 'revisions', `${n}.json`)
   const names = async (sub: string) =>
     readdir(join(culm, sub)).catch(() => [] as string[])
@@ -339,11 +420,18 @@ export async function fileStore(
         } catch {
           return // a journal that does not parse is not guessed at
         }
+        if (
+          Array.isArray(paths) &&
+          paths.some(p => typeof p === 'string' && shaderPath(p)) &&
+          !(await shaderParentOk(dir))
+        )
+          throw new Error(
+            'Cannot recover shader files through an unsafe effects/ folder.',
+          )
         for (const p of Array.isArray(paths) ? paths : []) {
           if (typeof p !== 'string' || !safe(p)) continue
           const h = now2.rec.files[p]
-          if (h) await put(join(dir, p), await blobText(h))
-          else await rm(join(dir, p), { force: true })
+          await projectFile(p, h ? await blobText(h) : undefined)
         }
         await rm(journalPath, { force: true })
       }
@@ -396,16 +484,21 @@ export async function fileStore(
       const st = await state()
       if (st.kind === 'bad') return { problems: [st.problem] }
       const loaded = await loadFolder(dir, registry)
+      const issue = options.onHead?.(loaded)
       if (!loaded.doc || loaded.problems.length)
         return { problems: loaded.problems }
+      if (issue) return { problems: [issue] }
+      const readSet = registry.gpu?.enabled
+        ? { readStamp: stamp(loaded.files) }
+        : {}
       if (st.kind === 'ok') {
         pending = undefined
         seen(st.revision)
-        return { revision: st.revision, doc: loaded.doc }
+        return { revision: st.revision, doc: loaded.doc, ...readSet }
       }
       pending ??= { n: fresh(), files: hashes(mineOf(loaded)) }
       seen(pending.n)
-      return { revision: pending.n, doc: loaded.doc }
+      return { revision: pending.n, doc: loaded.doc, ...readSet }
     },
 
     async get(_site, revision) {
@@ -437,7 +530,11 @@ export async function fileStore(
       for (const n of (await numbers()).filter(n => n <= st.revision)) {
         const rec = await readRec(n)
         if (rec?.key === key && rec.request !== undefined && rec.result)
-          return { request: rec.request, result: rec.result }
+          return {
+            request: rec.request,
+            result: rec.result,
+            ...(rec.receipt ? { receipt: rec.receipt } : {}),
+          }
       }
       return undefined
     },
@@ -457,6 +554,14 @@ export async function fileStore(
           })
         // 2. load the folder; a hand edit becomes an outside revision
         const loaded = await loadFolder(dir, registry)
+        // Compare with the specific head used for this projection, not a shared
+        // "last read": another reader can observe a hand save at the same revision.
+        if (
+          c.readStamp !== undefined &&
+          (st.kind === 'fresh' || st.revision === c.expected) &&
+          c.readStamp !== stamp(loaded.files)
+        )
+          return end<Refusal>({ ok: false, code: 'SOURCE_CONFLICT' })
         if (!loaded.doc || loaded.problems.length)
           return end<Refusal>({
             ok: false,
@@ -490,7 +595,12 @@ export async function fileStore(
           const rec = await readRec(n)
           if (rec?.key !== c.key || !rec.result) continue
           return end(
-            rec.request === c.request
+            rec.request === c.request &&
+              !(
+                c.receipt &&
+                rec.receipt &&
+                c.receipt.identity !== rec.receipt.identity
+              )
               ? { ok: true as const, revision: n, result: rec.result }
               : ({ ok: false, code: 'KEY_CONFLICT' } satisfies Refusal),
           )
@@ -499,25 +609,49 @@ export async function fileStore(
           return end<Refusal>({ ok: false, code: 'REVISION_CONFLICT' })
         hook(3)
         // 4. the edits, and the files as they are now
-        const edits =
-          (await restoreEdits(c, head, mine)) ??
-          fileEdits(loaded.doc, c.doc, loaded, registry)
+        const restored = await restoreEdits(c, head, mine)
+        const edits = restored ?? fileEdits(loaded.doc, c.doc, loaded, registry)
         if (edits.problems.length)
           return end<Refusal>({
             ok: false,
             code: 'SOURCE_CONFLICT',
             problems: edits.problems,
           })
-        const paths = [...Object.keys(edits.write), ...edits.remove]
+        const writes = { ...edits.write }
         const was = new Map(loaded.files.map(f => [f.path, f.text]))
-        for (const p of paths) {
-          const now1 = await readFile(join(dir, p), 'utf8').catch(() => null)
+        if (registry.gpu?.enabled) {
+          const scan = await readFolder(dir)
+          if (
+            scan.unreadable ||
+            scan.refused.size ||
+            !sameFiles(hashes(scan.files), hashes(was))
+          )
+            return end<Refusal>({ ok: false, code: 'SOURCE_CONFLICT' })
+        }
+        for (const p of [...Object.keys(writes), ...edits.remove]) {
+          let now1
+          if (shaderPath(p)) {
+            const r = await shaderInput(dir, p)
+            if (r && 'why' in r)
+              return end<Refusal>({ ok: false, code: 'SOURCE_CONFLICT' })
+            now1 = r?.text ?? null
+            // A hand save can unlist a shader pair without deleting its files.
+            // Adopt exact target bytes on restore only. Never journal an adopted
+            // path: rollback to the unreferenced head must leave it on disk.
+            if (restored && !was.has(p) && now1 === writes[p]) {
+              delete writes[p]
+              continue
+            }
+          } else now1 = await readFile(join(dir, p), 'utf8').catch(() => null)
           if (now1 !== (was.get(p) ?? null))
             return end<Refusal>({ ok: false, code: 'SOURCE_CONFLICT' })
         }
+        const paths = [...Object.keys(writes), ...edits.remove]
         const next = new Map(mine)
         for (const [p, t] of Object.entries(edits.write)) next.set(p, t)
         for (const p of edits.remove) next.delete(p)
+        if (restored && !(await restoreLinksSafe(dir, next.keys(), paths, was)))
+          return end<Refusal>({ ok: false, code: 'SOURCE_CONFLICT' })
         const verifyMap = new Map(next)
         for (const f of loaded.files)
           if (!covered(f.path)) verifyMap.set(f.path, f.text)
@@ -535,15 +669,15 @@ export async function fileStore(
         // 6. blobs, then each file through a temporary name and a rename
         await blobs(next)
         let hooked = false
-        for (const [p, t] of Object.entries(edits.write)) {
-          await put(join(dir, p), t)
+        for (const [p, t] of Object.entries(writes)) {
+          await projectFile(p, t)
           if (!hooked) {
             hooked = true
             hook(6)
           }
         }
         for (const p of edits.remove) {
-          await rm(join(dir, p), { force: true })
+          await projectFile(p)
           if (!hooked) {
             hooked = true
             hook(6)
@@ -564,6 +698,7 @@ export async function fileStore(
           by: 'culm',
           key: c.key,
           request: c.request,
+          ...(c.receipt ? { receipt: c.receipt } : {}),
           result,
           time: now(),
         }

@@ -270,7 +270,7 @@ function detachBindings(registry: Registry) {
   const cache = new Map<Node, Node>()
   const bind = (w: Node, ns?: string) => {
     const m = w.motion
-    if (!m || !('effect' in m)) return
+    if (!m || 'gpu' in m || !('effect' in m)) return
     const fail = (message: string, path: string): never => {
       throw new Error(`${w.id}.${path}: ${message}`)
     }

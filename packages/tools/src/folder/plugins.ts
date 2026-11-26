@@ -221,7 +221,7 @@ export async function loadPlugins(
   dir: string,
   files: ReadonlyMap<string, string>,
 ): Promise<{ registry: Registry; config: ProjectConfig; problems: Located[] }> {
-  const registry = createRegistry()
+  let registry = createRegistry()
   const config: ProjectConfig = { plugins: [], out: 'dist' }
   const problems: Located[] = []
 
@@ -263,7 +263,23 @@ export async function loadPlugins(
     } else if (!isObj(value))
       bad('INVALID_DOCUMENT', 'culm.json must be an object.')
     else {
-      const { plugins, out, images } = value
+      const { plugins, out, images, features } = value
+      if (features !== undefined) {
+        if (!isObj(features))
+          bad('INVALID_DOCUMENT', 'features must be an object.', ['features'])
+        else {
+          for (const key of Object.keys(features))
+            if (key !== 'gpu')
+              bad('INVALID_DOCUMENT', 'Unknown feature.', ['features', key])
+          if (features.gpu === true)
+            registry = createRegistry({ gpu: { enabled: true } })
+          else if (features.gpu !== undefined && features.gpu !== false)
+            bad('INVALID_DOCUMENT', 'features.gpu must be a boolean.', [
+              'features',
+              'gpu',
+            ])
+        }
+      }
       if (images !== undefined) {
         if (!isObj(images))
           bad('INVALID_DOCUMENT', '"images" must be an object.', ['images'])

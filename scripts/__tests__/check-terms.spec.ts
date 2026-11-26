@@ -30,6 +30,14 @@ test('a hit names the file, line and term', () => {
     'a.ts:2 marketplace',
   ])
 })
+test('a generated CSP digest is opaque; neighbouring identifiers are still scanned', () => {
+  const path = 'packages/core/src/scripts/scriptsMin.ts'
+  const hash = 'sha256-Oh2O0QuCVPk8qdAFLngcqGEQ7tI71S2lGXwaXsw658A='
+  assert.deepEqual(termHits([{ path, source: `const paperId = "${hash}"` }]), [
+    `${path}:1 paper`,
+  ])
+  assert.deepEqual(termHits([{ path: 'a.ts', source: hash }]), ['a.ts:1 CV'])
+})
 test('terms inside identifiers are hits; cv in lower case is not', () => {
   for (const id of [
     'paperId',

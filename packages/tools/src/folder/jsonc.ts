@@ -3,7 +3,7 @@ import {
   createScanner,
   findNodeAtLocation,
   modify,
-  parse,
+  getNodeValue,
   parseTree,
   printParseErrorCode,
   type FormattingOptions,
@@ -33,7 +33,10 @@ const placeOf = (body: string, offset: number, bom: number): Place => {
 }
 
 /** `at` points at the key when the path ends in a key, at the value when it ends in an index. */
-export function parseFile(text: string): {
+export function parseFile(
+  text: string,
+  errorLimit = Infinity,
+): {
   value: unknown
   at(path: JsonPath): Place | undefined
   errors: (Place & { message: string })[]
@@ -41,12 +44,15 @@ export function parseFile(text: string): {
   const [bom, body] = split(text)
   const errs: ParseError[] = []
   const tree = parseTree(body, errs, { allowTrailingComma: true })
-  const errors = errs.map(e => ({
+  const errors = errs.slice(0, errorLimit).map(e => ({
     ...placeOf(body, e.offset, bom.length),
     message: printParseErrorCode(e.error),
   }))
   return {
-    value: parse(body, [], { allowTrailingComma: true }),
+    // getNodeValue builds null-prototype records: "__proto__" is a data key,
+    // never an inherited capability/field. Clone into normal JSON objects as
+    // the public folder document expects, preserving numeric values verbatim.
+    value: tree && structuredClone(getNodeValue(tree)),
     errors,
     at(path) {
       if (!tree) return undefined
@@ -136,12 +142,24 @@ function spliceInsert(
     const after = (comma >= 0 ? comma : end) + 1
     const at =
       after + (/^[ \t]*\/\/[^\r\n]*/.exec(body.slice(after))?.[0].length ?? 0)
-    return body.slice(0, at) + sep + text + ',' + body.slice(at)
+    return (
+      body.slice(0, at) +
+      (at > after ? eol + indent : sep) +
+      text +
+      ',' +
+      body.slice(at)
+    )
   }
   // the last element has none yet: it gets its comma right after it, before any comment on its line
-  const at = end + same.exec(body.slice(end))![0].length
+  const tail = same.exec(body.slice(end))![0]
+  const at = end + tail.length
   return (
-    body.slice(0, end) + ',' + body.slice(end, at) + sep + text + body.slice(at)
+    body.slice(0, end) +
+    ',' +
+    tail +
+    (tail.trimStart().startsWith('//') ? eol + indent : sep) +
+    text +
+    body.slice(at)
   )
 }
 

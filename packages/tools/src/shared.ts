@@ -1,4 +1,27 @@
-import type { Look } from '@culmjs/core'
+import type { CompiledSite, Look } from '@culmjs/core'
+
+/** The deployment header applies to every output path, including navigable media.
+ * An invalid site with no output grants no executable sources. */
+export const NO_SCRIPTS = "script-src 'none'; worker-src 'none'"
+export function deploymentPolicy(site: CompiledSite): string {
+  return (
+    /^\/\*\n  Content-Security-Policy: ([^\r\n]+)\n$/.exec(
+      site.files.find(f => f.path === '_headers')?.content ?? '',
+    )?.[1] ?? NO_SCRIPTS
+  )
+}
+
+/** Media known to this compile, addressed as on the static site. Only add literal
+ * spellings that still address the same file (a literal #, e.g., starts a fragment). */
+export function mediaAddresses(files: readonly { path: string }[]) {
+  const urls = new Set<string>()
+  for (const { path } of files)
+    if (path.startsWith('assets/')) {
+      urls.add('/' + path.split('/').map(encodeURIComponent).join('/'))
+      if (!/[%#?\\\u0000-\u001f]/u.test(path)) urls.add('/' + path)
+    }
+  return urls
+}
 
 /** A plain JSON object (not null, not an array). */
 export const isObj = (v: unknown): v is Record<string, unknown> =>
@@ -6,6 +29,7 @@ export const isObj = (v: unknown): v is Record<string, unknown> =>
 
 // core's id rule, not exported by core
 export const ID_RE = /^[a-z0-9]{1,20}$/
+export const descriptorPattern = '^effects/[a-z][a-z0-9_-]{0,63}\\.json$'
 
 /** The look a site gets when it declares none. */
 export const PLAIN: Look = {
@@ -27,6 +51,7 @@ export const SOURCES = [
   'fonts',
   'pages',
   'pieces',
+  'effects',
   'blocks',
   'data',
   'node_modules',

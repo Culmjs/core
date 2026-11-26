@@ -7,6 +7,7 @@ import { plan } from '@culmjs/core/ops'
 import type { Op } from '@culmjs/core/ops'
 import type { Registry, SiteDocument } from '@culmjs/core'
 import { copyFixture } from '../fixtures.ts'
+import { define } from '../fixtures/shader.ts'
 import { derivedId } from '../../src/folder/ids.ts'
 import { loadFiles, loadFolder, readProject } from '../../src/folder/load.ts'
 import { parseFile } from '../../src/folder/jsonc.ts'
@@ -18,6 +19,7 @@ const FIXTURE = resolve(
   '../fixtures/site-basic',
 )
 const base = await readProject(FIXTURE)
+base.set('culm.json', '{"features":{"gpu":true}}')
 const { registry } = await loadPlugins(FIXTURE, base)
 // The same project with version 2 of the hero block: its lead is a level 3 heading.
 const v2files = new Map(base)
@@ -244,11 +246,12 @@ const CASES: [name: string, ops: Op[]][] = [
     [{ op: 'setSiteStyles', styles: { textRange: { min: 10, max: 90 } } }],
   ],
   ['setFonts', [{ op: 'setFonts', fonts: ['sys:sans'] }]],
+  ['addCustomEffect', [define]],
 ]
 
-test('the table has one case for each of the 27 operations', () => {
-  assert.equal(CASES.length, 27)
-  assert.equal(new Set(CASES.map(c => c[0])).size, 27)
+test('the table has one case for each of the 28 operations', () => {
+  assert.equal(CASES.length, 28)
+  assert.equal(new Set(CASES.map(c => c[0])).size, 28)
 })
 
 // The order of `components` is not meaningful (the loader lists pieces by path order of first use), so both sides are sorted by id.

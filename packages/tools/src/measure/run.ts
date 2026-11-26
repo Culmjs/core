@@ -2,6 +2,11 @@ import { extname } from 'node:path'
 import {
   buildIdentity,
   compilePage,
+  compileSite,
+  pageScriptPolicy,
+  policyMeta,
+  type CompileOptions,
+  type CompiledPage,
   walk,
   type Data,
   type Problem,
@@ -24,7 +29,12 @@ import {
 import type { SiteStore } from '@culmjs/core/ops'
 import { openBrowser, type Answer, type Browser, type Page } from './browser.ts'
 import { contrastOf } from './contrast.ts'
-import { MIME } from '../shared.ts'
+import {
+  deploymentPolicy,
+  mediaAddresses,
+  MIME,
+  NO_SCRIPTS,
+} from '../shared.ts'
 
 export type MeasureInput = {
   doc: SiteDocument
@@ -48,7 +58,7 @@ export type MeasureInput = {
   browser?: Browser
   /** The Chrome to open when no `browser` is given (else `CULM_CHROME`, Playwright's Chromium, the system Chrome). */
   executable?: string
-  /** The font and asset files of the project, for the build identity. */
+  /** Confirmed project files, for optional media eligibility and the build identity. */
   files?: { path: string; sha256: string }[]
   /** The bytes of a file the page asks for, by project path (`assets/…`, `fonts/…`), or undefined. */
   assets?(path: string): Promise<Uint8Array | undefined>
@@ -97,13 +107,22 @@ export function skippedStates(doc: SiteDocument, pageId: string): string[] {
   return out
 }
 
-/** Answers the page's own requests: the compiled page at its address, and the project's assets and fonts. Everything else is undefined (blocked). */
-function answers(
-  html: string,
-  slug: string,
+/** Answer the compiled page, its generated assets, and project media and fonts. Other requests are blocked. */
+export function measureAnswers(
+  page: Extract<CompiledPage, { ok: true }>,
+  route: Pick<SiteDocument['pages'][number], 'slug' | 'on'>,
   assets: MeasureInput['assets'],
   missing: { n: number },
+  deployed: string,
 ) {
+  const standalone = pageScriptPolicy(page.scripts)
+  // A requested draft has no deployed route. Keep its own executable set on
+  // that page only; shared project files still have the deployment policy.
+  const policy = route.on ? deployed : standalone
+  const html = route.on
+    ? page.html.replace(policyMeta(standalone), () => policyMeta(deployed))
+    : page.html
+  const generated = new Map(page.assets?.map(f => ['/' + f.path, f.content]))
   return async (url: string): Promise<Answer | undefined> => {
     let u: URL
     try {
@@ -112,8 +131,11 @@ function answers(
       return undefined
     }
     if (u.origin !== ORIGIN) return undefined
-    if (u.pathname === slug)
-      return { type: 'text/html; charset=utf-8', body: html }
+    if (u.pathname === route.slug)
+      return { type: 'text/html; charset=utf-8', body: html, policy }
+    const js = generated.get(u.pathname)
+    if (js !== undefined)
+      return { type: MIME['.js']!, body: js, policy: deployed }
     const m = /^\/(assets|_fonts)\/(.+)$/.exec(u.pathname)
     if (!m || !assets) return undefined
     let rest: string
@@ -133,6 +155,7 @@ function answers(
     return {
       type: MIME[extname(rest).toLowerCase()] ?? 'application/octet-stream',
       body,
+      policy: deployed,
     }
   }
 }
@@ -146,6 +169,8 @@ const fontsLoaded = (page: Page) =>
 async function measurePage(
   browser: Browser,
   i: MeasureInput,
+  compileOptions: CompileOptions,
+  policy: string,
   pageId: string,
   dir: 'ltr' | 'rtl',
   lang: string | undefined,
@@ -179,12 +204,8 @@ async function measurePage(
     })
 
   const compiled = compilePage(doc, pageId, {
-    registry,
-    data: i.data,
+    ...compileOptions,
     mode: 'measure',
-    links: { page: slug => slug, file: id => `/assets/${id}` },
-    ...(i.fonts ? { fonts: i.fonts } : {}),
-    ...(i.icons ? { icons: i.icons } : {}),
     ...(lang ? { lang } : {}),
   })
   if (!compiled.ok)
@@ -206,7 +227,6 @@ async function measurePage(
       blocked: [],
     }
 
-  const slug = node!.slug
   const layouts: LayoutRaw[] = []
   const contrast: ContrastRaw[] = []
   const measured: Report['measured'] = []
@@ -215,8 +235,10 @@ async function measurePage(
   let page: Page | undefined
   try {
     page = await browser.newPage()
-    await page.answer(answers(compiled.html, slug, i.assets, missing))
-    const went = await page.goto(ORIGIN + slug, LOAD_MS)
+    await page.answer(
+      measureAnswers(compiled, node!, i.assets, missing, policy),
+    )
+    const went = await page.goto(ORIGIN + node!.slug, LOAD_MS)
     if (!went.ok)
       throw new Error(
         `the page did not load: ${went.problem ?? 'no reason given'}`,
@@ -341,6 +363,17 @@ async function measureAll(input: MeasureInput): Promise<Report> {
     } else none = o.problems
   }
   try {
+    const compileOptions: CompileOptions = {
+      registry: input.registry,
+      data: input.data,
+      links: { page: slug => slug, file: id => `/assets/${id}` },
+      availableMedia: input.files && mediaAddresses(input.files),
+      fonts: input.fonts,
+      icons: input.icons,
+    }
+    const policy = browser
+      ? deploymentPolicy(compileSite(doc, compileOptions))
+      : NO_SCRIPTS
     const per: Parameters<typeof buildReport>[3] = []
     for (const page of pages) {
       const one = {
@@ -357,6 +390,8 @@ async function measureAll(input: MeasureInput): Promise<Report> {
           const r = await measurePage(
             browser,
             input,
+            compileOptions,
+            policy,
             page,
             dir,
             declared.get(dir),

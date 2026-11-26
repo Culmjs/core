@@ -4,6 +4,13 @@
 export const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
+/** A JSON-style record, including a null-prototype map. Excludes class instances. */
+export function isRecord(v: unknown): v is Record<string, unknown> {
+  if (!isObj(v)) return false
+  const proto = Object.getPrototypeOf(v)
+  return proto === null || Object.getPrototypeOf(proto) === null
+}
+
 export const fieldsOf = <T>(all: Record<keyof T, true>) =>
   new Set(Object.keys(all))
 export const isInt = (v: unknown, lo: number, hi: number): v is number =>

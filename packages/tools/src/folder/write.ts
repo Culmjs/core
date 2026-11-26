@@ -22,6 +22,7 @@ import { editFile, parseFile, removeAt, type JsonPath } from './jsonc.ts'
 import { INSTANCE_FIELDS, defaultSlot, type Loaded } from './load.ts'
 import type { Located } from './plugins.ts'
 import { isObj } from '../shared.ts'
+import { shaderPath } from './shaders.ts'
 
 type Raw = Record<string, unknown>
 /** The value as JSON holds it: no `undefined`, no key order that matters. */
@@ -626,6 +627,53 @@ export function fileEdits(
 
   // ---- the site file
   const SITE = 'site.json'
+  if (!eq(before.customEffects, after.customEffects)) {
+    const old = before.customEffects ?? []
+    const refs = rawAt(SITE, ['customEffects']) as string[] | undefined
+    const next = [...(refs ?? [])]
+    // Public operations only append definitions. Restore uses the exact stored
+    // files (including non-default descriptor names and their comments).
+    if (
+      old.some((e, i) => !eq(e, after.customEffects?.[i])) ||
+      after.customEffects === undefined
+    )
+      bad(
+        SITE,
+        ['customEffects'],
+        'Existing shader definitions cannot be replaced by an operation.',
+      )
+    else
+      for (const { name, settings, source } of after.customEffects.slice(
+        old.length,
+      )) {
+        const descriptor = `effects/${name}.json`,
+          frag = `effects/${name}.frag`
+        if (
+          !shaderPath(descriptor) ||
+          !shaderPath(frag) ||
+          texts.has(descriptor) ||
+          texts.has(frag) ||
+          Buffer.from(source).toString('utf8') !== source
+        ) {
+          bad(
+            SITE,
+            ['customEffects'],
+            'Cannot create the shader files with their exact text.',
+          )
+          break
+        }
+        next.push(descriptor)
+        texts.set(
+          descriptor,
+          whole(
+            { name, settings, sourceFile: `${name}.frag` },
+            orig.get(SITE) ?? '',
+          ),
+        )
+        texts.set(frag, source)
+      }
+    sync(SITE, ['customEffects'], refs, next)
+  }
   const siteKey = (
     k: 'name' | 'look' | 'fonts' | 'languages' | 'centreMaxWidth',
   ) => {

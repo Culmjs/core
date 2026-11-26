@@ -1,8 +1,14 @@
 // Writes packages/core/src/scripts/scriptsMin.ts: the shipped page scripts, minified from their readable sources.
 // Run `npm run gen:scripts` after changing a script source. esbuild comes with tsx.
 import { readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { buildSync, transformSync } from 'esbuild'
+import { shareScriptKeys } from './share-script-keys.ts'
+import {
+  CONTOURS_ID,
+  CONTOURS_SOURCE,
+} from '../packages/core/src/registry/gpuBuiltins.ts'
 import {
   BASE_SOURCE,
   EMAIL_SOURCE,
@@ -11,17 +17,21 @@ import {
 
 const dir = new URL('../packages/core/src/scripts/', import.meta.url)
 
-/** hostStates (typed) as the page script: the function minified for ES2017, then called with the page's document and window. */
-function shipHost(): string {
-  const src = readFileSync(new URL('statesHost.ts', dir), 'utf8')
+/** A self-contained typed entry, minified for ES2017 and invoked with fixed arguments. */
+function shipHost(
+  file = 'statesHost',
+  name = 'hostStates',
+  args = 'document,window',
+): string {
+  const src = readFileSync(new URL(`${file}.ts`, dir), 'utf8')
   const fn = transformSync(src, {
     loader: 'ts',
     minify: true,
     target: 'es2017',
   })
     .code.trim()
-    .replace(/^export function hostStates/, 'function')
-  return `(${fn})(document,window)`
+    .replace(`export function ${name}`, 'function')
+  return `(${fn})(${args})`
 }
 
 /** A leading `;` (how a script joins the one before it) is kept. */
@@ -36,13 +46,36 @@ function minify(src: string): string {
 }
 
 /** One priced artifact, including the invocation and its text/layout dependencies. */
-export function renderTimeline(): string {
+export function renderTimeline(playbackOnly = false): string {
+  // Specialize one lexical constant in the build input, never an ambient
+  // global that could alter the directly imported editor host.
+  const src = readFileSync(new URL('motionHost.ts', dir), 'utf8')
+  const declaration = 'const interactive = true'
+  if (src.split(declaration).length !== 2)
+    throw Error('Missing or ambiguous timeline profile declaration')
+  return shareScriptKeys(
+    bundle(
+      (playbackOnly
+        ? src.replace(declaration, 'const interactive = false')
+        : src) + '\nhostMotion(document,window)',
+      undefined,
+      'ts',
+    ),
+  )
+}
+
+function bundle(
+  contents: string,
+  define?: Record<string, string>,
+  loader: 'js' | 'ts' = 'js',
+) {
   return buildSync({
     stdin: {
-      contents:
-        "import {hostMotion} from './motionHost.ts'; hostMotion(document,window)",
+      contents,
+      loader,
       resolveDir: fileURLToPath(dir),
     },
+    define,
     bundle: true,
     format: 'iife',
     target: 'es2017',
@@ -51,18 +84,77 @@ export function renderTimeline(): string {
   }).outputFiles[0].text.trim()
 }
 
-export function render(): string {
+// Release selection is build-owned. Both artifacts are independently priced
+// complete bundles; this is not a runtime switch or a compiler option.
+// The isolated candidate must fit both limits before selection. See docs/gpu/size-work.md.
+export const RELEASE_CHECKED: boolean = false
+export function renderGpuWorker(checked = RELEASE_CHECKED): string {
+  const worker = bundle(
+    `import {acquire} from './${checked ? 'gpuWorker' : 'gpuTrustedWorker'}.ts';onmessage=acquire`,
+    {
+      CONTOURS: JSON.stringify(CONTOURS_SOURCE),
+    },
+  )
+  return checked ? shareScriptKeys(worker) : worker
+}
+
+export function renderGpuHost(checked = RELEASE_CHECKED): string {
+  const host = bundle(
+    `import {hostGpu} from './${checked ? 'gpuHost' : 'gpuTrustedHost'}.ts';hostGpu(document,window)`,
+    {
+      WORKER_SOURCE: JSON.stringify(renderGpuWorker(checked)),
+      EFFECT_ID: JSON.stringify(CONTOURS_ID),
+      CHECKED_GEOMETRY: String(checked),
+    },
+  )
+  return checked ? shareScriptKeys(host) : host
+}
+
+export function render(checked = RELEASE_CHECKED): string {
+  const hash = (s: string) =>
+    `sha256-${createHash('sha256').update(s).digest('base64')}`
+  const GPU_HOST_SCRIPT = renderGpuHost(checked)
+  const GPU_HOST_INTEGRITY = hash(GPU_HOST_SCRIPT)
+  const GPU_HOST_PATH = '_culm/gpu.js'
+  const GPU_LOADER_SCRIPT = shipHost(
+    'gpuLoader',
+    'loadGpu',
+    `document,window,"/${GPU_HOST_PATH}","${GPU_HOST_INTEGRITY}"`,
+  )
   const scripts = {
     BASE_SCRIPT: minify(BASE_SOURCE),
     OPEN_SCRIPT: minify(OPEN_SOURCE),
     EMAIL_SCRIPT: minify(EMAIL_SOURCE),
     STATES_SCRIPT: shipHost(),
     TIMELINE_SCRIPT: renderTimeline(),
+    PLAYBACK_TIMELINE_SCRIPT: renderTimeline(true),
+    GPU_HOST_PATH,
+    GPU_HOST_SCRIPT,
+    GPU_HOST_INTEGRITY,
+    GPU_LOADER_SCRIPT,
   }
+  // 0..31 preserve full/no-timeline selections. 32..47 are playback-only:
+  // bits 0..2 as before, bit 3 for the GPU. Hash the exact joined script.
+  const hashes = Array.from({ length: 48 }, (_, i) =>
+    hash(
+      [
+        scripts.BASE_SCRIPT +
+          (i & 1 ? scripts.OPEN_SCRIPT : '') +
+          (i & 2 ? scripts.EMAIL_SCRIPT : ''),
+        ...(i & 4 ? [scripts.STATES_SCRIPT] : []),
+        ...(i >= 32
+          ? [scripts.PLAYBACK_TIMELINE_SCRIPT]
+          : i & 8
+            ? [scripts.TIMELINE_SCRIPT]
+            : []),
+        ...((i >= 32 ? i & 8 : i & 16) ? [GPU_LOADER_SCRIPT] : []),
+      ].join(';'),
+    ),
+  )
   const body = Object.entries(scripts)
     .map(([k, v]) => `export const ${k} = ${JSON.stringify(v)}\n`)
     .join('')
-  return `// Generated by scripts/gen-scripts.ts. Do not edit; run \`npm run gen:scripts\`.\n${body}`
+  return `// Generated by scripts/gen-scripts.ts. Do not edit; run \`npm run gen:scripts\`.\nexport const GPU_CHECKED = ${checked}\n${body}export const INLINE_HASHES = ${JSON.stringify(hashes)}\n`
 }
 
 const measureDir = new URL('../packages/core/src/measure/', import.meta.url)

@@ -1,5 +1,6 @@
 // Small, optional examples, returned only when requested. No registered blocks:
 // each result is an ordinary editable JSON subtree for the checked writer.
+import { shaderSchema } from '../schema/authoring.ts'
 export const examples = {
   display: {
     kind: 'text',
@@ -217,6 +218,7 @@ export const jsonEditSchema = {
   maxItems: 32,
   items: {
     oneOf: [
+      operation('addCustomEffect', { effect: shaderSchema(false) }, ['effect']),
       operation('insert', { node: { ...obj, properties: { motion: obj } } }, [
         'node',
       ]),

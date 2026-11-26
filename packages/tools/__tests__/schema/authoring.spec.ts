@@ -237,3 +237,32 @@ test('culm.json has a shape: plugins is a list of names, out a string', () => {
   assert.ok(!ok({ plugins: 'a' }).ok)
   assert.ok(!ok({ out: 1 }).ok)
 })
+
+test('GPU descriptor, references, capability and attachment have separate schema shapes', () => {
+  const valid = check(createRegistry())
+  const d = {
+    name: 'mist',
+    settings: { tint: { type: 'color', default: '#abcdef' } },
+    sourceFile: 'mist.frag',
+  }
+  const motion = {
+    trigger: 'enter-view',
+    gpu: 'mist',
+    settings: { tint: '#123456' },
+  }
+  for (const value of [
+    d,
+    { customEffects: ['effects/mist.json'] },
+    { features: { gpu: true } },
+    { root: { kind: 'box', motion } },
+  ])
+    assert.ok(valid(value).ok)
+  for (const value of [
+    { ...d, wasm: {} },
+    { ...d, sourceFile: '../mist.frag' },
+    { customEffects: ['mist.frag'] },
+    { features: { approvedWasmPlugins: [] } },
+    { root: { kind: 'box', motion: { ...motion, steps: [] } } },
+  ])
+    assert.equal(valid(value).ok, false)
+})

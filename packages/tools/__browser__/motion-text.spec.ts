@@ -1,12 +1,7 @@
 import assert from 'node:assert/strict'
 import test, { after, before } from 'node:test'
 import { buildSync } from 'esbuild'
-import {
-  compilePage,
-  TIMELINE_SCRIPT,
-  type Node,
-  type Step,
-} from '@culmjs/core'
+import { compilePage, type Node, type Step } from '@culmjs/core'
 import {
   node,
   sampleRegistry,
@@ -15,6 +10,7 @@ import {
 } from '../../core/__tests__/kit.ts'
 import { openBrowser, type Browser, type Page } from '../src/measure/browser.ts'
 import { decodePng } from '../src/measure/png.ts'
+import { instrumentedPolicy } from '../__tests__/fixtures/instrumentedPolicy.ts'
 
 let browser: Browser
 before(async () => {
@@ -66,7 +62,7 @@ async function fixture(
   assert.ok(r.ok, JSON.stringify(r.problems))
   const source = preview
     ? r.html.replace(
-        TIMELINE_SCRIPT,
+        r.scripts.find(s => s.name === 'timeline')!.code,
         () =>
           buildSync({
             stdin: {
@@ -95,7 +91,7 @@ async function fixture(
   try {
     await p.answer(async u =>
       u === url
-        ? { type: 'text/html', body: html }
+        ? { type: 'text/html', body: instrumentedPolicy(html) }
         : u === url + 'favicon.ico'
           ? { type: 'image/x-icon', body: '' }
           : undefined,

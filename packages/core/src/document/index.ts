@@ -10,13 +10,18 @@ export {
 export type { MigrationResult, MigrationStep } from './migrate.ts'
 export type {
   Frame,
+  GpuMotion,
   Motion,
   MotionTarget,
   MotionTrigger,
   Program,
   Step,
+  StepMotion,
 } from './motion.ts'
 export { isRequired, textRangeFor } from './required.ts'
+export { checkShader } from './shader/check.ts'
+export { SHADER_LIMITS } from './shader/types.ts'
+export type { ShaderCheck, ShaderCost, ShaderSettings } from './shader/types.ts'
 export { CODES } from './problems.ts'
 export type { Code, Problem } from './problems.ts'
 export {
@@ -38,6 +43,7 @@ export type {
   Component,
   ComponentProp,
   CoreKind,
+  CustomEffect,
   Decl,
   Ease,
   Edge,

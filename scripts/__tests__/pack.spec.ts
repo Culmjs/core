@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import {
   mkdtempSync,
+  cpSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -11,10 +12,27 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { attachedGpuFolder } from '../../packages/tools/__tests__/fixtures/shader.ts'
 
 const core = join(import.meta.dirname, '../../packages/core')
 const run = (cmd: string, args: string[], cwd: string) =>
   execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: 'pipe' })
+const callPublic = `import * as root from '@culmjs/core';import * as scripts from '@culmjs/core/scripts';import {publicCall} from './gpu-public-call.mjs';publicCall(root,scripts)`
+test('public source GPU entry follows the fixed release loader', () => {
+  run(
+    'node',
+    [
+      '--conditions=source',
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '-e',
+      callPublic,
+    ],
+    import.meta.dirname,
+  )
+})
 
 test('packed core installs offline and every sub-path imports', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'culm-pack-'))
@@ -47,6 +65,11 @@ test('packed core installs offline and every sub-path imports', () => {
       const spec = '@culmjs/core' + key.slice(1)
       run('node', ['-e', `await import(${JSON.stringify(spec)})`], app)
     }
+    cpSync(
+      join(import.meta.dirname, 'gpu-public-call.mjs'),
+      join(app, 'gpu-public-call.mjs'),
+    )
+    run('node', ['--input-type=module', '-e', callPublic], app)
 
     const files = run('tar', ['-tzf', tarball], tmp).split('\n').filter(Boolean)
     assert.deepEqual(
@@ -64,7 +87,7 @@ test('packed core installs offline and every sub-path imports', () => {
   }
 })
 
-test('packed workspaces install into a temp project without mutating .pack; packed tools runs `culm --help` and `culm init --from`', () => {
+test('pack:all installs core, starter and tools; packed CLI initializes a project and builds the GPU delivery files', async () => {
   const root = join(import.meta.dirname, '../..')
   const tmp = mkdtempSync(join(tmpdir(), 'culm-packall-'))
   const packDir = join(tmp, 'pack')
@@ -136,6 +159,30 @@ test('packed workspaces install into a temp project without mutating .pack; pack
       '.gitignore',
     ])
       readFileSync(join(app, 'my-site', f))
+    const fixture = join(tmp, 'gpu')
+    cpSync(
+      join(root, 'packages/tools/__tests__/fixtures/site-basic'),
+      fixture,
+      { recursive: true },
+    )
+    await attachedGpuFolder(fixture)
+    run(
+      'node',
+      [join(app, 'node_modules/@culmjs/tools/bin/culm.js'), 'build'],
+      fixture,
+    )
+    const dist = join(fixture, 'dist')
+    const host = readFileSync(join(dist, '_culm/gpu.js'))
+    const hash = `sha256-${createHash('sha256').update(host).digest('base64')}`
+    assert.ok(readFileSync(join(dist, 'index.html'), 'utf8').includes(hash))
+    assert.ok(
+      readFileSync(join(dist, '_headers'), 'utf8').includes(`'${hash}'`),
+    )
+    const m = JSON.parse(readFileSync(join(dist, 'culm-manifest.json'), 'utf8'))
+    assert.deepEqual(
+      m.scripts.find((s: { name: string }) => s.name === 'gpuHost'),
+      { name: 'gpuHost', bytes: host.length, pages: ['home'] },
+    )
   } finally {
     rmSync(tmp, { recursive: true, force: true, maxRetries: 3 })
     for (const pkg of ['core', 'starter', 'tools'])

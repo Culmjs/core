@@ -10,6 +10,34 @@ export type Links = {
   fragment?(id: string): string
 }
 
+/** Inventory keys name files. Strip literal URL suffixes before interpreting
+ * escapes: an encoded '?' or '#' is still part of the filename. */
+export function knownMedia(
+  src: unknown,
+  available: ReadonlySet<string> | undefined,
+): boolean {
+  if (
+    !available ||
+    typeof src !== 'string' ||
+    !src.startsWith('/') ||
+    src.startsWith('//')
+  )
+    return false
+  const path = src.split(/[?#]/, 1)[0]
+  if (available.has(path)) return true
+  try {
+    // Match the folder inventory's encoded spelling, segment by segment.
+    return available.has(
+      path
+        .split('/')
+        .map(s => encodeURIComponent(decodeURIComponent(s)))
+        .join('/'),
+    )
+  } catch {
+    return false
+  }
+}
+
 /** The address a Link points at, or undefined when its target is missing, off, or unsafe. */
 export function href(
   link: Link | string,
