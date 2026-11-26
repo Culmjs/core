@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import type { Problem } from '@culmjs/core'
 import { isObj } from '../shared.ts'
 import {
-  makeImageProvider, resolveProviderName,
+  makeImageProvider,
+  resolveProviderName,
   type ImageAspect,
   type ImageConfig,
   type ImageProvider,
