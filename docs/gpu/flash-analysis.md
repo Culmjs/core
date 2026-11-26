@@ -1,6 +1,6 @@
 # Task 7: offline flash-analysis handoff
 
-**Independent flash check: passed on macOS with EA IRIS.** For host **`2844a4b873444f70`**, the [achromatic and saturated-red reports](iris-analysis.md#checked-host-2844a4b873444f70) detected both 5 Hz controls. All 360 limited frames passed both checks without warnings. The tested limiter rate is retained. The owner requested proceeding without a Windows VM; there is **no PEAT result**. The older handoff below remains available for an optional cross-check.
+**Independent flash check: passed on macOS with EA IRIS.** For production host **`c3f76b6df86ca585`** (worker `38d52b3f5cf4e3f7e82c937d1ce2e3be7c1781d71ed7eeadedf7bbe3b6f98348`) and earlier host **`2844a4b873444f70`**, the [achromatic and saturated-red reports](iris-analysis.md#production-host-c3f76b6df86ca585) detected both 5 Hz controls. All 360 limited frames passed both checks without warnings, with all four generated uncompressed AVI `clipSha256` digests matching byte for byte. The tested limiter rate is retained. The owner requested proceeding without a Windows VM; there is **no PEAT result**. The older handoff below remains available for an optional cross-check.
 
 | PEAT 1.6 result       | Positive control | Limited      |
 | --------------------- | ---------------- | ------------ |

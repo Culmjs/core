@@ -208,8 +208,8 @@ test('one host manifest entry across using pages; site policy is the union of ac
   })
   const p = page(doc)
   assert.deepEqual(p.gpu, { usesWasm: true })
-  assert.doesNotMatch(p.html, / data-gpu-run=/)
-  assert.match(policy(p.html), /worker-src 'none'/)
+  assert.match(p.html, / data-gpu-run="custom"/)
+  assert.match(policy(p.html), /'wasm-unsafe-eval'.*worker-src blob:/)
   assert.deepEqual(payload(p.html).definitions[0].wasm, {
     abi: 'field-v1',
     bytesBase64: 'AAE=',
@@ -260,7 +260,10 @@ test('one host manifest entry across using pages; site policy is the union of ac
   )
   for (const f of pages) assert.equal(policy(f.content), csp)
   assert.equal(site.files[4].content, `/*\n  Content-Security-Policy: ${csp}\n`)
-  assert.doesNotMatch(csp, /unsafe-|'self'/)
+  assert.match(csp, /'wasm-unsafe-eval'/)
+  assert.doesNotMatch(csp, /'unsafe-inline'|'unsafe-eval'|'self'/)
+  assert.equal(site.manifest.wasmModules?.length, 1)
+  assert.deepEqual(site.manifest.wasmModules?.[0].pages, ['home'])
   assert.notEqual(policy(p.html), csp)
 })
 
@@ -295,17 +298,17 @@ test('a rendered owner can lose its last visible descendant during data/sample a
 test('host and joined shared limits are inclusive; shader and module bytes are not JS', () => {
   assert.deepEqual(
     [BUDGETS.gpuHostScript, BUDGETS.wasmBytes, BUDGETS.wasmTransportBytes],
-    [9012, 512, 684],
+    [9513, 512, 684],
   )
   const p = page(siteWith())
   const findings = (gpuHost: number, gpuLoader: number) =>
     checkBudgets({
       ...p.stats,
-      scriptBytes: { base: 10000, states: 982, gpuLoader, gpuHost },
+      scriptBytes: { base: 10000, states: 481, gpuLoader, gpuHost },
     }).map(p => p.path)
-  assert.deepEqual(findings(9012, 6), [])
-  assert.deepEqual(findings(9013, 5), ['gpuHostScript'])
-  assert.deepEqual(findings(9012, 7), ['sharedScripts'])
+  assert.deepEqual(findings(9513, 6), [])
+  assert.deepEqual(findings(9514, 5), ['gpuHostScript'])
+  assert.deepEqual(findings(9513, 7), ['sharedScripts'])
 })
 
 test('an explicit local poster belongs to the emitted owner even without a runnable leaf', () => {

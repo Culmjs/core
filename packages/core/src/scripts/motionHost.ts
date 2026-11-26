@@ -51,6 +51,7 @@ export type Scene = {
 }
 
 const area = (r: DOMRect) => r.width * r.height
+const unit = (v: number) => min(1, max(0, v))
 
 export function hostMotion(
   doc: Document & { _cm?: boolean },
@@ -59,206 +60,168 @@ export function hostMotion(
 ): void {
   // gen-scripts specializes this literal for stationary load/entrance pages.
   // Direct imports, including the editor's abortable host, always get full support.
-  const interactive = true
+  const interactive = true,
+    abortable = true
   type Realm = Window & typeof globalThis
-  const { ResizeObserver, IntersectionObserver, MutationObserver } = w as Realm
+  const RO = (w as Realm).ResizeObserver,
+    IO = (w as Realm).IntersectionObserver,
+    MO = (w as Realm).MutationObserver
   if (
     doc._cm ||
-    (signal && signal.aborted) ||
+    (abortable && signal && signal.aborted) ||
     !w.matchMedia ||
-    !IntersectionObserver
+    !IO ||
+    !(doc._cm = 1 as unknown as boolean)
   )
     return
-  doc._cm = true
-  const abort = (scope: AbortSignal | undefined, f: () => void) =>
-    scope && scope.addEventListener('abort', f)
-
-  const disconnect = (o?: { disconnect(): void }): undefined => {
+  const abort = (s: AbortSignal | undefined, f: () => void) =>
+    s && s.addEventListener('abort', f)
+  const disc = (o?: { disconnect(): void }): undefined => {
     if (o) o.disconnect()
   }
   const hidden = (el: Element) =>
     el.getClientRects ? !el.getClientRects().length : !area(rect(el))
-  const clock = (name: string) =>
-    (w as Realm).CSS.supports(`animation-timeline:${name}()`)
-  const attr = 'data-culm-motion'
-  const pending = new Set<() => void>()
-  let frame = 0
-  // Keep invalidated text measurements queued across a hidden interval.
-  // Each mount withdraws its own jobs on abort, including a pending reflow.
-  const drive = () => {
-    if (doc.hidden || !pending.size) {
-      if (frame) w.cancelAnimationFrame(frame)
-      frame = 0
-    } else if (!frame)
-      frame = w.requestAnimationFrame(() => {
-        pending.forEach(read => read())
-        pending.clear()
-        frame = 0
-      })
-  }
-  const schedule = (read: () => void) => {
-    pending.add(read)
-    drive()
-  }
-  const cancel = (read: () => void) => {
-    pending.delete(read)
-    drive()
-  }
+  const clock = (k: string) =>
+    (w as Realm).CSS.supports('animation-timeline:' + k + '()')
+  const attr = 'data-culm-motion',
+    pending = new Set<() => void>(),
+    layouts = new Set<() => void>()
+  let frame = 0,
+    unwatchFlow: () => void
+  const drive = () =>
+    doc.hidden || !pending.size
+      ? (frame && w.cancelAnimationFrame(frame), (frame = 0))
+      : frame ||
+        (frame = w.requestAnimationFrame(
+          () => (pending.forEach(r => r()), pending.clear(), (frame = 0)),
+        ))
+  const schedule = (r: () => void) => (pending.add(r), drive())
+  const cancel = (r: () => void) => pending.delete(r) && drive()
 
-  const layouts = new Set<() => void>()
-  let unwatchFlow: () => void
-
-  doc.querySelectorAll(`[${attr}]`).forEach(owner => {
+  doc.querySelectorAll('[' + attr + ']').forEach(owner => {
     const s: Scene = JSON.parse(owner.getAttribute(attr)!)
     if (interactive && s.native && clock('view')) return
-    const { trigger: tr, parts, pin, layout } = s
-    const fonts = parts && doc.fonts
-    const state = interactive && Array.isArray(tr)
-    const pointer = interactive && tr === 'pointer-x',
+    const tr = s.trigger,
+      parts = s.parts,
+      pin = s.pin,
+      layout = s.layout,
+      fonts = parts && doc.fonts
+    const state = interactive && Array.isArray(tr),
+      pointer = interactive && tr === 'pointer-x',
       scrub = interactive && (pointer || tr === 'scroll')
-    const locate = (id?: number, ancestor = false, root: Element = owner) =>
-      id || ancestor
-        ? root[ancestor ? 'closest' : 'querySelector']('.cm-e' + +id!)
-        : root
+    const locate = (id?: number, anc?: boolean, r: Element = owner) =>
+      id || anc ? r[anc ? 'closest' : 'querySelector']('.cm-e' + id) : r
     const child = interactive ? locate(s.child) : owner
     if (!owner.animate || !owner.getBoundingClientRect || !child) return
-    const readInput = scrub || layout
     let entered: true | undefined
     const mount = (scope: AbortSignal) => {
       const on = (
         el: EventTarget,
-        names: string,
+        k: string,
         f: EventListener,
         capture?: boolean,
       ) =>
-        names
+        k
           .split(' ')
-          .forEach(name =>
-            el.addEventListener(name, f, { signal: scope, capture }),
-          )
-      // IO owns visibility; a load/activation before its first delivery starts paused.
-      let visible: boolean | undefined
-      let x: number | undefined
-      const animations: Animation[] = []
-      // Fixed instance keys survive text reflow. Fragments and static holds
-      // are keyed by their own Animation and are discarded on every rebuild.
-      const owned = new Map<number[] | Animation, Animation>()
-      const seek = (time: number) =>
-        animations.forEach(a => {
-          if (time === Infinity) a.finish()
-          else a.currentTime = time
-        })
-      const keep = (a: Animation, key?: false | number[]) => {
-        // Later fills (including another pin's additive margin at the same
-        // ancestor) must not auto-remove earlier contributions.
-        if (a.persist) a.persist()
-        owned.set(key || a, a)
-        animations.push(a)
-      }
-      const shifts: KeyframeEffect[] = []
-      const project = (el: Element | null) =>
-        shifts.forEach(fx => (fx.target = el))
-      const marked = (value: boolean) =>
-        owner.toggleAttribute('data-cm-on', value)
-      let duration = s.duration
-      let restore: (() => void) | void
-      let sizes: ResizeObserver | undefined
-      const watchSize = (read: () => void, ...elements: Element[]) => {
-        sizes = new ResizeObserver(read)
-        elements.forEach(el => sizes!.observe(el))
-      }
-      // An already-entered owner must settle even if its first split is
-      // refused and the first usable tracks are acquired on a later resize.
+          .forEach(n => el.addEventListener(n, f, { signal: scope, capture }))
+      let visible: boolean | undefined,
+        x: number | undefined,
+        duration = s.duration,
+        restore: (() => void) | void,
+        sizes: ResizeObserver | undefined
       let resume = entered ? Infinity : -1
-      const stop = (retime?: true) => {
-        owned.forEach((a, key) => {
-          if (retime && key !== a) {
-            ;(a.effect as KeyframeEffect).target = null
-          } else {
-            a.cancel()
-            owned.delete(key)
-          }
-        })
-        if (!retime) resume = -1
+      const animations: Animation[] = [],
+        owned = new Map<number[] | Animation, Animation>(),
+        shifts: KeyframeEffect[] = []
+      const seek = (t: number) =>
+        animations.forEach(a =>
+          t < Infinity ? (a.currentTime = t) : a.finish(),
+        )
+      const keep = (a: Animation, k?: false | number[]) => (
+        a.persist && a.persist(),
+        owned.set(k || a, a),
+        animations.push(a)
+      )
+      const marked = (v: boolean) => owner.toggleAttribute('data-cm-on', v)
+      const watchSize = (r: () => void, els: Element[] = [owner]) => {
+        sizes = new RO(r)
+        els.forEach(e => sizes!.observe(e))
+      }
+      const re = () => restore && schedule(rebuild)
+      const stop = (retime?: number) => {
+        owned.forEach((a, k) =>
+          retime === 1 && k !== a
+            ? ((a.effect as KeyframeEffect).target = null)
+            : (a.cancel(), owned.delete(k)),
+        )
+        if (retime !== 1) resume = -1
         animations.length = shifts.length = 0
-        sizes = disconnect(sizes)
-        restore = restore && restore() // release the split and consume its cleanup
+        sizes = disc(sizes)
+        restore = restore && restore()
         cancel(rebuild)
         marked(false)
       }
-
       const start = () => {
         marked(true)
         const origin = doc.timeline.currentTime
         const apply = (
-          tracks: PackedTrack[],
-          offset: number,
+          tracks: PackedTrack[] | undefined,
+          off: number,
           member?: Element,
-        ) => {
+        ) =>
+          tracks &&
           tracks.forEach(([refs, frames, timing, reveal]) => {
             const keys = reveal && clock('scroll') ? reveal : frames
             refs.forEach(ref => {
-              const id = ref[0]
-              const el = (member || locate(id)) as
-                (Element & Partial<SVGGeometryElement>) | null
+              const id = ref[0],
+                el = (member || locate(id)) as
+                  (Element & Partial<SVGGeometryElement>) | null
               if (!el) return
-              timing.delay = ref[1] + offset
-              if (interactive && 'strokeDashoffset' in keys[0]) {
-                const length =
+              timing.delay = ref[1] + off
+              if (interactive && keys[0].strokeDashoffset != null) {
+                const len =
                   el.getTotalLength &&
                   (el.pathLength!.baseVal || el.getTotalLength())
-                if (!length) return
-                keys.forEach(f => (f['--cm-length'] = length + 'px'))
+                if (!len) return
+                keys.forEach(f => (f['--cm-length'] = len + 'px'))
               }
-              const saved = owned.get(ref)
-              const a = saved || el.animate(keys, timing)
-              const fx = a.effect as KeyframeEffect
+              const saved = owned.get(ref),
+                a = saved || el.animate(keys, timing),
+                fx = a.effect as KeyframeEffect
               if (saved) {
                 fx.target = el
                 fx.setKeyframes(keys)
                 fx.updateTiming(timing)
               }
               if (interactive && !id && timing.id) shifts.push(fx)
-              // No per-target callbacks/timers: every delay is on the same clock.
-              if (origin !== null) a.startTime = origin
+              if (origin != null) a.startTime = origin
               if (scrub || !visible) a.pause()
               keep(a, parts && !member && ref)
             })
           })
-        }
         if (parts) {
-          const [groups, undo] = measureLayers(owner as HTMLElement, s.text!)
-          restore = undo
-          const words = groups('words')
-          const ready = marked(!!words.size)
-          // A refused split still watches the unmodified box. Register the
-          // batch together and ignore its initial delivery unless width moved
-          // since the read; later genuine metric changes share the frame queue.
-          let initialWidth = owner.clientWidth
-          watchSize(
-            () => {
-              if (initialWidth !== owner.clientWidth) invalidate()
-              initialWidth = -1
-            },
-            owner,
-            owner.parentElement!,
-            ...words.keys(),
-          )
-          if (!ready) return
+          let groups: ReturnType<typeof measureLayers>[0]
+          ;[groups, restore] = measureLayers(owner as HTMLElement, s.text!)
+          const words = groups('words'),
+            ok = marked(!!words.size)
+          let w0 = owner.clientWidth
+          watchSize(() => {
+            if (w0 !== owner.clientWidth) re()
+            w0 = -1
+          }, [owner, owner.parentElement!, ...words.keys()])
+          if (!ok) return
           duration = 0
           parts.forEach(p => {
-            const origin = (duration += p.delay)
-            if (p.clip) apply(p.clip, origin)
+            const o = (duration += p.delay)
+            apply(p.clip, o)
             if (p.unit)
-              groups(p.unit).forEach((i, el) => {
-                duration = origin + i * p.stagger!
-                apply(p.tracks, duration, el)
-              })
-            else apply(p.tracks, origin)
+              groups(p.unit).forEach((i, e) =>
+                apply(p.tracks, (duration = o + i * p.stagger!), e),
+              )
+            else apply(p.tracks, o)
             duration += p.duration
           })
-          // Pin geometry covers the whole measured timeline.
-          s.tracks.forEach(track => (track[2].duration = duration))
+          s.tracks.forEach(t => (t[2].duration = duration))
         }
         apply(s.tracks, 0)
         if (resume >= 0) seek(resume)
@@ -267,37 +230,25 @@ export function hostMotion(
       const play = () => {
         if (animations.length || restore) return
         if (pin || parts ? !area(rect(child)) : hidden(child)) {
-          // IO need not cross a threshold when an in-view zero-sized box
-          // grows. Borrow the metric watch only until this activation acquires
-          // its tracks; stop() also releases it if the predicate turns false.
-          if (interactive && state && ResizeObserver && !sizes) {
-            watchSize(() => {
-              if (active) play()
-            }, owner)
-          }
+          if (interactive && state && RO && !sizes)
+            watchSize(() => active && play())
           return
         }
-        sizes = disconnect(sizes)
+        sizes = disc(sizes)
         if (interactive && pin) {
-          const balance: [HTMLElement, number][] = []
-          const hold = (el: Element, f: Keyframe) =>
-            keep(el.animate([f, f], { fill: 'both' }))
-          const name = '--p' + s.child
-          let previous = Infinity,
-            vector: Keyframe
+          const bal: [HTMLElement, number][] = [],
+            hold = (e: Element, f: Keyframe) =>
+              keep(e.animate([f, f], { fill: 'both' })),
+            name = '--p' + s.child
+          let prev = Infinity,
+            vec!: Keyframe
           try {
-            // The first reservation belongs to the pin's own box, in its basis.
-            // Flow exits use the same measurement in the enclosing parent's basis.
-            ;[[0, s.basis!], ...s.flow!].forEach(([id, probe]) => {
-              const el = id
-                ? (locate(id, true) as HTMLElement)
-                : (owner as HTMLElement)
-              // The unprobed outer exit is already in viewport coordinates.
-              // A missing owner basis, unlike that exit, cannot reserve travel.
-              const m = probe
+            ;[[0, s.basis!], ...s.flow!].forEach(([id, pr]) => {
+              const el = locate(id, !!id) as HTMLElement
+              const m = pr
                 ? (
                     locate(
-                      probe,
+                      pr,
                       false,
                       id ? el.parentElement! : el,
                     ) as SVGSVGElement
@@ -306,116 +257,101 @@ export function hostMotion(
                     .inverse()
                 : { c: 0, d: id ? 1 : NaN }
               const y = pin * m.d
-              rejectMeasurement(!isFinite(y))
-              if (!id) {
-                vector = {
-                  [name]: `${pin * m.c}px ${y}px`,
+              rejectMeasurement(y - y != 0)
+              if (!id)
+                vec = {
+                  [name]: pin * m.c + 'px ' + y + 'px',
                   [name + 'y']: y + 'px',
                 }
-              }
-              if (abs(previous - y) > 1e-6)
-                balance.push([el, el.offsetHeight + y])
-              previous = y
+              if (abs(prev - y) > 1e-6) bal.push([el, el.offsetHeight + y])
+              prev = y
             })
-            hold(owner, vector!)
+            hold(owner, vec)
           } catch {
             return
           }
           if (start())
-            balance.forEach(([el, extent], exit) => {
-              const diff = extent - el.offsetHeight
-              if (exit || diff > 0)
+            bal.forEach(([e, ext], ex) => {
+              const d = ext - e.offsetHeight
+              if (ex || d > 0)
                 hold(
-                  el,
-                  exit
-                    ? { marginBottom: diff + 'px', composite: 'add' }
-                    : { minHeight: extent + 'px' },
+                  e,
+                  ex
+                    ? { marginBottom: d + 'px', composite: 'add' }
+                    : { minHeight: ext + 'px' },
                 )
             })
         } else start()
       }
-
-      abort(scope, () => stop())
-      const rebuild = () => {
-        if (!restore) return
-        if (animations.length)
-          resume = animations.every(a => a.playState === 'finished')
+      abort(scope, stop as () => void)
+      const rebuild = () =>
+        restore &&
+        (animations.length &&
+          (resume = animations.every(a => a.playState === 'finished')
             ? Infinity
-            : animations.reduce((t, a) => max(t, +(a.currentTime as number)), 0)
-        stop(true)
-        start()
-        if (scrub) syncView()
-      }
-      const invalidate = () => {
-        if (restore) schedule(rebuild)
-      }
-      if (parts && !ResizeObserver) return
-      if (fonts) on(fonts, 'loadingdone', invalidate)
-      const entrance = tr === 'enter-view',
-        load = tr === 'load'
-      if (entered) {
-        if (parts) on(doc, 'visibilitychange', drive)
-        play()
-        return
-      }
+            : max(0, ...animations.map(a => +(a.currentTime as number)))),
+        stop(1),
+        start(),
+        scrub && syncView())
+      if (parts && !RO) return
+      if (fonts) on(fonts, 'loadingdone', re)
+      if (entered)
+        return (parts && on(doc, 'visibilitychange', drive), void play())
       let intersecting: boolean | undefined,
-        active = entrance || load
-      let wake: ((e: Event) => boolean) | undefined
-      function syncView(event?: IntersectionObserverEntry[] | Event) {
+        active = tr === 'enter-view' || tr === 'load',
+        wake: ((e: Event) => boolean) | undefined
+      function syncView(ev?: IntersectionObserverEntry[] | Event) {
         if (scope.aborted) return
-        // Visibility resamples immediately, superseding a queued input read.
-        // An intersection delivery instead updates the most recent paint hit.
-        if (event) {
-          if ('type' in event) cancel(syncView)
-          else intersecting = event.pop()!.isIntersecting
-        }
+        if (ev)
+          void ((ev as IntersectionObserverEntry[]).pop
+            ? (intersecting = (ev as IntersectionObserverEntry[]).pop()!
+                .isIntersecting)
+            : cancel(syncView))
         visible = intersecting && !doc.hidden
-        if (interactive && readInput && !doc.hidden) {
-          // The layout reference is the original box without this scene's
-          // geometry effects. Never replace, wrap or reparent a control.
-          project(null)
+        if (interactive && (scrub || layout) && !doc.hidden) {
+          const setT = (t: Element | null) =>
+            shifts.forEach(f => (f.target = t))
+          setT(null)
           const r = rect(owner),
             h = w.innerHeight
-          project(owner)
-          const passage = (dy: number) =>
-            min(1, max(0, (h - r.top + dy) / (h + r.height)))
-          const progress = passage(0)
-          if (interactive && layout) {
-            // Cache the scroll interval swept by the stable box. Native IO
-            // watches paint. This second gate handles canonical-only entry
-            // without a layout read/frame for distant document scrolls.
-            const y = w.scrollY,
-              x = w.scrollX
+          setT(owner)
+          const pass = (dy: number) => unit((h - r.top + dy) / (h + r.height)),
+            prog = pass(0)
+          if (layout) {
+            const sy = w.scrollY,
+              sx = w.scrollX
             wake = e =>
               (e.target instanceof (w as Realm).Element &&
                 e.target.contains(owner)) ||
-              x !== w.scrollX ||
-              passage(w.scrollY - y) !== progress
+              sx !== w.scrollX ||
+              pass(w.scrollY - sy) !== prog
           }
           if (shifts.length) {
-            // Intersect the unanimated subject with the *real* clipping
-            // ancestors. A scrollport can hide a link still inside the window.
-            visible = (
-              [
-                ['top', 'bottom', 'Y', h],
-                ['left', 'right', 'X', w.innerWidth],
-              ] as const
-            ).every(([lo, hi, overflow, end]) => {
-              let a = max(0, r[lo]),
-                b = min(end, r[hi])
-              for (
-                let n = owner.parentElement;
-                n && a <= b;
-                n = n.parentElement
-              ) {
-                if (w.getComputedStyle(n)[`overflow${overflow}`] === 'visible')
-                  continue
-                const clip = rect(n)
-                a = max(a, clip[lo])
-                b = min(b, clip[hi])
+            let l = max(0, r.left),
+              t = max(0, r.top),
+              R = min(w.innerWidth, r.right),
+              B = min(h, r.bottom)
+            for (
+              let n = owner.parentElement;
+              n && l <= R && t <= B;
+              n = n.parentElement
+            ) {
+              const cs = w.getComputedStyle(n),
+                ox = cs.overflowX !== 'visible',
+                oy = cs.overflowY !== 'visible'
+              if (ox || oy) {
+                const c = rect(n)
+                if (ox) {
+                  l = max(l, c.left)
+                  R = min(R, c.right)
+                }
+                if (oy) {
+                  t = max(t, c.top)
+                  B = min(B, c.bottom)
+                }
               }
-              return a <= b
-            })
+            }
+            visible = l <= R && t <= B
           }
           if (scrub) {
             if (!area(r) || (pin && hidden(child!))) stop()
@@ -423,16 +359,12 @@ export function hostMotion(
               play()
               seek(
                 duration *
-                  min(
-                    1,
-                    max(
-                      0,
-                      pointer
-                        ? (x! - r.left) / r.width
-                        : pin
-                          ? -r.top / pin
-                          : progress,
-                    ),
+                  unit(
+                    pointer
+                      ? (x! - r.left) / r.width
+                      : pin
+                        ? -r.top / pin
+                        : prog,
                   ),
               )
             }
@@ -441,117 +373,115 @@ export function hostMotion(
         if (scrub) return
         if (visible && active) {
           play()
-          if (entrance && animations.length) entered = true
+          if (tr === 'enter-view' && animations.length) entered = true
         }
-        animations.forEach(a => {
-          if (a.playState === (visible ? 'paused' : 'running'))
-            a[visible ? 'play' : 'pause']()
-        })
+        animations.forEach(
+          a =>
+            a.playState === (visible ? 'paused' : 'running') &&
+            a[visible ? 'play' : 'pause'](),
+        )
       }
       on(doc, 'visibilitychange', syncView)
-      const observer = new IntersectionObserver(syncView)
-      observer.observe(owner)
-      if (interactive && layout) {
-        if (!layouts.size) {
-          // Shared across mounted neutral clocks. Paint changes neither these
-          // border-box sizes nor the compiler's allowlist of state attributes.
-          const reflow = () => layouts.forEach(schedule)
-          const sizes = ResizeObserver && new ResizeObserver(reflow)
-          const states = MutationObserver && new MutationObserver(reflow)
-          if (sizes)
-            doc
-              .querySelectorAll('.cm-flow>*')
-              .forEach(el => sizes.observe(el, { box: 'border-box' }))
-
-          const watched = 'data-cm-watch'
-          if (states)
-            doc.querySelectorAll(`[${watched}]`).forEach(el =>
-              states.observe(el, {
-                attributeFilter: el.getAttribute(watched)!.split(' '),
-              }),
-            )
-          unwatchFlow = () => {
-            disconnect(sizes)
-            disconnect(states)
-          }
-        }
-        layouts.add(syncView)
-      }
+      const io = new IO(syncView)
+      io.observe(owner)
       abort(scope, () => {
-        disconnect(observer)
+        disc(io)
         if (interactive && layouts.delete(syncView) && !layouts.size)
           unwatchFlow()
         cancel(syncView)
       })
-      if (interactive && readInput)
-        on(
-          w,
-          'scroll resize',
-          e => {
-            const resize = e.type[0] === 'r'
-            if (pin && resize) stop()
-            if (
-              visible ||
-              intersecting ||
-              (resize && (layout || pin)) ||
-              (wake && wake(e))
+      if (tr === 'load') play()
+      if (interactive) {
+        if (layout) {
+          if (!layouts.size) {
+            const reflow = () => layouts.forEach(schedule),
+              ro = RO && new RO(reflow),
+              mo = MO && new MO(reflow),
+              W2 = 'data-cm-watch'
+            if (ro)
+              doc
+                .querySelectorAll('.cm-flow>*')
+                .forEach(e => ro.observe(e, { box: 'border-box' }))
+            if (mo)
+              doc.querySelectorAll('[' + W2 + ']').forEach(e =>
+                mo.observe(e, {
+                  attributeFilter: e.getAttribute(W2)!.split(' '),
+                }),
+              )
+            unwatchFlow = () => (disc(ro), disc(mo))
+          }
+          layouts.add(syncView)
+        }
+        if (scrub || layout)
+          on(
+            w,
+            'scroll resize',
+            e => {
+              const rs = e.type[0] === 'r'
+              if (pin && rs) stop()
+              if (
+                visible ||
+                intersecting ||
+                (rs && (layout || pin)) ||
+                (wake && wake(e))
+              )
+                schedule(syncView)
+            },
+            true,
+          )
+        if (scrub) {
+          if (pointer)
+            on(
+              owner,
+              'pointermove',
+              e =>
+                (e as PointerEvent).pointerType != 'touch' &&
+                ((x = (e as PointerEvent).clientX),
+                visible && schedule(syncView)),
             )
-              schedule(syncView)
-          },
-          true,
-        )
-      if (interactive && scrub) {
-        if (pointer)
-          on(owner, 'pointermove', e => {
-            if ((e as PointerEvent).pointerType === 'touch') return
-            x = (e as PointerEvent).clientX
-            if (visible) schedule(syncView)
-          })
-        syncView()
-      } else if (load) play()
-      else if (interactive && tr === 'hover') {
-        const sync = () =>
-          owner.matches(':hover,:focus-visible') ? play() : stop()
-        on(owner, 'mouseenter mouseleave focus blur', sync)
-        sync()
-      } else if (interactive && tr === 'press') {
-        // A key and several contacts can hold the same owner. Pointer releases
-        // arrive on window, so match the actual contact before stopping it.
-        const held = new Set<string | number>()
-        type Input = KeyboardEvent & PointerEvent
-        const id = (e: Input) => e.code || e.key || e.pointerId
-        const down = (e: Input) => {
-          if (e.key ? !e.repeat && /^(Enter| )$/.test(e.key) : e.button === 0) {
-            held.add(id(e))
-            play()
+          syncView()
+        } else if (tr === 'hover') {
+          const sync = () =>
+            owner.matches(':hover,:focus-visible') ? play() : stop()
+          on(owner, 'mouseenter mouseleave focus blur', sync)
+          sync()
+        } else if (tr === 'press') {
+          type Input = KeyboardEvent & PointerEvent
+          const held = new Set<string | number>(),
+            id = (e: Input) => e.code || e.key || e.pointerId
+          const up = (e: Event) => {
+            if (
+              e.type[0] === 'b'
+                ? e.currentTarget === w ||
+                  !owner.contains(
+                    (e as FocusEvent).relatedTarget as Node | null,
+                  )
+                : held.delete(id(e as Input)) && !held.size
+            ) {
+              held.clear()
+              stop()
+            }
           }
+          on(owner, 'pointerdown keydown', ((k: Input) => {
+            if (
+              (k.key ? !k.repeat && /^(Enter| )$/.test(k.key) : !k.button) &&
+              held.add(id(k))
+            )
+              play()
+          }) as EventListener)
+          on(owner, 'keyup blur', up, true)
+          on(w, 'pointerup pointercancel blur', up)
+        } else if (state && MO) {
+          const [id, at, val] = tr,
+            h = locate(id, true)
+          if (!h) return
+          const sync = () =>
+              (active = h.getAttribute(at) === val) ? play() : stop(),
+            mo = new MO(sync)
+          mo.observe(h, { attributeFilter: [at] })
+          abort(scope, () => disc(mo))
+          sync()
         }
-        on(owner, 'pointerdown keydown', down as EventListener)
-        const up = (e: Event) => {
-          if (
-            e.type === 'blur'
-              ? e.currentTarget === w ||
-                !owner.contains((e as FocusEvent).relatedTarget as Node | null)
-              : held.delete(id(e as Input)) && !held.size
-          ) {
-            held.clear()
-            stop()
-          }
-        }
-        on(owner, 'keyup', up)
-        on(w, 'pointerup pointercancel blur', up)
-        on(owner, 'blur', up, true)
-      } else if (interactive && state && MutationObserver) {
-        const [id, attr, value] = tr
-        const holder = locate(id, true)
-        if (!holder) return
-        const sync = () =>
-          (active = holder.getAttribute(attr) === value) ? play() : stop()
-        const observer = new MutationObserver(sync)
-        observer.observe(holder, { attributeFilter: [attr] })
-        abort(scope, () => disconnect(observer))
-
-        sync()
       }
     }
     const media = w.matchMedia(
@@ -560,23 +490,18 @@ export function hostMotion(
     )
     let run: AbortController | undefined
     const clear = () => run && run.abort()
-    const configure = () => {
+    const cfg = () => {
       clear()
       if (media.matches) {
-        const scope = (run = new (w as Realm).AbortController()).signal
-        // Force layout before consulting ready: a used face can start loading
-        // only on first layout. Never mount a late font callback after abort.
-        if (fonts) {
-          rect(owner)
-          fonts.ready.then(() => {
-            if (!scope.aborted) mount(scope)
-          })
-        } else mount(scope)
+        const sc = (run = new (w as Realm).AbortController()).signal
+        return fonts
+          ? (rect(owner), fonts.ready.then(() => !sc.aborted && mount(sc)))
+          : mount(sc)
       }
     }
-    media.addEventListener('change', configure, { signal })
-    abort(signal, clear)
-    configure()
+    media.addEventListener('change', cfg, abortable ? { signal } : undefined)
+    if (abortable) abort(signal, clear)
+    cfg()
   })
-  abort(signal, () => delete doc._cm)
+  if (abortable) abort(signal, () => delete doc._cm)
 }

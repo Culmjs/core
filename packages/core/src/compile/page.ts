@@ -358,6 +358,16 @@ export function build(
   options: CompileOptions,
   effects: ReadonlyMap<string, CheckedEffect> | undefined,
   siteHashes?: Set<string>,
+  siteWasm?: Map<
+    string,
+    {
+      name: string
+      sha256: string
+      bytes: number
+      transportBytes: number
+      pages: string[]
+    }
+  >,
 ): CompiledPage {
   const p = prepare(doc, [page.root, doc.header, doc.footer], options)
   const { mode } = p
@@ -465,7 +475,16 @@ export function build(
   if (mode === 'live') {
     const hashes = executableHashes(scripts)
     if (siteHashes) hashes.forEach(h => siteHashes.add(h))
-    else html = withPolicy(html, scriptPolicy(hashes, gpu?.worker))
+    else
+      html = withPolicy(html, scriptPolicy(hashes, gpu?.worker, gpu?.usesWasm))
+  }
+  if (siteWasm && gpu?.wasmModules.length) {
+    for (const m of gpu.wasmModules) {
+      const key = `${m.name}:${m.sha256}`
+      const known = siteWasm.get(key)
+      if (known) known.pages.push(page.id)
+      else siteWasm.set(key, { ...m, pages: [page.id] })
+    }
   }
 
   const stats: PageStats = {

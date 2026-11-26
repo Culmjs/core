@@ -130,7 +130,7 @@ for (const [profile, core, checked] of [
     )
     assert.doesNotMatch(
       js,
-      /\breadPixels\b|\bWebAssembly\b|\bfetch\(|XMLHttpRequest|new Function\(|\beval\(/,
+      /\breadPixels\b|\bfetch\(|XMLHttpRequest|new Function\(|\beval\(/,
     )
   }
   assert.equal(

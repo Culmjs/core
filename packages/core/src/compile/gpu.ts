@@ -2,6 +2,7 @@ import type { GpuMotion, Look, Node } from '../document/index.ts'
 import { renderedFacts } from './scrollScene.ts'
 import { NO, StateAnalysisLimit, StateConditions } from './stateConditions.ts'
 import { moduleBytes, reviewedSnapshot } from '../registry/gpu.ts'
+import { decodeBase64, sha256BytesHex } from '../registry/sha256.ts'
 import type { CheckedEffect } from '../validate/gpu.ts'
 import { visibleText } from '../validate/required.ts'
 import { byteLength } from './budgets.ts'
@@ -113,11 +114,7 @@ export function lowerGpu(
     for (const child of el.children ?? [])
       if (typeof child !== 'string' && select(child)) nested = true
     const m = owners.get(el)
-    if (
-      !nested &&
-      m &&
-      (GPU_CHECKED ? !effects.get(m.gpu)?.wasm : effects.get(m.gpu)?.builtin)
-    )
+    if (!nested && m && (GPU_CHECKED ? true : effects.get(m.gpu)?.builtin))
       runnable.add(el)
     return nested || !!m
   }
@@ -188,19 +185,37 @@ export function lowerGpu(
     attrs: { type: 'application/json', id: 'culm-gpu' },
     raw: { kind: 'json', content: JSON.stringify({ definitions, regions }) },
   }
-  const scope = ':where([data-gpu-painted],[data-gpu-probe])'
-  const front = ':where(:not([data-gpu-raised],:has([data-gpu-raised])))'
+  const scope = ':where([data-gpu-painted],[data-gpu-p])'
+  const front = ':where(:not([data-gpu-r],:has([data-gpu-r])))'
   const css = worker
     ? 'main:has(>.culm-plane:not([hidden])){isolation:isolate}.culm-plane{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:' +
       (GPU_CHECKED
-        ? `0;image-rendering:pixelated}${scope}>${front},${scope} :where(:has([data-gpu-raised]))>${front}{position:relative;z-index:1}`
+        ? `0;image-rendering:pixelated}${scope}>${front},${scope} :where(:has([data-gpu-r]))>${front}{position:relative;z-index:1}`
         : '-1;image-rendering:pixelated}[data-gpu-painted]{background-color:transparent!important;background-image:none!important}')
     : ''
+  const wasmByName = new Map<
+    string,
+    { name: string; sha256: string; bytes: number; transportBytes: number }
+  >()
+  for (const el of runnable) {
+    const gpuName = owners.get(el)?.gpu
+    const def = gpuName ? effects.get(gpuName) : undefined
+    if (def?.wasm && !wasmByName.has(def.name)) {
+      wasmByName.set(def.name, {
+        name: def.name,
+        sha256: sha256BytesHex(decodeBase64(def.wasm.bytesBase64)),
+        bytes: moduleBytes(def.wasm.bytesBase64),
+        transportBytes: byteLength(def.wasm.bytesBase64),
+      })
+    }
+  }
+  const wasmModules = [...wasmByName.values()]
   return {
     element,
     stats,
     worker,
     css,
-    usesWasm: stats.wasmBytes > 0,
+    usesWasm: wasmModules.length > 0,
+    wasmModules,
   }
 }

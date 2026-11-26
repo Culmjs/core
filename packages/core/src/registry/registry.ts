@@ -7,7 +7,7 @@ import type { DataSource } from './dataSource.ts'
 import type { Rule } from './rule.ts'
 import { checkedEffect, rise, type RegisteredEffect } from './effect.ts'
 import { gpuAuthority, type GpuCapability, type GpuOptions } from './gpu.ts'
-import { contours } from './gpuBuiltins.ts'
+import { contours, rippleField } from './gpuBuiltins.ts'
 
 export type Plugin = Declaration & {
   blocks?: BlockDef[]
@@ -43,7 +43,10 @@ export function createRegistry({ gpu }: { gpu?: GpuOptions } = {}): Registry {
   const sources = new Map<string, DataSource>()
   const rules = new Map<string, Rule>()
   const effects = new Map<string, RegisteredEffect>([[rise.name, rise]])
-  if (authority) effects.set(contours.name, contours)
+  if (authority) {
+    effects.set(contours.name, contours)
+    effects.set(rippleField.name, rippleField)
+  }
   const kinds = new Map<string, KindSpec>()
   const fns = new Map<string, SettingFn>()
 

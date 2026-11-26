@@ -1,0 +1,85 @@
+{
+  "analyzer": "EA IRIS",
+  "binarySha256": "8633460d60455f4ecf5139e7d9ee8b84c4796787b41101c86d3200c0d1235226",
+  "settingsSha256": "9b9bbaec85c3c0a04a16d12e1c71299fe58797c42f4b24a04f6489d69b541572",
+  "args": ["-v", "clip.avi", "-p", "false", "-r", "false"],
+  "runs": [
+    {
+      "fixture": "achromatic",
+      "role": "control",
+      "clipSha256": "a132dfcbb8b292ab5f550a40a96695f2c5408b03cc3a4e6b3b0af855baf7b699",
+      "frames": 180,
+      "reportSha256": "feafba726bc6e75bd5dd108afa3ebb688ed65bcff93a7adaa981229b8bfcdec7",
+      "frameResults": {
+        "Luminance": {
+          "0": 12,
+          "1": 9,
+          "3": 159
+        },
+        "Red": {
+          "0": 180
+        }
+      },
+      "overall": ["FAIL"],
+      "meetsFixtureExpectation": true
+    },
+    {
+      "fixture": "achromatic",
+      "role": "limited",
+      "clipSha256": "f872ca2cba925b72649f58e36a9b3fb2c40919c0f4d45878e742abc26f39f4a7",
+      "frames": 180,
+      "reportSha256": "a18ad70422d081fb2d3c2ca0b2fd3519cd3b7990253ad4e75150b523845048f4",
+      "frameResults": {
+        "Luminance": {
+          "0": 180
+        },
+        "Red": {
+          "0": 180
+        }
+      },
+      "overall": ["PASS"],
+      "meetsFixtureExpectation": true
+    },
+    {
+      "fixture": "saturated-red",
+      "role": "control",
+      "clipSha256": "3aa0e7444f3363bcc7dbcd34ea4cc556fba8d7531b63c33eda8fbfc9a6717a4a",
+      "frames": 180,
+      "reportSha256": "38f224bb02915624197d9884c86a2c1156ab2463b3eecbb667e4e9320e1df697",
+      "frameResults": {
+        "Luminance": {
+          "0": 12,
+          "1": 9,
+          "3": 159
+        },
+        "Red": {
+          "0": 12,
+          "1": 9,
+          "3": 159
+        }
+      },
+      "overall": ["FAIL"],
+      "meetsFixtureExpectation": true
+    },
+    {
+      "fixture": "saturated-red",
+      "role": "limited",
+      "clipSha256": "bd0d25e0770d332f95ca0a12e867a06a6329a8cd77a7f8e9c68cc19dcfa62b41",
+      "frames": 180,
+      "reportSha256": "76f2f454ba080635aa4d6ecd93ad656c0f73da77ba0de85cbde387793e765b74",
+      "frameResults": {
+        "Luminance": {
+          "0": 180
+        },
+        "Red": {
+          "0": 180
+        }
+      },
+      "overall": ["PASS"],
+      "meetsFixtureExpectation": true
+    }
+  ],
+  "hostSha256": "c3f76b6df86ca58552cee72159cac104fd83e25c9e7747c516d36695b9c7f06a",
+  "workerSha256": "38d52b3f5cf4e3f7e82c937d1ce2e3be7c1781d71ed7eeadedf7bbe3b6f98348",
+  "passed": true
+}

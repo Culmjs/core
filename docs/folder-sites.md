@@ -36,12 +36,15 @@ All files are JSONC: JSON with comments. Culm keeps your comments, key order and
   "$schema": "./culm.schema.json",
   "plugins": [], // package names, imported from this folder's node_modules
   "out": "dist", // where `culm build` writes
+  // optional Stage 4 GPU shader + WASM field support:
+  // "features": { "gpu": true },
   // optional AI image generator for `image.generate` / `bgImage.generate` (cached in assets/gen/):
   // "images": { "provider": "gemini" | "openai" | "higgsfield" | "http", "model"?: "...", "endpoint"?: "..." }
 }
 ```
 
 - `plugins` lists plug-in packages by bare name (`my-plugin`, `@scope/my-plugin`). Culm imports each from `<folder>/node_modules/<name>` and registers its default export. A path, an absolute path or a package that exists only in a parent folder is refused with a problem at that line. A project therefore has a `package.json` and installs `@culmjs/tools` and its plug-ins with npm.
+- `features.gpu`: enables `contours`, `ripple_field`, and site-local `effects/<name>.json` + `<name>.frag` shaders (`customEffects` in `site.json`). Built sites emit lazy `_culm/gpu.js` (`<= 9,513` B, loaded with SRI outside reduced motion / `Save-Data`), record `wasmModules` in `culm-manifest.json`, and grant `worker-src blob:` and `'wasm-unsafe-eval'` in `_headers` only when rendered pages require them.
 - `out` is the build folder. It may not be, or lie inside, `blocks`, `pages`, `pieces`, `data`, `assets`, `fonts`, `node_modules`, `.culm`, `site.json` or `culm.json`, and may not leave the project.
 
 ### `site.json`

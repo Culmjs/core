@@ -3,8 +3,8 @@ type Groups = HTMLElement[][]
 export const { min, max, abs } = Math
 export const rect = (el: Element | Range) => el.getBoundingClientRect()
 // Abort the enclosing measurement transaction and restore native layout.
-export function rejectMeasurement(invalid: unknown) {
-  if (invalid) throw 0
+export function rejectMeasurement(c: unknown) {
+  if (c) throw 0
 }
 /** Presence requests that layer; a nonempty value is its stationary clip class. */
 export type TextPlan = Partial<Record<Unit, string>>
@@ -41,51 +41,43 @@ export function textRules(plan: TextPlan) {
 export function measureLayers(
   root: HTMLElement,
   plan: TextPlan,
-  decorate: (e: HTMLElement, cls: string) => void = (e, cls) =>
-    (e.className = cls),
+  decorate?: (e: HTMLElement, cls: string) => void,
 ) {
-  const doc = root.ownerDocument
-  // The clock needs the stagger index, not a nested array of members. Several
-  // fragments can share one line index across formatting or link boundaries.
+  const doc = root.ownerDocument,
+    clipped = plan.lines || plan.words || plan.letters
   let groups: Partial<Record<Unit, Map<HTMLElement, number>>> = {}
-  const layer = (unit: Unit) =>
-    (groups[unit] ||= new Map<HTMLElement, number>())
+  const layer = (u: Unit) =>
+    groups[u] || (groups[u] = new Map<HTMLElement, number>())
   const originals: [Text, HTMLElement, ShadowRoot][] = []
-  const restore = () => {
-    originals.forEach(([text, run]) => run.replaceWith(text))
-    originals.length = 0
-  }
+  const restore = () =>
+    originals.splice(0).forEach(([t, r]) => r.replaceWith(t))
   let budget = 2000 - doc.querySelectorAll('*').length
-  const span = (cls = '', parent?: HTMLElement) => {
-    rejectMeasurement(--budget < 0)
-    const e = doc.createElement('span')
-    decorate(e, cls)
-    if (parent) parent.append(e)
-    return e
-  }
+  const span = (
+    cls: string,
+    p?: HTMLElement,
+    e = doc.createElement('span'),
+  ) => (
+    rejectMeasurement(--budget < 0),
+    decorate ? decorate(e, cls) : (e.className = cls),
+    p && p.append(e),
+    e
+  )
   const range = doc.createRange()
   let bottom = 0,
     top = 0,
     row = -1
   const member = (
-    parent: HTMLElement,
-    unit: Unit,
-    index = layer(unit).size,
-  ) => {
-    const e = span(Kind.Atom, plan[unit] ? span(plan[unit], parent) : parent)
-    layer(unit).set(e, index)
-    return e
-  }
+    p: HTMLElement,
+    u: Unit,
+    i = layer(u).size,
+    e = span(Kind.Atom, plan[u] ? span(plan[u], p) : p),
+  ) => (layer(u).set(e, i), e)
   try {
-    const { Segmenter } = Intl
-    const words = new Segmenter(doc.documentElement.lang || [], {
-        granularity: 'word',
-      }),
-      chars = 'letters' in plan && new Segmenter()
-    const walk = doc.createTreeWalker(root, 5)
-    const checks: [HTMLElement, DOMRect][] = []
-    // Rich mathematics, overlapping splits, or adjacent lexical runs would
-    // need shaping across boundaries. Keep their native typography instead.
+    const S = Intl.Segmenter,
+      words = new S(doc.documentElement.lang || [], { granularity: 'word' }),
+      chars = 'letters' in plan && new S()
+    const walk = doc.createTreeWalker(root, 5),
+      checks: [HTMLElement, DOMRect][] = []
     let joined: boolean | undefined
     for (let n; (n = walk.nextNode() as Text | Element | null);) {
       if (n.nodeType !== 3) {
@@ -94,95 +86,87 @@ export function measureLayers(
         continue
       }
       const text = (n as Text).data
-      // Joining scripts cannot be painted correctly in atomic letter boxes,
-      // even if all their isolated glyph advances happen to sum to the same width.
       rejectMeasurement(
         (joined && /^\S/.test(text)) ||
-          (chars && /[\u0600-\u08ff\u1800-\u18af]/u.test(text)),
+          (chars && /[\u0600-\u08ff\u1800-\u18af]/.test(text)),
       )
       joined = /\S$/.test(text)
       if (!text.trim()) continue
-      // Solid decorations on the immediate formatting parent can pass through
-      // the atomic boxes. Stacked, propagated or patterned ink cannot.
       for (let p = n.parentElement; p; p = p.parentElement) {
         const cs = getComputedStyle(p)
         rejectMeasurement(
           cs.textDecorationLine !== 'none' &&
             (p !== n.parentElement ||
               cs.textDecorationStyle !== 'solid' ||
-              (Object.values(plan).some(Boolean) &&
-                (cs.textUnderlineOffset !== 'auto' ||
-                  cs.textDecorationThickness !== 'auto'))),
+              (clipped &&
+                cs.textUnderlineOffset + cs.textDecorationThickness !==
+                  'autoauto')),
         )
       }
       const run = span('cm-run')
-      // Expose one intact native text node to AT. The text-only shadow (no
-      // extra elements) keeps light-DOM textContent/copy from doubling. The
-      // visual copy alone is hidden from AT; neither ancestor links nor
-      // authored labels are ever hidden or renamed.
       originals.push([
         n as Text,
         run,
         span(Kind.Source, run).attachShadow({ mode: 'open' }),
       ])
       const visual = span('', run)
-      visual.setAttribute('aria-hidden', 'true')
+      visual.ariaHidden = 'true'
       let fragment: HTMLElement | undefined,
         space = ''
       const place = (
-        tokenizer: Intl.Segmenter,
-        value: string,
+        tok: Intl.Segmenter,
+        val: string,
         base = 0,
         word?: HTMLElement,
       ) => {
-        for (const { segment, index } of tokenizer.segment(value)) {
-          if (!word && !segment.trim()) {
-            space += segment
+        for (const q of tok.segment(val)) {
+          const seg = q.segment
+          if (!word && !seg.trim()) {
+            space += seg
             continue
           }
-          const i = index + base
+          const i = q.index + base
           range.setStart(n!, i)
-          range.setEnd(n!, i + segment.length)
-          const [original, next] = range.getClientRects()
-          rejectMeasurement(next || !original || !original.height)
-          let el
-          if (word) el = member(word, 'letters')
-          else {
-            const { top: t, bottom: b } = original
+          range.setEnd(n!, i + seg.length)
+          const rs = range.getClientRects(),
+            orig = rs[0]
+          rejectMeasurement(rs[1] || !orig || !orig.height)
+          let el = word && member(word, 'letters')
+          if (!el) {
+            const t = orig.top,
+              b = orig.bottom
             if ((top = max(top, t)) >= (bottom = min(bottom, b))) {
               row++
               top = t
               bottom = b
-              fragment = undefined
+              fragment = 0 as unknown as HTMLElement | undefined
             }
             ;(fragment || visual).append(space)
-            fragment ||= 'lines' in plan ? member(visual, 'lines', row) : visual
+            if (!fragment)
+              fragment = 'lines' in plan ? member(visual, 'lines', row) : visual
             space = ''
             el = member(fragment, 'words')
             if (chars) {
-              place(chars, segment, i, el)
+              place(chars, seg, i, el)
               continue
             }
           }
-          el.append(segment)
-          checks.push([el, original])
+          el.append(seg)
+          checks.push([el, orig])
         }
       }
       place(words, text)
       visual.append(space)
     }
-    originals.forEach(([n, run, shadow]) => {
-      n.replaceWith(run)
-      shadow.append(n)
+    originals.forEach(([n, r, s]) => {
+      n.replaceWith(r)
+      s.append(n)
     })
-    // Equal advance widths alone cannot detect bidi reversal. Compare the
-    // actual leaf text ranges against the original graphemes (or whole words
-    // when unsplit), including horizontal placement and soft wraps.
-    checks.forEach(([leaf, original]) => {
+    checks.forEach(([leaf, orig]) => {
       range.selectNodeContents(leaf)
       const r = rect(range)
       rejectMeasurement(
-        (['x', 'y', 'width'] as const).some(k => abs(r[k] - original[k]) > 1),
+        (['x', 'y', 'width'] as const).some(k => abs(r[k] - orig[k]) > 1),
       )
     })
   } catch {

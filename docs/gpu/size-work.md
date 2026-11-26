@@ -64,4 +64,14 @@ node --conditions=source --import tsx scripts/gpu-flash-price.ts --unreviewed --
 
 The second command adds a real pointer-controlled timeline to the mixed fixture so the fully interactive build is priced as well. Add `--require-fit` to make any compiler budget finding fail the command. Both cases check actual emitted code lengths; the checked custom attachment must still exist and have the requested review status. The [compositor and analyzer evidence](flash-analysis.md) is versioned separately.
 
-`scripts/__tests__/gpu-page-budget.spec.ts` guards the full interactive fixture's 3-byte margin. Both price checks still report `gpuHostScript`, as they should. Full verification: 2,080 unit passes and 230 browser passes, six pre-existing skips across the two suites, zero failures; the new page-budget regression also passed separately. Typecheck, lint, formatting, layer and vocabulary checks passed.
+`scripts/__tests__/gpu-page-budget.spec.ts` guards the full interactive fixture's 38-byte margin under the final production build (**`host-c3f76b6df86ca585`**).
+
+## Stage 4 production release (`host-c3f76b6df86ca585`)
+
+Integrating the border/stacking compatibility fixes and the bounded WASM `field-v1` runtime (`ripple_field`), together with compacting string/global interning (`share-script-keys.ts`) and specializing the non-abortable shipped timeline (`abortable = false` in `gen-scripts.ts`), brings the complete checked host and fully interactive mixed page within budget:
+
+| Emitted artifact                                            |  Bytes | Compared with production ceilings |
+| ----------------------------------------------------------- | -----: | --------------------------------: |
+| Complete host (`6,125` + `3,388` embedded / `3,385` worker) |  9,513 |        At `gpuHostScript` (9,513) |
+| Standard mixed page (playback, reviewed)                    | 17,429 |                2,571 under 20,000 |
+| Interactive unreviewed mixed page                           | 19,962 |                   38 under 20,000 |

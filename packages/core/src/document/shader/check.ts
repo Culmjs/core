@@ -31,7 +31,7 @@ function exactFields(obj: object, fields: readonly string[]) {
   return fields.every(key => Object.hasOwn(obj, key))
 }
 
-function inputs(settings: ShaderSettings) {
+function inputs(settings: ShaderSettings, allowField = false) {
   if (!isRecord(settings)) refuse('settings', 1, 'settings', 'setting map')
   let count = 0
   for (const key in settings)
@@ -44,6 +44,7 @@ function inputs(settings: ShaderSettings) {
     ['u_pointer', 'vec2'],
     ['u_noise', 'sampler2D'],
   ])
+  if (allowField) env.set('u_field', 'sampler2D')
   for (const key in settings) {
     if (!Object.hasOwn(settings, key)) continue
     if (
@@ -75,17 +76,29 @@ function inputs(settings: ShaderSettings) {
   return env
 }
 
+/** Checked effect validation. `allowField` exposes private `u_field` to approved WASM effects only. */
+export function checkEffectShader(
+  source: string,
+  settings: ShaderSettings,
+  allowField = false,
+): ShaderCheck {
+  try {
+    if (typeof source !== 'string') refuse('source', 1, typeof source, 'string')
+    const bytes = byteCount(source)
+    return {
+      ok: true,
+      cost: { bytes, ...parse(source, inputs(settings, allowField)) },
+    }
+  } catch (e) {
+    if (e instanceof ShaderRefusal) return e.result
+    throw e
+  }
+}
+
 /** Standalone check of authored fragment source. No prelude or driver is involved. */
 export function checkShader(
   source: string,
   settings: ShaderSettings,
 ): ShaderCheck {
-  try {
-    if (typeof source !== 'string') refuse('source', 1, typeof source, 'string')
-    const bytes = byteCount(source)
-    return { ok: true, cost: { bytes, ...parse(source, inputs(settings)) } }
-  } catch (e) {
-    if (e instanceof ShaderRefusal) return e.result
-    throw e
-  }
+  return checkEffectShader(source, settings, false)
 }

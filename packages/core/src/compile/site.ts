@@ -19,6 +19,14 @@ export type Manifest = {
   styles: { name: string; bytes: number; pages: string[] }[]
   /** Inert definition bytes delivered in each page that uses them, never JS prices. */
   gpuData?: ({ page: string } & NonNullable<PageStats['gpuData']>)[]
+  /** Used WebAssembly modules by effect name, when any rendered live page runs one. */
+  wasmModules?: {
+    name: string
+    sha256: string
+    bytes: number
+    transportBytes: number
+    pages: string[]
+  }[]
   /** The build identity; the caller that writes a bundle sets it. `compileSite` leaves it unset. */
   build?: string
 }
@@ -60,6 +68,11 @@ export function compileSite(
   const live = { ...options, mode: 'live' as const }
   const hashes = new Set<string>()
   let worker = false
+  let wasm = false
+  const wasmModules = new Map<
+    string,
+    NonNullable<Manifest['wasmModules']>[number]
+  >()
   const assets = new Map<string, string>()
   function price(name: string, bytes: number, page: string) {
     const known = manifest.scripts.find(s => s.name === name)
@@ -72,7 +85,7 @@ export function compileSite(
     if (!page.on) continue
     let r: CompiledPage
     try {
-      r = build(doc, page, live, effects, hashes)
+      r = build(doc, page, live, effects, hashes, wasmModules)
     } catch (e) {
       r = { ok: false, problems: failed(page.id, e) }
     }
@@ -86,6 +99,7 @@ export function compileSite(
     problems.push(...r.problems.map(at))
     if (!r.ok) continue
     worker ||= r.scripts.some(s => s.worker)
+    wasm ||= !!r.gpu?.usesWasm
     // a slug is a validated site path, so distinct slugs are distinct files
     const path =
       page.slug === '/' ? 'index.html' : `${page.slug.slice(1)}/index.html`
@@ -104,8 +118,9 @@ export function compileSite(
       price('gpuHost', byteLength(asset.content), page.id)
     }
   }
+  if (wasmModules.size) manifest.wasmModules = [...wasmModules.values()]
   if (files.length) {
-    const policy = scriptPolicy(hashes, worker)
+    const policy = scriptPolicy(hashes, worker, wasm)
     for (const page of files) page.content = withPolicy(page.content, policy)
     for (const [path, content] of assets) files.push({ path, content })
     files.push({

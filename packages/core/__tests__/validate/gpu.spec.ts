@@ -59,11 +59,11 @@ test('GPU references are per site, gated by the registry, and preserve the stati
   assert.equal(reg.effect('mist'), undefined)
   assert.deepEqual(
     reg.effects().map(e => e.name),
-    ['rise', 'contours'],
+    ['rise', 'contours', 'ripple_field'],
   )
   const plain = siteWith([owner()])
   const planeCss =
-    'main:has(>.culm-plane:not([hidden])){isolation:isolate}.culm-plane{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;image-rendering:pixelated}:where([data-gpu-painted],[data-gpu-probe])>:where(:not([data-gpu-raised],:has([data-gpu-raised]))),:where([data-gpu-painted],[data-gpu-probe]) :where(:has([data-gpu-raised]))>:where(:not([data-gpu-raised],:has([data-gpu-raised]))){position:relative;z-index:1}'
+    'main:has(>.culm-plane:not([hidden])){isolation:isolate}.culm-plane{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;image-rendering:pixelated}:where([data-gpu-painted],[data-gpu-p])>:where(:not([data-gpu-r],:has([data-gpu-r]))),:where([data-gpu-painted],[data-gpu-p]) :where(:has([data-gpu-r]))>:where(:not([data-gpu-r],:has([data-gpu-r]))){position:relative;z-index:1}'
   for (const mode of ['edit', 'live', 'measure'] as const) {
     const opts = { mode, registry: reg }
     const result = compilePage(d, 'home', opts)
@@ -171,12 +171,12 @@ test('registered shader source is checked once per build, whether used twice or 
         .find(f => f.path === page.path)!
         .content.includes('// checked build view\\n'),
     )
-  assert.deepEqual(reads, ['contours', 'mist', 'spare'])
+  assert.deepEqual(reads, ['contours', 'ripple_field', 'mist', 'spare'])
   reads.length = 0
   overBudget = true
   const refused = build()
   assert.deepEqual(refused.files, [])
-  assert.deepEqual(reads, ['contours', 'mist', 'spare'])
+  assert.deepEqual(reads, ['contours', 'ripple_field', 'mist', 'spare'])
   assert.equal(refused.problems.length, 1)
   const [p] = refused.problems
   assert.deepEqual(

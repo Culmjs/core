@@ -6,8 +6,13 @@ import { transformSync } from 'esbuild'
 import { runInNewContext } from 'node:vm'
 import { shareScriptKeys } from '../share-script-keys.ts'
 import { render, renderProbe, renderGpuWorker } from '../gen-scripts.ts'
+import { renderWasmModule } from '../gen-gpu-wasm.ts'
 import { BUDGETS, byteLength } from '../../packages/core/src/compile/budgets.ts'
 import { PROBE_SCRIPT } from '../../packages/core/src/measure/probeMin.ts'
+import {
+  RIPPLE_WASM_BASE64,
+  RIPPLE_WASM_SHA256,
+} from '../../packages/core/src/registry/rippleModule.ts'
 import {
   BASE_SCRIPT,
   GPU_LOADER_SCRIPT,
@@ -31,6 +36,24 @@ test('scriptsMin.ts is up to date', () => {
     ),
     render(),
     'run `npm run gen:scripts`',
+  )
+})
+
+test('rippleModule.ts is up to date and within fixed WASM ceilings', async () => {
+  const actual = readFileSync(
+    new URL(
+      '../../packages/core/src/registry/rippleModule.ts',
+      import.meta.url,
+    ),
+    'utf8',
+  )
+  assert.equal(actual, await renderWasmModule(), 'run `npm run gen:wasm`')
+  const raw = Buffer.from(RIPPLE_WASM_BASE64, 'base64')
+  assert.ok(raw.length > 0 && raw.length <= BUDGETS.wasmBytes)
+  assert.ok(byteLength(RIPPLE_WASM_BASE64) <= BUDGETS.wasmTransportBytes)
+  assert.equal(
+    createHash('sha256').update(raw).digest('hex'),
+    RIPPLE_WASM_SHA256,
   )
 })
 

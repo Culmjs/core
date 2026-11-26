@@ -1,10 +1,7 @@
-import {
-  checkShader,
-  type CustomEffect,
-  type ShaderSettings,
-} from '../document/index.ts'
+import type { CustomEffect, ShaderSettings } from '../document/index.ts'
+import { checkEffectShader } from '../document/shader/check.ts'
 import { fieldsOf, isRecord, UNSAFE_FIELDS } from '../document/rules.ts'
-import { contours } from './gpuBuiltins.ts'
+import { contours, rippleField } from './gpuBuiltins.ts'
 
 export type GpuEffectDef = CustomEffect & {
   tier: 3
@@ -106,7 +103,11 @@ export function moduleSnapshot(wasm: NonNullable<GpuEffectDef['wasm']>) {
   return Object.freeze({ abi, bytesBase64: b })
 }
 
-function checkedSnapshot(input: CustomEffect, keys: ReadonlySet<string>) {
+function checkedSnapshot(
+  input: CustomEffect,
+  keys: ReadonlySet<string>,
+  allowField = false,
+) {
   if (
     !isRecord(input) ||
     !gpuName(input.name) ||
@@ -116,7 +117,7 @@ function checkedSnapshot(input: CustomEffect, keys: ReadonlySet<string>) {
     throw new Error('Invalid GPU effect declaration.')
   // Check the original language (cloning could turn a non-record into a record).
   const { name, source, settings } = input
-  const result = checkShader(source, settings)
+  const result = checkEffectShader(source, settings, allowField)
   if (!result.ok)
     throw new Error(
       `GPU effect "${name}": ${result.rule} at shader line ${result.line}.`,
@@ -132,6 +133,7 @@ export function gpuAuthority(options?: GpuOptions) {
   )
   const reviewed = [
     contours,
+    rippleField,
     ...(options.reviewed ?? []).map(d => checkedSnapshot(d, customKeys)),
   ]
   const capability = Object.freeze({
@@ -157,7 +159,7 @@ export function gpuAuthority(options?: GpuOptions) {
           'This plug-in and version are not approved for GPU modules.',
         )
       return Object.freeze({
-        ...checkedSnapshot(input, registeredKeys),
+        ...checkedSnapshot(input, registeredKeys, wasm !== undefined),
         tier: 3,
         ...(wasm !== undefined && { wasm: moduleSnapshot(wasm) }),
       })

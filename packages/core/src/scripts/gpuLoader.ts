@@ -1,76 +1,59 @@
 /** Generation binds the path and integrity to the shipped host, never to document data. */
 export function loadGpu(
-  doc: Document,
-  win: Window & typeof globalThis,
-  path: string,
-  integrity: string,
+  d: Document,
+  w: Window & typeof globalThis,
+  p: string,
+  sri: string,
 ) {
-  const data = doc.getElementById('culm-gpu') as
-    (HTMLElement & { observed?: boolean }) | null
-  if (!data || data.observed || !win.IntersectionObserver) return
-  data.observed = true
-  const motion = win.matchMedia('(prefers-reduced-motion: reduce)')
-  const nav = win.navigator as Navigator & {
-    connection?: EventTarget & { saveData?: boolean }
-  }
-  const connection = nav.connection
-  const allowed = () =>
-    !(motion.matches || (nav.connection && nav.connection.saveData))
-  let loaded = false
-  const observer = new win.IntersectionObserver(
-    entries => {
+  const C = 'culm-gpu'
+  const g = d.getElementById(C) as (HTMLElement & { observed?: number }) | null
+  const IO = w.IntersectionObserver
+  const RO = w.ResizeObserver
+  const q = (s: string) => d.querySelectorAll('[data-' + s + ']')
+  if (!g || g.observed || !IO || !(g.observed = 1)) return
+  const m = w.matchMedia('(prefers-reduced-motion: reduce)'),
+    c = () =>
+      (
+        w.navigator as Navigator & {
+          connection?: EventTarget & { saveData?: boolean }
+        }
+      ).connection
+  let live = 1
+  const ok = (x = c()) => live && !m.matches && !(x && x.saveData)
+  const io = new IO(
+    es => {
       if (
-        loaded ||
-        !allowed() ||
-        !entries.some(
-          ({ isIntersecting, boundingClientRect: r }) =>
-            isIntersecting && r.width > 0 && r.height > 0,
+        ok() &&
+        es.some(
+          e =>
+            e.isIntersecting &&
+            e.boundingClientRect.width * e.boundingClientRect.height,
         )
-      )
-        return
-      loaded = true
-      disconnect()
-      listen('removeEventListener')
-      const script = doc.createElement('script')
-      script.src = path
-      script.integrity = integrity
-      doc.head.append(script)
+      ) {
+        live = 0
+        stop()
+        d.head.append(
+          Object.assign(d.createElement('script'), { src: p, integrity: sri }),
+        )
+      }
     },
     { rootMargin: '200px' },
   )
-  // An edge-intersecting zero-area box can grow without crossing another
-  // intersection threshold. Ask for a fresh entry after its layout changes.
-  const size =
-    win.ResizeObserver &&
-    new win.ResizeObserver(entries => {
-      if (!loaded && allowed())
-        for (const { target } of entries) {
-          observer.unobserve(target)
-          observer.observe(target)
-        }
-    })
-  function observe() {
-    disconnect()
-    if (!loaded && allowed()) {
-      const runnable = doc.querySelectorAll('[data-gpu-run]')
-      const owners = runnable.length
-        ? runnable
-        : doc.querySelectorAll('[data-culm-gpu]')
-      owners.forEach(el => {
-        observer.observe(el)
-        if (size) size.observe(el)
-      })
+  const ro =
+    RO &&
+    new RO(
+      es => ok() && es.map(e => (io.unobserve(e.target), io.observe(e.target))),
+    )
+  const stop = () => (io.disconnect(), ro && ro.disconnect())
+  const obs = () => {
+    stop()
+    if (ok()) {
+      const r = q('gpu-run')
+      ;(r.length ? r : q(C)).forEach(e => (io.observe(e), ro && ro.observe(e)))
     }
   }
-  function disconnect() {
-    observer.disconnect()
-    if (size) size.disconnect()
-  }
-  function listen(action: 'addEventListener' | 'removeEventListener') {
-    motion[action]('change', observe)
-    if (connection && typeof connection[action] === 'function')
-      connection[action]('change', observe)
-  }
-  listen('addEventListener')
-  observe()
+  ;[m, c()].map(
+    t => t && t.addEventListener && t.addEventListener('change', obs),
+  )
+  obs()
 }

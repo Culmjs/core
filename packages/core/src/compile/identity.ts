@@ -1,7 +1,58 @@
 import { canonicalJson, sha256 } from '../document/hash.ts'
-import type { SiteDocument } from '../document/index.ts'
+import type { Node, SiteDocument } from '../document/index.ts'
 import type { Data } from '../data/query.ts'
-import type { Registry } from '../registry/index.ts'
+import type { GpuEffectDef, Registry } from '../registry/index.ts'
+import { decodeBase64, sha256BytesHex } from '../registry/sha256.ts'
+
+function collectUsedGpu(doc: SiteDocument): {
+  active: boolean
+  names: Set<string>
+} {
+  const names = new Set<string>()
+  let active = (doc.customEffects?.length ?? 0) > 0
+  const seen = new Set<unknown>()
+  function walk(node: Node | undefined) {
+    if (!node || typeof node !== 'object' || seen.has(node)) return
+    seen.add(node)
+    const m = (node as { motion?: { gpu?: string } }).motion
+    if (m && typeof m === 'object' && 'gpu' in m && typeof m.gpu === 'string') {
+      active = true
+      names.add(m.gpu)
+    }
+    if (Array.isArray(node.children)) for (const c of node.children) walk(c)
+  }
+  for (const p of doc.pages ?? []) walk(p?.root)
+  walk(doc.header)
+  walk(doc.footer)
+  for (const c of Object.values(doc.components ?? {})) walk(c?.root)
+  return { active, names }
+}
+
+function gpuIdentity(doc: SiteDocument, registry: Registry) {
+  const cap = registry.gpu
+  if (!cap?.enabled) return undefined
+  const { active, names } = collectUsedGpu(doc)
+  if (!active) return undefined
+  const registered = registry
+    .effects()
+    .filter((e): e is GpuEffectDef => e.tier === 3 && names.has(e.name))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .map(e => {
+      let modHash: string | null = null
+      if (e.wasm) {
+        try {
+          modHash = sha256BytesHex(decodeBase64(e.wasm.bytesBase64))
+        } catch {
+          modHash = null
+        }
+      }
+      return [e.name, modHash, cap.isReviewed(e)]
+    })
+  const custom = [...(doc.customEffects ?? [])]
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .map(c => [c.name, cap.isReviewed(c)])
+  return [registered, custom]
+}
 
 /** The framework version; a test holds it equal to the version in package.json. */
 export const FRAMEWORK_VERSION = '0.0.0'
@@ -28,6 +79,7 @@ export async function buildIdentity(
     .sort(([a, x], [b, y]) =>
       a < b ? -1 : a > b ? 1 : x < y ? -1 : x > y ? 1 : 0,
     )
+  const gpu = gpuIdentity(doc, registry)
   let text: string
   try {
     text = canonicalJson([
@@ -37,6 +89,7 @@ export async function buildIdentity(
       FRAMEWORK_VERSION,
       plugins,
       sorted ?? null,
+      ...(gpu ? [gpu] : []),
     ])
   } catch {
     throw new Error(

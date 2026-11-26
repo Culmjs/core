@@ -15,6 +15,7 @@
     "format-check": "prettier --check --cache .",
     "lint": "eslint",
     "gen:scripts": "node --conditions=@culmjs/source --import tsx scripts/gen-scripts.ts",
+    "gen:wasm": "node --conditions=@culmjs/source --import tsx scripts/gen-gpu-wasm.ts",
     "check:layers": "node --conditions=@culmjs/source --import tsx scripts/check-layers.ts",
     "check:terms": "node --conditions=@culmjs/source --import tsx scripts/check-terms.ts",
     "test:browser": "node --conditions=@culmjs/source --import tsx --test --test-concurrency=1 'packages/*/__browser__/*.spec.ts'",
@@ -27,6 +28,7 @@
     "prettier": "^3",
     "tsx": "4.23.15",
     "typescript": ">=5.7",
-    "typescript-eslint": "^8"
+    "typescript-eslint": "^8",
+    "wabt": "1.0.37"
   }
 }

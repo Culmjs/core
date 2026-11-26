@@ -345,7 +345,7 @@ test('pre-stage control bytes, script-free editor and the shipped feature mixes'
     if (scene === 'native' || scene === 'control')
       assert.deepEqual([timeline, states, actual], [0, 0, 304])
     else assert.ok(timeline > 0 && timeline <= BUDGETS.timelineScript)
-    if (scene === 'mixed') assert.deepEqual([base, states], [688, 2031])
+    if (scene === 'mixed') assert.deepEqual([base, states], [688, 1654])
     assert.ok(actual <= BUDGETS.sharedScripts)
     t.diagnostic(
       `${scene}: ${base}+${states}+${timeline}=${actual}; CSS ${stats.styleBytes}; elements ${stats.elements}; depth ${stats.depth}`,

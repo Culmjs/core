@@ -1,5 +1,4 @@
 import {
-  checkShader,
   type CustomEffect,
   type GpuMotion,
   type Look,
@@ -8,6 +7,7 @@ import {
   type Run,
   type ShaderSettings,
 } from '../document/index.ts'
+import { checkEffectShader } from '../document/shader/check.ts'
 import { checkKeys } from '../document/motionSteps.ts'
 import { fieldsOf, isNum, isRecord } from '../document/rules.ts'
 import { dropSamples } from '../document/samples.ts'
@@ -29,8 +29,9 @@ function shaderOk(
   settings: ShaderSettings,
   path: string,
   out: Problem[],
+  allowField = false,
 ) {
-  const check = checkShader(source, settings)
+  const check = checkEffectShader(source, settings, allowField)
   if (check.ok) return true
   const { rule, line: shaderLine, measured, limit } = check
   out.push({
@@ -57,7 +58,6 @@ export function checkedRegistrations(registry: Registry, out: Problem[]) {
     if (d.tier !== 3) continue
     const { name, source, settings } = d
     const path = `registry.effects.${name}`
-    const valid = shaderOk(source, settings, path, out)
     let wasm: GpuEffectDef['wasm']
     try {
       const supplied = d.wasm
@@ -70,6 +70,7 @@ export function checkedRegistrations(registry: Registry, out: Problem[]) {
       })
       continue
     }
+    const valid = shaderOk(source, settings, path, out, wasm !== undefined)
     if (valid)
       byName.set(name, {
         ...shaderSnapshot({ name, source, settings }),

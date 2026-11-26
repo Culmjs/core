@@ -40,9 +40,14 @@ export function executableHashes(scripts: PageScript[]): string[] {
   return gpu ? [hash, GPU_HOST_INTEGRITY] : [hash]
 }
 
-export function scriptPolicy(hashes: Iterable<string>, worker = false) {
-  const sources = [...new Set(hashes)].map(h => `'${h}'`).join(' ') || "'none'"
-  return `script-src ${sources}; worker-src ${worker ? 'blob:' : "'none'"}`
+export function scriptPolicy(
+  hashes: Iterable<string>,
+  worker = false,
+  wasm = false,
+) {
+  const sources = [...new Set(hashes)].map(h => `'${h}'`)
+  if (wasm) sources.push("'wasm-unsafe-eval'")
+  return `script-src ${sources.join(' ') || "'none'"}; worker-src ${worker ? 'blob:' : "'none'"}`
 }
 
 export const policyMeta = (content: string) =>
@@ -50,10 +55,11 @@ export const policyMeta = (content: string) =>
     tag: 'meta',
     attrs: { 'http-equiv': 'Content-Security-Policy', content },
   })
-export const pageScriptPolicy = (scripts: PageScript[]) =>
+export const pageScriptPolicy = (scripts: PageScript[], wasm = false) =>
   scriptPolicy(
     executableHashes(scripts),
     scripts.some(s => s.worker),
+    wasm,
   )
 
 /** Insert only in the compiler-owned opening head, before any page-controlled content. */

@@ -32,7 +32,7 @@ A page is a tree of nodes. A node has:
 - `style`: layers for base, tablet, phone, dark mode, interaction states (hover, pressed, focus and others) and declared states
 - `children`
 - optional `state` and `on`: declared states and the triggers that change them
-- optional `motion`: a trigger and either checked steps or a registered effect. An entrance can run once on entering view; a scroll track can seek in either direction. [Authoring, preview and fallback](motion/replay.md)
+- optional `motion`: a trigger and either checked steps or a registered effect (including Stage 4 GPU/WASM effects such as `contours`, `ripple_field` or custom shaders when `gpu` is enabled). An entrance can run once on entering view; a scroll track can seek in either direction. [Motion docs](motion/replay.md) · [GPU exit summary](gpu/exit.md)
 - optional `repeat`, `bind`, `showIf`: data binding and conditional display
 - optional `slot` and `placement`: how it sits in its parent
 
@@ -252,28 +252,30 @@ Each of these validates first. If the document, the rows or an option has a prob
 - One `<style>` element: font faces, base CSS, the look and the page's own rules. Nodes with the same rules share one class.
 - In live mode, one inline script made of the parts the page needs:
 
-| Script       | Size        | Included when                              |
-| ------------ | ----------- | ------------------------------------------ |
-| base         | 304 bytes   | always                                     |
-| open snippet | 105 bytes   | a layer is marked open at load             |
-| mail snippet | 277 bytes   | a hidden mail address was written          |
-| states       | 2,031 bytes | a node on the page uses states or triggers |
-| timeline     | 8,186 bytes | the rendered page needs the motion host    |
+| Script    | Size          | Included when                              |
+| --------- | ------------- | ------------------------------------------ |
+| base      | 304–688 bytes | always (includes open/mail when used)      |
+| states    | 1,654 bytes   | a node on the page uses states or triggers |
+| timeline  | 4,681–7,214 B | the rendered page needs the motion host    |
+| gpuLoader | 893 bytes     | the page renders GPU/WASM regions in main  |
+| gpuHost   | 9,513 bytes   | lazy `_culm/gpu.js` asset (loaded via SRI) |
 
 - In editing mode there is no script, and every node's element carries `data-id` so an editor can map the page back to the document.
 - A text node still marked as an untouched sample is left out of a live page and kept in editing mode.
 
 ### Budgets
 
-| What                         | Ceiling      |
-| ---------------------------- | ------------ |
-| All shared scripts on a page | 20,000 bytes |
-| Base script                  | 10,000 bytes |
-| States script                | 6,193 bytes  |
-| Timeline script              | 8,192 bytes  |
-| CSS per page                 | 16,000 bytes |
-| Elements per page            | 2,000        |
-| Nesting depth                | 12           |
+| What                             | Ceiling              |
+| -------------------------------- | -------------------- |
+| All shared scripts on a page     | 20,000 bytes         |
+| Base script                      | 10,000 bytes         |
+| States script                    | 6,193 bytes          |
+| Timeline script                  | 8,192 bytes          |
+| GPU host script (`_culm/gpu.js`) | 9,513 bytes          |
+| WASM module per used effect      | 512 raw / 684 base64 |
+| CSS per page                     | 16,000 bytes         |
+| Elements per page                | 2,000                |
+| Nesting depth                    | 12                   |
 
 Sizes are raw minified bytes. `compilePage` reports a page that passes a ceiling as a `RESOURCE_LIMIT_EXCEEDED` problem and returns its real figures in `stats`.
 

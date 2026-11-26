@@ -23,6 +23,5 @@ export const codesPerSecond = 28.0234375 // (255 * .25) / (2.4 / 1.055)
  * background. The ORIGINAL CSS paint is the blend destination. */
 // The .033 s cap earns strictly less than one code. K selects unchanged (-1),
 // transparent/solid seed (0/1), reviewed (2), coverage-first (3) or colour-first (4).
-export const finalPass = `uniform highp sampler2D T[2];uniform vec4 u_S;
-void main(){vec2 p=gl_FragCoord.xy/vec2(textureSize(T[1],0));vec4 a=texture(T[1],p),b=texture(T[0],p);int K=int(u_S.a);
-u_O=K==2?b:K==1?u_S:K==0?vec4(b.rgb,0):K<0?a:a+(a.a<1.&&(K==3||a.rgb==b.rgb)?vec4(0,0,0,1):vec4(sign(b.rgb-a.rgb),0))/255.;}`
+export const finalPass =
+  'uniform highp sampler2D u_T[2];uniform vec4 u_S;void main(){vec2 p=gl_FragCoord.xy/vec2(textureSize(u_T[1],0));vec4 a=texture(u_T[1],p),b=texture(u_T[0],p);int K=int(u_S.a);u_O=K==2?b:K==1?u_S:K==0?vec4(b.rgb,0):K<0?a:a+(a.a<1.&&(K==3||a.rgb==b.rgb)?vec4(0,0,0,1):vec4(sign(b.rgb-a.rgb),0))/255.;}'

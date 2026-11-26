@@ -322,7 +322,13 @@ test('build, dev and a one-page measurement of a mixed site agree on media, page
         for (const path of paths) {
           const r = await fetch(dev.url + path)
           assert.equal(r.status, 200)
-          assert.equal(r.headers.get('content-security-policy'), policy, path)
+          assert.equal(
+            r.headers.get('content-security-policy'),
+            path === figure
+              ? "default-src 'none'; style-src 'unsafe-inline'"
+              : policy,
+            path,
+          )
           if (path === figure) assert.equal(await r.text(), svg)
         }
         const page = await fetch(dev.url)

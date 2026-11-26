@@ -2,6 +2,10 @@
 
 [EA IRIS](https://github.com/electronicarts/IRIS/tree/d96978ac1107f3463b77f69a9c1b1ec5d45291a0) is the independent analyzer used for this release decision on macOS. PEAT did not run. The original achromatic checks are retained below.
 
+## Production host `c3f76b6df86ca585`
+
+The production checked host `c3f76b6df86ca58552cee72159cac104fd83e25c9e7747c516d36695b9c7f06a` (worker `38d52b3f5cf4e3f7e82c937d1ce2e3be7c1781d71ed7eeadedf7bbe3b6f98348`, 9,513 host bytes including WASM `field-v1` support) regenerated all four 180-frame offline captures with byte-identical AVI `clipSha256` hashes to `host-2844a4b873444f70` (`a132dfcbb8b292ab...`, `f872ca2cba925b72...`, `3aa0e7444f3363bc...`, `bd0d25e0770d332f...`). See [summary.json](evidence/iris/host-c3f76b6df86ca585/summary.json) and [Task 7 metadata](evidence/task-7/host-c3f76b6df86ca585/).
+
 ## Checked host `2844a4b873444f70`
 
 IRIS analyzed four six-second, 30 fps full-screen captures of the same generated host and worker. The first pair alternates black and white at 5 Hz; the second pair alternates black and saturated red (`#ff0000`) at the same cadence. Within each pair, only the positive control bypasses the limiter, in the offline harness. The red control exercises the red detector; passing the grey clip alone would not demonstrate that.

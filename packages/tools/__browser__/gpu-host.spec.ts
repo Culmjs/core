@@ -988,17 +988,14 @@ test('the real mixed page pays for one host for builtin and checked custom owner
     Object.values(c.stats.scriptBytes).reduce((a, b) => a + b),
     inline + host,
   )
-  assert.equal(host, 9012)
-  assert.equal(host + inline, 17484)
+  assert.equal(host, 9513)
+  assert.equal(host + inline, 17429)
   assert.equal(c.html.match(/"builtin":/g)?.length, 1)
   assert.deepEqual(
     [...c.html.matchAll(/ data-gpu-run="([^"]+)"/g)].map(m => m[1]),
-    ['1', 'custom'],
+    ['1', 'custom', 'custom'],
   )
-  assert.doesNotMatch(
-    c.assets![0].content,
-    /readPixels|fetch\(|WebAssembly|XMLHttpRequest/,
-  )
+  assert.doesNotMatch(c.assets![0].content, /readPixels|fetch\(|XMLHttpRequest/)
   t.diagnostic(
     JSON.stringify({ host, inline, shared: inline + host, stats: c.stats }),
   )

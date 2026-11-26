@@ -29,7 +29,7 @@ for (const interactive of [false, true])
     assert.ok(row)
     assert.equal(
       row.sha256,
-      '2844a4b873444f705f173749aa722da0d6a0cb1c9e653a7f38ae58e6d8d8e597',
+      'c3f76b6df86ca58552cee72159cac104fd83e25c9e7747c516d36695b9c7f06a',
     )
     assert.equal(
       row.stats.scriptBytes.timeline,
@@ -38,10 +38,10 @@ for (const interactive of [false, true])
       ),
     )
     assert.ok(row.stats.scriptBytes.states > 0)
-    assert.equal(row.worker, 2972)
-    assert.equal(row.embeddedWorker, 2979)
-    assert.equal(row.host, 9012)
-    assert.equal(row.shared, interactive ? 19997 : 17484)
+    assert.equal(row.worker, 3385)
+    assert.equal(row.embeddedWorker, 3388)
+    assert.equal(row.host, 9513)
+    assert.equal(row.shared, interactive ? 19962 : 17429)
     assert.ok(
       row.host <= BUDGETS.gpuHostScript && row.shared <= BUDGETS.sharedScripts,
     )
