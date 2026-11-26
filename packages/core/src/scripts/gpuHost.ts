@@ -34,7 +34,12 @@ export function hostGpu(
         'culm:slow:' +
         (d.builtin || JSON.stringify([d.name, d.source, d.settings]))
       if (!stored(key)) {
-        rows.push([el, key, [d.source, settings, d.reviewed === true], ''])
+        rows.push([
+          el,
+          key,
+          [d.source, settings, d.reviewed === true ? (d.builtin ? 2 : 1) : 0],
+          '',
+        ])
       }
     }
     if (!rows.length) return
@@ -113,7 +118,7 @@ export function hostGpu(
       rows.forEach((row, i) => {
         const [el, , binding] = row
         const box = bounds(el),
-          r = gpuRect(el, box, main!, forms, width, height, dw, dh, !binding[2])
+          r = gpuRect(el, box, main!, forms, width, height, dw, dh, binding[2])
         if (!r) {
           hide(row)
           blocked ||= r !== false
@@ -121,7 +126,7 @@ export function hostGpu(
         }
         const [l, t, right, b] = box,
           clip = `M${l} ${t}H${right}V${b}H${l}Z`,
-          shape = width + ',' + height + clip
+          shape = [width, height, ...r] + clip
         const live = el.hasAttribute(mark)
         // One outstanding draw: its receipt becomes authoritative at ACK (pending=0).
         // Until exposed, the actual fallback must match. Once live, only layout

@@ -6,11 +6,9 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { CustomEffect } from '@culmjs/core'
-import { candidateCompiler } from '../../../scripts/gpu-flash/compiler.ts'
+import { compilePage, createRegistry, type CustomEffect } from '@culmjs/core'
 import { node, siteWith, text } from '../../core/__tests__/kit.ts'
 import { openBrowser, type Page } from '../src/measure/browser.ts'
-const { compilePage, createRegistry } = await candidateCompiler()
 
 const reviewed: CustomEffect = {
   name: 'wash',
@@ -202,10 +200,7 @@ test('unaltered SRI loader presents an exact reviewed solid and a limited solid 
     { registry },
   )
   assert.ok(c.ok)
-  assert.deepEqual(
-    c.problems.map(x => x.path),
-    ['gpuHostScript'],
-  )
+  assert.deepEqual(c.problems, [])
   let requests = 0
   const server = createServer((req, res) => {
     if (req.url === '/_culm/gpu.js') {

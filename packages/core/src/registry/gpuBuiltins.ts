@@ -1,7 +1,7 @@
 import type { GpuEffectDef } from './gpu.ts'
 
-// Shared by registration and the worker packer. The browser never compiles a
-// string from the page payload. Bump the identity when this program changes.
+// Shared by registration and the trusted comparison build. The checked worker
+// receives the validated snapshot. Bump the identity when this program changes.
 export const CONTOURS_ID = 'contours-v1'
 export const CONTOURS_SOURCE = `vec4 shade(vec2 uv){
  float ridge=sin(uv.x*24.0+sin(uv.y*9.0)+u_time*u_set_speed);

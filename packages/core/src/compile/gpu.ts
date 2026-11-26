@@ -188,10 +188,12 @@ export function lowerGpu(
     attrs: { type: 'application/json', id: 'culm-gpu' },
     raw: { kind: 'json', content: JSON.stringify({ definitions, regions }) },
   }
+  const scope = ':where([data-gpu-painted],[data-gpu-probe])'
+  const front = ':where(:not([data-gpu-raised],:has([data-gpu-raised])))'
   const css = worker
     ? 'main:has(>.culm-plane:not([hidden])){isolation:isolate}.culm-plane{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:' +
       (GPU_CHECKED
-        ? '0;image-rendering:pixelated}:where([data-gpu-painted],[data-gpu-probe])>*{position:relative;z-index:1}'
+        ? `0;image-rendering:pixelated}${scope}>${front},${scope} :where(:has([data-gpu-raised]))>${front}{position:relative;z-index:1}`
         : '-1;image-rendering:pixelated}[data-gpu-painted]{background-color:transparent!important;background-image:none!important}')
     : ''
   return {

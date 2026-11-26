@@ -72,7 +72,7 @@ const payload = (html: string) =>
     )![1],
   )
 
-test('only the actual registered contours earns a worker, including the deployed union', () => {
+test('only registered contours has builtin identity; checked shaders can earn worker policy in main', () => {
   const doc = twoPages([owner('trusted', 'contours')], [owner('custom')], {
     customEffects: [def],
   })
@@ -84,7 +84,10 @@ test('only the actual registered contours earns a worker, including the deployed
   assert.ok(
     registry.gpu?.isReviewed(registry.effect('contours') as CustomEffect),
   )
-  assert.match(policy(page(repeated()).html), /worker-src 'none'/)
+  const custom = page(repeated())
+  assert.match(custom.html, / data-gpu-run="custom"/)
+  assert.equal(payload(custom.html).definitions[0].reviewed, undefined)
+  assert.match(policy(custom.html), /worker-src blob:/)
   const stripOnly = siteWith()
   stripOnly.header.children = [owner('strip', 'contours')]
   assert.match(policy(page(stripOnly).html), /worker-src 'none'/)
@@ -99,8 +102,9 @@ test('only the actual registered contours earns a worker, including the deployed
     },
   })
   assert.equal(payload(copy.html).definitions[0].builtin, undefined)
-  assert.doesNotMatch(copy.html, / data-gpu-run=/)
-  assert.match(policy(copy.html), /worker-src 'none'/)
+  assert.equal(payload(copy.html).definitions[0].reviewed, true)
+  assert.match(copy.html, / data-gpu-run="custom"/)
+  assert.match(policy(copy.html), /worker-src blob:/)
 })
 
 test('two rendered copies share one checked definition and fixed lazy asset; JSON round trips', () => {
@@ -114,7 +118,7 @@ test('two rendered copies share one checked definition and fixed lazy asset; JSO
     tokens.map(owner => ({
       owner,
       definition: 0,
-      settings: { speed: 0.5 },
+      settings: { set_speed: [0.5] },
       poster: 'static.png',
     })),
   )
@@ -204,6 +208,8 @@ test('one host manifest entry across using pages; site policy is the union of ac
   })
   const p = page(doc)
   assert.deepEqual(p.gpu, { usesWasm: true })
+  assert.doesNotMatch(p.html, / data-gpu-run=/)
+  assert.match(policy(p.html), /worker-src 'none'/)
   assert.deepEqual(payload(p.html).definitions[0].wasm, {
     abi: 'field-v1',
     bytesBase64: 'AAE=',
@@ -289,17 +295,17 @@ test('a rendered owner can lose its last visible descendant during data/sample a
 test('host and joined shared limits are inclusive; shader and module bytes are not JS', () => {
   assert.deepEqual(
     [BUDGETS.gpuHostScript, BUDGETS.wasmBytes, BUDGETS.wasmTransportBytes],
-    [6144, 512, 684],
+    [9012, 512, 684],
   )
   const p = page(siteWith())
   const findings = (gpuHost: number, gpuLoader: number) =>
     checkBudgets({
       ...p.stats,
-      scriptBytes: { base: 10000, states: 3850, gpuLoader, gpuHost },
+      scriptBytes: { base: 10000, states: 982, gpuLoader, gpuHost },
     }).map(p => p.path)
-  assert.deepEqual(findings(6144, 6), [])
-  assert.deepEqual(findings(6145, 5), ['gpuHostScript'])
-  assert.deepEqual(findings(6144, 7), ['sharedScripts'])
+  assert.deepEqual(findings(9012, 6), [])
+  assert.deepEqual(findings(9013, 5), ['gpuHostScript'])
+  assert.deepEqual(findings(9012, 7), ['sharedScripts'])
 })
 
 test('an explicit local poster belongs to the emitted owner even without a runnable leaf', () => {

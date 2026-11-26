@@ -23,7 +23,7 @@ test('public source GPU entry follows the fixed release loader', () => {
   run(
     'node',
     [
-      '--conditions=source',
+      '--conditions=@culmjs/source',
       '--import',
       'tsx',
       '--input-type=module',

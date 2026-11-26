@@ -12,17 +12,17 @@ export function gpuRect(
   h: number,
   bw: number,
   bh: number,
-  exact = false,
+  mode: number,
 ) {
   const visible = cut(r, [0, 0, w, h])
   if (!visible) return false
   if (forms.some(f => cut(f, visible))) return
   const scale = (v: number, i: number) => (i % 2 ? (v * bh) / h : (v * bw) / w)
-  if (exact && visible.map(scale).some(n => n % 1)) return
+  if (!mode && visible.map(scale).some(n => n % 1)) return
   const [x, y, right, top] = [r[0], h - r[3], r[2], h - r[1]].map((v, i) =>
     (i < 2 ? Math.ceil : Math.floor)(scale(v, i)),
   )
   if (!cut([x, y, right, top], [0, 0, bw, bh])) return
-  const paint = backdrop(el, main, visible)
+  const paint = backdrop(el, main, visible, r, mode === 2)
   if (paint) return Object.assign([x, y, right - x, top - y] as Box, paint)
 }

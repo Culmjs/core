@@ -45,6 +45,7 @@ test('the published, dev and isolated measurement pages deliver the SRI host und
       name: id,
       kind: 'column',
       motion,
+      style: { base: { height: { n: 120, unit: 'px' }, bg: '#383838' } },
       children: [
         {
           id: id + 'line',
@@ -132,9 +133,14 @@ test('the published, dev and isolated measurement pages deliver the SRI host und
             integrity,
           )
         } else assert.equal(requests, 0)
+        if (mode === 'allow')
+          await wait(
+            p,
+            `document.querySelectorAll('[data-gpu-painted]').length===2`,
+          )
         assert.equal(
           await p.evaluate(`document.querySelectorAll('canvas').length`),
-          0,
+          Number(mode === 'allow'),
         )
         assert.equal(
           await p.evaluate(

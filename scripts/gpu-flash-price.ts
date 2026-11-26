@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { transformSync } from 'esbuild'
 import ts from 'typescript'
 import * as shipped from '@culmjs/core'
-import { candidateCompiler } from './gpu-flash/compiler.ts'
+import { comparisonCompiler } from './gpu-flash/compiler.ts'
 import { renderGpuWorker, RELEASE_CHECKED } from './gen-scripts.ts'
 import { DEMO_PLUGIN, node, text } from '../packages/core/__tests__/kit.ts'
 import { mist } from '../packages/tools/__tests__/fixtures/shader.ts'
@@ -41,7 +41,7 @@ function embeddedBytes(host: string, worker: string) {
 
 for (const [profile, core, checked] of [
   ['release', shipped, RELEASE_CHECKED],
-  ['candidate', await candidateCompiler(), true],
+  ['trusted-reference', await comparisonCompiler(false), false],
 ] as const) {
   const fixture = process.argv.includes('--simple') ? 'control' : 'mixed'
   const doc = await scenes[fixture]()
@@ -88,7 +88,7 @@ for (const [profile, core, checked] of [
   const c = core.compilePage(doc, 'home', { registry })
   assert.ok(c.ok, JSON.stringify(c.problems))
   if (checked) {
-    // A candidate that fits by silently declining custom shaders is not a fit.
+    // A release that fits by silently declining custom shaders is not a fit.
     const payload = JSON.parse(
       c.html.match(
         /<script type="application\/json" id="culm-gpu">([^<]*)<\/script>/,
@@ -113,6 +113,14 @@ for (const [profile, core, checked] of [
     host = Buffer.byteLength(code),
     inline = Buffer.byteLength(c.scripts.map(s => s.code).join(';'))
   assert.equal(host, c.stats.scriptBytes.gpuHost)
+  if (profile === 'release') {
+    assert.equal(checked, true, 'production must select the checked host')
+    assert.equal(code, shipped.GPU_HOST_SCRIPT)
+    assert.equal(
+      shipped.GPU_HOST_INTEGRITY,
+      'sha256-' + createHash('sha256').update(code).digest('base64'),
+    )
+  }
   const worker = renderGpuWorker(checked)
   const embeddedWorker = embeddedBytes(code, worker)
   for (const js of [code, worker]) {
@@ -161,5 +169,5 @@ for (const [profile, core, checked] of [
       refusals: c.problems.map(p => p.path),
     }),
   )
-  if (strict && c.problems.length) process.exitCode = 1
+  if (strict && profile === 'release' && c.problems.length) process.exitCode = 1
 }

@@ -1,4 +1,4 @@
-/** Offline review harness: build the *same compiler* with the candidate's
+/** Offline review harness: build the *same compiler* with a comparison profile's
  * generated module in memory. Never overwrite scriptsMin or raise a budget.
  * No profile switch exists in public compilePage or in a delivered page. */
 import { build } from 'esbuild'
@@ -9,7 +9,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { render } from '../gen-scripts.ts'
 import type * as Core from '@culmjs/core'
 
-export async function candidateCompiler(): Promise<typeof Core> {
+export const candidateCompiler = () => comparisonCompiler(true)
+
+export async function comparisonCompiler(
+  checked: boolean,
+): Promise<typeof Core> {
   const result = await build({
     entryPoints: [
       fileURLToPath(
@@ -22,10 +26,10 @@ export async function candidateCompiler(): Promise<typeof Core> {
     write: false,
     plugins: [
       {
-        name: 'candidate-generated-scripts',
+        name: 'comparison-generated-scripts',
         setup(b) {
           b.onLoad({ filter: /[/\\]scriptsMin\.ts$/ }, () => ({
-            contents: render(true),
+            contents: render(checked),
             loader: 'ts',
           }))
         },

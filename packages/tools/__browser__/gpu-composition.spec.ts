@@ -4,18 +4,18 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { candidateCompiler } from '../../../scripts/gpu-flash/compiler.ts'
+import { compilePage, createRegistry } from '@culmjs/core'
 import { node, siteWith, text } from '../../core/__tests__/kit.ts'
 import { openBrowser, type Page } from '../src/measure/browser.ts'
 import { contours } from '../../core/src/registry/gpuBuiltins.ts'
 
-const { compilePage, createRegistry } = await candidateCompiler()
 const setup = async (
   t: TestContext,
   source: string,
   poster = false,
   width = 320,
   extraChildren: (owner: number) => ReturnType<typeof node>[] = () => [],
+  firstBuiltin = false,
 ) => {
   const dir = await mkdtemp(join(tmpdir(), 'culm-compose-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
@@ -41,7 +41,11 @@ const setup = async (
           },
         },
         motion: {
-          gpu: i ? 'other_survey' : 'survey_contours',
+          gpu: i
+            ? 'other_survey'
+            : firstBuiltin
+              ? 'contours'
+              : 'survey_contours',
           trigger: 'enter-view',
           settings: { speed: i ? 0 : 0.25 },
           ...(poster && { poster: 'survey.svg' }),
@@ -95,17 +99,78 @@ const setup = async (
   }
 }
 type Point = [number, number]
-async function samples(p: Page, points: Point[]) {
+async function colors(p: Page, points: Point[]) {
   await p.evaluate('paint()')
   const png = Buffer.from(await p.screenshot()).toString('base64')
-  return p.evaluate<number[]>(
-    `(async()=>{const pic=await createImageBitmap(new Blob([Uint8Array.from(atob('${png}'),c=>c.charCodeAt(0))]));const c=new OffscreenCanvas(pic.width,pic.height).getContext('2d');c.drawImage(pic,0,0);const d=c.getImageData(0,0,pic.width,pic.height).data;return ${JSON.stringify(points)}.map(([x,y])=>d[4*(x+y*pic.width)])})()`,
+  return p.evaluate<number[][]>(
+    `(async()=>{const pic=await createImageBitmap(new Blob([Uint8Array.from(atob('${png}'),c=>c.charCodeAt(0))]));const c=new OffscreenCanvas(pic.width,pic.height).getContext('2d');c.drawImage(pic,0,0);return ${JSON.stringify(points)}.map(([x,y])=>Array.from(c.getImageData(x,y,1,1).data))})()`,
   )
+}
+async function samples(p: Page, points: Point[]) {
+  return (await colors(p, points)).map(rgba => rgba[0])
 }
 const marked = `owners.map(e=>e.hasAttribute('data-gpu-painted'))`
 const alternating =
   'vec4 shade(vec2 uv){return vec4(vec3(float(int(uv.x*u_resolution.x)%2)),0.0);}'
 const middle = 'vec4 shade(vec2 uv){return vec4(vec3(0.5),0.0);}'
+test('mixed plane keeps all four CSS borders and an escaping builtin heading above its neighbour', async t => {
+  const { p, start, tick } = await setup(
+    t,
+    contours.source,
+    false,
+    320,
+    () => [],
+    true,
+  )
+  await p.evaluate(`(()=>{
+    const [s]=owners; s.style.cssText+=';overflow:visible;border-style:solid;border-width:3px 7px 11px 5px;border-color:#26c transparent #0988 #a34';
+    const h=s.querySelector('h1'), branch=document.createElement('div');
+    h.before(branch);branch.append(h);s.querySelector('p').style.visibility='hidden';
+    h.style.cssText='position:fixed;top:302px;left:8px;width:140px;height:46px;margin:0;background:#245678;font:16px/20px Arial;color:white;text-shadow:1px 1px 2px black;z-index:5';
+  })()`)
+  const borders: Point[] = [
+    [180, 1],
+    [318, 100],
+    [180, 315],
+    [2, 100],
+  ]
+  const foreground = { x: 10, y: 304, w: 130, h: 40 }
+  const hit = `document.elementFromPoint(40,330)===owners[0].querySelector('h1')`
+  assert.equal(await p.evaluate(hit), true)
+  const before = await colors(p, borders)
+  const copy = Buffer.from(await p.screenshot(foreground))
+  await start()
+  await tick(8, 20)
+  assert.deepEqual(await p.evaluate(marked), [true, true])
+  assert.equal(await p.evaluate(hit), true)
+  assert.deepEqual(Buffer.from(await p.screenshot(foreground)), copy)
+  assert.deepEqual(await colors(p, borders), before)
+  const [builtin, limited] = await samples(p, [
+    [80, 150],
+    [80, 510],
+  ])
+  assert.notEqual(builtin, 153)
+  assert.ok(limited < 239 && limited > 230)
+  assert.deepEqual(
+    await p.evaluate(
+      '[workerCount,document.querySelectorAll("canvas").length]',
+    ),
+    [1, 1],
+  )
+  // The neighbour has the same validated shader source, but no builtin
+  // identity. Altering the public DOM marker cannot grant its exception.
+  await p.evaluate(
+    `owners[1].dataset.gpuRun='1';owners[1].style.border='2px solid transparent'`,
+  )
+  await tick(2)
+  assert.deepEqual(await p.evaluate(marked), [true, false])
+  await p.evaluate(
+    `owners[1].style.border='';owners[1].querySelector('h1').style.textShadow='0 1px black'`,
+  )
+  await tick(2)
+  assert.deepEqual(await p.evaluate(marked), [true, false])
+  assert.deepEqual(p.errors, [])
+})
 test('a covered main background change preserves active history and the paint marker', async t => {
   const { p, start, tick } = await setup(
     t,

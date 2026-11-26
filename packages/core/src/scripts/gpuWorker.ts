@@ -3,7 +3,8 @@ import { codesPerSecond, finalPass } from './gpuLimiter.ts'
 export type Rect = [number, number, number, number]
 export type Region = [...Rect, number, number[], boolean]
 type Uniforms = Record<string, number[]>
-export type Binding = [string, Uniforms, boolean]
+// 0: limited, 1: exact reviewed snapshot, 2: framework builtin + reviewed.
+export type Binding = [string, Uniforms, number]
 type Frame = [
   number,
   number,

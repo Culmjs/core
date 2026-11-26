@@ -62,6 +62,8 @@ test('GPU references are per site, gated by the registry, and preserve the stati
     ['rise', 'contours'],
   )
   const plain = siteWith([owner()])
+  const planeCss =
+    'main:has(>.culm-plane:not([hidden])){isolation:isolate}.culm-plane{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;image-rendering:pixelated}:where([data-gpu-painted],[data-gpu-probe])>:where(:not([data-gpu-raised],:has([data-gpu-raised]))),:where([data-gpu-painted],[data-gpu-probe]) :where(:has([data-gpu-raised]))>:where(:not([data-gpu-raised],:has([data-gpu-raised]))){position:relative;z-index:1}'
   for (const mode of ['edit', 'live', 'measure'] as const) {
     const opts = { mode, registry: reg }
     const result = compilePage(d, 'home', opts)
@@ -70,12 +72,14 @@ test('GPU references are per site, gated by the registry, and preserve the stati
     assert.ok(fallback.ok)
     if (mode === 'edit') assert.deepEqual(result, fallback)
     else {
-      assert.equal(result.css, fallback.css)
+      assert.ok(result.css.includes(planeCss))
+      assert.equal(result.css.replace(planeCss, ''), fallback.css)
       assert.equal(
         result.html
           .split('<body>')[1]
           .split('<script')[0]
-          .replace(/ data-culm-gpu="\d+"/, ''),
+          .replace(' data-culm-gpu="0" data-gpu-run="custom"', '')
+          .replace(' data-gpu-content="t"', ''),
         fallback.html.split('<body>')[1].split('<script')[0],
       )
     }
@@ -95,7 +99,8 @@ test('GPU references are per site, gated by the registry, and preserve the stati
     assert.ok(compiled.ok, JSON.stringify(compiled.problems))
     const fallback = compilePage(plain, 'home', { registry: reg })
     assert.ok(fallback.ok)
-    assert.equal(compiled.css, fallback.css)
+    assert.ok(compiled.css.includes(planeCss))
+    assert.equal(compiled.css.replace(planeCss, ''), fallback.css)
     assert.deepEqual(
       compiled.scripts.filter(s => s.name !== 'gpuLoader'),
       fallback.scripts,

@@ -6,7 +6,7 @@ import { transformSync } from 'esbuild'
 import { runInNewContext } from 'node:vm'
 import { shareScriptKeys } from '../share-script-keys.ts'
 import { render, renderProbe, renderGpuWorker } from '../gen-scripts.ts'
-import { byteLength } from '../../packages/core/src/compile/budgets.ts'
+import { BUDGETS, byteLength } from '../../packages/core/src/compile/budgets.ts'
 import { PROBE_SCRIPT } from '../../packages/core/src/measure/probeMin.ts'
 import {
   BASE_SCRIPT,
@@ -64,7 +64,7 @@ test('each script is within its ceiling, all appendices included', () => {
   assert.ok(byteLength(STATES_SCRIPT) <= 6_193)
   assert.ok(byteLength(TIMELINE_SCRIPT) <= 8_192)
   assert.ok(byteLength(`${base};${STATES_SCRIPT};${TIMELINE_SCRIPT}`) <= 20_000)
-  assert.ok(byteLength(GPU_HOST_SCRIPT) <= 6_144)
+  assert.ok(byteLength(GPU_HOST_SCRIPT) <= BUDGETS.gpuHostScript)
 })
 
 test('the production GPU executable is already ES2017', () => {

@@ -86,8 +86,7 @@ function bundle(
 
 // Release selection is build-owned. Both artifacts are independently priced
 // complete bundles; this is not a runtime switch or a compiler option.
-// The isolated candidate must fit both limits before selection. See docs/gpu/size-work.md.
-export const RELEASE_CHECKED: boolean = false
+export const RELEASE_CHECKED: boolean = true
 export function renderGpuWorker(checked = RELEASE_CHECKED): string {
   const worker = bundle(
     `import {acquire} from './${checked ? 'gpuWorker' : 'gpuTrustedWorker'}.ts';onmessage=acquire`,

@@ -171,6 +171,9 @@ test('two production starter heroes share one worker context behind the unchange
   ]
   const mixedPage = compilePage(mixed, 'home', options)
   assert.ok(mixedPage.ok, JSON.stringify(mixedPage.problems))
+  delete near.motion
+  const stripPage = compilePage(mixed, 'home', options)
+  assert.ok(stripPage.ok)
   let requests = 0
   const server = createServer((req, res) => {
     if (req.url === '/_culm/gpu.js') {
@@ -512,10 +515,11 @@ test('two production starter heroes share one worker context behind the unchange
     },
   )
   await t.test(
-    'near static header and custom owners cannot load the distant runnable hero',
+    'a near static header does not load distant heroes; a checked custom owner earns its own single request',
     async () => {
+      posterPages.set('/strip', stripPage.html)
       requests = 0
-      assert.ok((await p.goto(origin + '/mixed', 10000)).ok)
+      assert.ok((await p.goto(origin + '/strip', 10000)).ok)
       await p.evaluate(paint)
       assert.equal(requests, 0)
       await p.evaluate(scroll)
@@ -523,12 +527,107 @@ test('two production starter heroes share one worker context behind the unchange
         p,
         `performance.getEntriesByName(location.origin+'/_culm/gpu.js').length===1`,
       )
+      assert.equal(requests, 1)
+      requests = 0
+      assert.ok((await p.goto(origin + '/mixed', 10000)).ok)
+      await wait(
+        p,
+        `performance.getEntriesByName(location.origin+'/_culm/gpu.js').length===1`,
+      )
+      assert.equal(requests, 1)
+      assert.ok(
+        await p.evaluate(
+          `document.querySelector('[data-gpu-run="custom"]').getBoundingClientRect().top<innerHeight && ${first}.getBoundingClientRect().top>innerHeight`,
+        ),
+      )
     },
   )
-  for (const issue of ['pinned', 'witness', 'blocked']) {
-    await t.test(issue, async () => {
+  await t.test(
+    'builtin owners keep their authored border and text shadow while their backgrounds paint',
+    async () => {
+      const page = compilePage(
+        siteWith(
+          ['border', 'shadow'].map((id, i) => ({
+            ...node(id, 'box', [
+              text(
+                id + 'title',
+                'Field notes',
+                i
+                  ? {
+                      style: {
+                        base: {
+                          bg: '#ffffff',
+                          textShadow: { x: 1, y: 1, blur: 2, color: '#000000' },
+                        },
+                      },
+                    }
+                  : {},
+              ),
+            ]),
+            style: {
+              base: {
+                height: { n: 160, unit: 'px' },
+                bg: '#123456',
+                ...(!i && { border: { width: 2, color: '#ffffff' } }),
+              },
+            },
+            motion: {
+              trigger: 'enter-view',
+              gpu: 'contours',
+              settings: { speed: 0 },
+            },
+          })),
+        ),
+        'home',
+        options,
+      )
+      assert.ok(page.ok)
+      assert.deepEqual(page.problems, [])
+      posterPages.set('/decorated', page.html)
+      await p.setReducedMotion(true)
+      assert.ok((await p.goto(origin + '/decorated', 10000)).ok)
+      const clips = [
+        { x: 30, y: 0, w: 30, h: 2 },
+        { x: 2, y: 161, w: 100, h: 12 },
+        { x: 80, y: 130, w: 20, h: 4 },
+        { x: 80, y: 290, w: 20, h: 4 },
+      ]
+      const sample = async () => {
+        const pixels = []
+        for (const clip of clips)
+          pixels.push(Buffer.from(await p.screenshot(clip)))
+        return pixels
+      }
+      const fallback = await sample()
       await p.setReducedMotion(false)
-      assert.ok((await p.goto(origin, 10000)).ok)
+      await wait(p, `${active}===2`)
+      const live = await sample()
+      assert.deepEqual(live.slice(0, 2), fallback.slice(0, 2))
+      for (const i of [2, 3]) assert.notDeepEqual(live[i], fallback[i])
+    },
+  )
+  for (const issue of ['pinned', 'witness', 'mixed witness', 'blocked']) {
+    await t.test(issue, async sub => {
+      let path = ''
+      if (issue === 'mixed witness') {
+        // Same builtin foreground, next to a genuinely running unreviewed
+        // neighbour. Keep both 400px owners on an exact display grid.
+        const doc = structuredClone(competing)
+        doc.customEffects = [mist]
+        doc.pages[0].root.children![1].motion = {
+          trigger: 'enter-view',
+          gpu: 'mist',
+        }
+        const page = compilePage(doc, 'home', options)
+        assert.ok(page.ok)
+        assert.deepEqual(page.problems, [])
+        path = '/witness-mixed'
+        posterPages.set(path, page.html)
+        await p.setViewport(1280, 800)
+        sub.after(() => p.setViewport(1280, 900))
+      }
+      await p.setReducedMotion(false)
+      assert.ok((await p.goto(origin + path, 10000)).ok)
       await wait(p, `${active}===2`)
       if (issue === 'pinned') {
         await p.evaluate(
@@ -548,11 +647,12 @@ test('two production starter heroes share one worker context behind the unchange
         await p.setReducedMotion(true)
         await wait(p, `${active}===0`)
         assert.deepEqual(actual, Buffer.from(await p.screenshot(clip)))
-      } else if (issue === 'witness') {
+      } else if (issue.endsWith('witness')) {
         await p.evaluate(
           `const s=${first};s.style.overflow='visible';const heading=s.querySelector('h1');for(const e of s.querySelectorAll('[data-gpu-content]'))if(e!==heading)e.style.visibility='hidden';heading.style.cssText='position:fixed;left:16px;top:410px;font-size:16px;line-height:20px;z-index:5';`,
         )
         await wait(p, `!${first}.hasAttribute('data-gpu-painted')`)
+        await wait(p, `${active}===1`)
         await p.evaluate(`heading.style.top='395px'`)
         assert.ok(
           await p.evaluate(
@@ -847,7 +947,7 @@ test('two production starter heroes share one worker context behind the unchange
   }
 })
 
-test('the real mixed page pays for the entire worker once alongside inert site and module declarations', async t => {
+test('the real mixed page pays for one host for builtin and checked custom owners; modules remain inert', async t => {
   const doc = await scenes.mixed()
   const registry = createRegistry({
     gpu: {
@@ -888,11 +988,12 @@ test('the real mixed page pays for the entire worker once alongside inert site a
     Object.values(c.stats.scriptBytes).reduce((a, b) => a + b),
     inline + host,
   )
-  assert.ok(host <= 6144 && host + inline <= 20000)
+  assert.equal(host, 9012)
+  assert.equal(host + inline, 17484)
   assert.equal(c.html.match(/"builtin":/g)?.length, 1)
   assert.deepEqual(
     [...c.html.matchAll(/ data-gpu-run="([^"]+)"/g)].map(m => m[1]),
-    ['1'],
+    ['1', 'custom'],
   )
   assert.doesNotMatch(
     c.assets![0].content,

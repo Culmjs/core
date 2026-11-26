@@ -24,16 +24,34 @@ const css = globalThis.getComputedStyle
 const order = (s: CSSStyleDeclaration) => s.position + ' ' + s.zIndex
 const promoted = 'relative 1'
 
-export function backdrop(el: HTMLElement, main: Element, visible: Box) {
+export function backdrop(
+  el: HTMLElement,
+  main: Element,
+  visible: Box,
+  clip: Box,
+  builtin: boolean,
+) {
   const doc = el.ownerDocument
   const sample = ([l, t, r, b]: Box, x: number, y: number) =>
     doc.elementFromPoint(l + (r - l) * x, t + (b - t) * y)
+  const own = css(el)
+  if (own.borderWidth !== '0px') {
+    if (!builtin) return
+    // Leave the original CSS border and the paint behind it intact, including
+    // transparent sides. The worker still uses the full border box for UVs.
+    ;['left', 'top', 'right', 'bottom'].forEach((side, i) => {
+      clip[i] +=
+        (i < 2 ? 1 : -1) *
+        parseFloat(own.getPropertyValue('border-' + side + '-width'))
+    })
+    const inner = cut(visible, clip)
+    if (!inner) return
+    visible = inner
+  }
   const fractions = [0.01, 0.5, 0.99]
   if (!fractions.some(x => fractions.some(y => sample(visible, x, y) === el)))
     return
 
-  const own = css(el)
-  if (own.borderWidth !== '0px') return
   const color = own.backgroundColor
   const opaque =
     /^(border|padding)-box$/.test(own.backgroundClip) &&
@@ -84,22 +102,36 @@ export function backdrop(el: HTMLElement, main: Element, visible: Box) {
   const range = doc.createRange()
   const walk = doc.createNodeIterator(el, 5) // SHOW_ELEMENT | SHOW_TEXT
   const children: CSSStyleDeclaration[] = []
-  let witness = false,
-    previous: Box | undefined,
-    horizontal = true,
-    vertical = true
+  // Keep positive foreground in its actual stacking context. Creating a new
+  // context on one of its ancestors would trap it under a neighbour's copy.
+  const paths = new Set<Element>()
+  const raised = 'data-gpu-raised'
+  if (builtin)
+    for (const n of el.querySelectorAll('*')) {
+      const s = css(n),
+        native = +s.zIndex > 1 && s.position !== 'static'
+      n.toggleAttribute(raised, native)
+      if (native)
+        for (let p = n.parentElement; p && p !== el; p = p.parentElement)
+          paths.add(p)
+    }
+  const groups = new Map<
+    Element,
+    { previous: Box; horizontal: boolean; vertical: boolean }
+  >()
+  let witness = false
   let node: Node | null
   while ((node = walk.nextNode())) {
     const text = node.nodeType === 3
     const n = text ? node.parentElement! : (node as HTMLElement)
     if (text) {
       if (!node.textContent!.trim()) continue
-      if (n === el) return
+      if (n === el || paths.has(n)) return
     } else {
       const s = css(n)
       if (
         composite(s) ||
-        shadow(s) ||
+        ((!builtin || n === el) && shadow(s)) ||
         s.display === 'contents' ||
         n.matches('canvas,video,iframe,object,embed') ||
         ['::before', '::after'].some(
@@ -108,7 +140,22 @@ export function backdrop(el: HTMLElement, main: Element, visible: Box) {
       )
         return
       if (n === el) continue
-      const direct = n.parentElement === el
+      const parent = n.parentElement!,
+        carrier = paths.has(n),
+        lifted = builtin && n.hasAttribute(raised)
+      if (
+        carrier &&
+        (lifted ||
+          ancestor(s) ||
+          stacked(s) ||
+          s.backgroundImage !== 'none' ||
+          s.backgroundColor !== 'rgba(0, 0, 0, 0)' ||
+          s.borderWidth !== '0px' ||
+          shadow(s) ||
+          s.outlineStyle !== 'none')
+      )
+        return
+      const direct = (parent === el || paths.has(parent)) && !carrier && !lifted
       if (direct) {
         if (!['auto', '0px'].includes(s.inset)) return
         if (!live) children.push(s)
@@ -116,18 +163,19 @@ export function backdrop(el: HTMLElement, main: Element, visible: Box) {
         // non-overlapping for the whole run; empty boxes paint no layer.
         const b = bounds(n)
         if (area(b)) {
-          if (previous) {
-            horizontal &&= b[0] >= previous[2]
-            vertical &&= b[1] >= previous[3]
-            if (!horizontal && !vertical) return
-          }
-          previous = b
+          const prev = groups.get(parent)
+          const horizontal =
+            !prev || (prev.horizontal && b[0] >= prev.previous[2])
+          const vertical = !prev || (prev.vertical && b[1] >= prev.previous[3])
+          if (!horizontal && !vertical) return
+          groups.set(parent, { horizontal, vertical, previous: b })
         }
       }
       if (
-        live && direct
+        !lifted &&
+        (live && direct
           ? order(s) !== promoted
-          : !/^(relative|static) auto$/.test(order(s))
+          : !/^(relative|static) auto$/.test(order(s)))
       )
         return
     }

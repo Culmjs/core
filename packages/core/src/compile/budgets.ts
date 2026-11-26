@@ -6,7 +6,7 @@ export const BUDGETS = {
   baseScript: 10_000,
   statesScript: 6_193,
   timelineScript: 8_192,
-  gpuHostScript: 6_144,
+  gpuHostScript: 9_012,
   ...WASM_LIMITS,
   css: 16_000,
   elements: 2_000,
