@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import type { Problem } from '@culmjs/core'
 import { isObj } from '../shared.ts'
 import {
-  makeImageProvider,
+  makeImageProvider, resolveProviderName,
   type ImageAspect,
   type ImageConfig,
   type ImageProvider,
@@ -94,6 +94,13 @@ export function parseGenerateSpec(
       ...(o.model !== undefined ? { model: (o.model as string).trim() } : {}),
     },
   }
+}
+
+/** The extension a generated file will carry, fixed before the provider runs: gemini and higgsfield return png; others honour transparent ? png : webp. */
+function predictExt(req: ImageRequest, config?: ImageConfig): 'png' | 'webp' {
+  if (req.transparent) return 'png'
+  const n = resolveProviderName(config)
+  return n === 'gemini' || n === 'higgsfield' ? 'png' : 'webp'
 }
 
 /** Deterministic `gen/<slug>-<hash10>` stem from the canonical generation request. */
@@ -322,7 +329,7 @@ function rewriteProps(
   if (!p.ok) return { props: next }
   const stem = genAssetStem(p.req, config?.model)
   const hit = resolved.get(stem)
-  next.assetId = hit?.assetId ?? `${stem}.${p.req.transparent ? 'png' : 'webp'}`
+  next.assetId = hit?.assetId ?? `${stem}.${predictExt(p.req, config)}`
   if (hit?.width && next.width === undefined) next.width = hit.width
   if (hit?.height && next.height === undefined) next.height = hit.height
   return { props: next, aspect: aspectNumber(p.req.aspect) }
@@ -345,7 +352,7 @@ function rewriteDecl(
   const hit = resolved.get(stem)
   return {
     ...decl,
-    bgImage: hit?.assetId ?? `${stem}.${p.req.transparent ? 'png' : 'webp'}`,
+    bgImage: hit?.assetId ?? `${stem}.${predictExt(p.req, config)}`,
   }
 }
 
@@ -399,7 +406,7 @@ function rewriteNode(
   return next
 }
 
-/** Rewrite any `generate` image shorthands in `ops` to `assetId` strings (used by both `previewOps` and `fetchImagesFor`). */
+/** Rewrite any `generate` image shorthands in `ops` to `assetId` strings (used by `previewOps` and `resolveImagesFor`). */
 export function rewriteImageOps(
   ops: unknown[],
   resolved: ReadonlyMap<string, ResolvedAsset>,
@@ -565,10 +572,10 @@ export async function resolveImagesFor(
               throw new Error(
                 'provider returned bytes that are not a valid PNG, WebP, or JPEG image',
               )
-            const want = w.req.transparent ? 'png' : 'webp'
+            const want = predictExt(w.req, options.config)
             if (info.ext !== want)
               throw new Error(
-                `provider returned ${info.ext} but ${want} was expected (transparent images are png, others webp, fixed before generation); retry, or ${info.ext === 'png' ? 'set transparent: true' : 'use a provider that returns ' + want}`,
+                `provider returned ${info.ext} but ${want} was expected (the file name is fixed before generation: png for transparent images and for gemini or higgsfield, webp otherwise); retry, or use a provider that returns ${want}`,
               )
             return {
               want: w,
@@ -598,7 +605,7 @@ export async function resolveImagesFor(
       for (const g of generated) {
         const fileStem = g.want.stem.slice('gen/'.length)
         // the name is the one the ops already carry, so it cannot depend on what the provider sends
-        const ext = g.want.req.transparent ? 'png' : 'webp'
+        const ext = predictExt(g.want.req, options.config)
         const relAsset = `${g.want.stem}.${ext}`
         const absAsset = join(dir, 'assets', 'gen', `${fileStem}.${ext}`)
         const absMeta = join(dir, 'assets', 'gen', `${fileStem}.json`)
@@ -651,19 +658,4 @@ export async function resolveImagesFor(
     generate,
     final: () => rewriteImageOps(ops, resolved, options.config),
   }
-}
-
-/** `resolveImagesFor` followed by `generate()`: the ops with every image fetched (the CLI `render` path). */
-export async function fetchImagesFor(
-  dir: string,
-  ops: unknown[],
-  heldGenerated: ReadonlyMap<string, ResolvedAsset>,
-  options: Parameters<typeof resolveImagesFor>[3] = {},
-): Promise<{ ok: true; ops: unknown[] } | { ok: false; problems: Problem[] }> {
-  const r = await resolveImagesFor(dir, ops, heldGenerated, options)
-  if (!r.ok) return r
-  const problems = await r.generate()
-  return problems.length
-    ? { ok: false, problems }
-    : { ok: true, ops: r.final() }
 }

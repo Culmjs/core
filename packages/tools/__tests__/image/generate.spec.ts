@@ -583,6 +583,54 @@ test('a provider reply in another format than the predicted one is refused and w
   assert.equal(good.ok, true, JSON.stringify(good))
 })
 
+test('gemini and higgsfield predict a png name; a webp or jpeg reply is refused with no file written', async () => {
+  const doc = emptySite('Img', LOOK)
+  const ops = [
+    {
+      op: 'add',
+      tree: { page: 'home' },
+      parent: 'homeroot',
+      index: 0,
+      node: {
+        id: 'pic',
+        kind: 'image',
+        name: 'Pic',
+        slot: {},
+        props: { generate: 'Glazed bowl', alt: 'Bowl' },
+      },
+    },
+  ]
+  const reply = (bytes: Uint8Array, ext: 'png' | 'webp') => async () => ({
+    bytes,
+    ext,
+    provider: 'fake',
+    model: 'm',
+  })
+  for (const provider of ['gemini', 'higgsfield'] as const) {
+    const dir = await makeDir()
+    const images = { provider }
+    const good = await fetchFor(dir, doc, ops, {
+      images,
+      imageProvider: reply(TINY_PNG, 'png'),
+    })
+    assert.equal(good.ok, true, JSON.stringify(good))
+    assert.deepEqual(
+      (await readdir(join(dir, 'assets', 'gen'))).filter(n => /\.png$/.test(n))
+        .length,
+      1,
+    )
+    const dir2 = await makeDir()
+    const bad = await fetchFor(dir2, doc, ops, {
+      images,
+      imageProvider: reply(TINY_WEBP, 'webp'),
+    })
+    assert.equal(bad.ok, false)
+    if (!bad.ok)
+      assert.match(bad.problems[0]!.message, /webp but png was expected/)
+    await assert.rejects(readdir(join(dir2, 'assets', 'gen')))
+  }
+})
+
 test('CULM_IMAGE_ENDPOINT alone does not opt in; an images key does', () => {
   const env = { CULM_IMAGE_ENDPOINT: 'https://x.example/g' }
   assert.equal(resolveProviderName(undefined, { env }), undefined)
