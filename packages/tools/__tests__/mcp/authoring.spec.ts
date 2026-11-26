@@ -59,7 +59,11 @@ const fakeFetch =
     }
   }
 
-async function connect(seen: unknown[][] = [], jsonOps = false) {
+async function connect(
+  seen: unknown[][] = [],
+  jsonOps = false,
+  sections = false,
+) {
   const registry = createRegistry()
   registry.use(starter)
   const store = memoryStore({
@@ -73,6 +77,7 @@ async function connect(seen: unknown[][] = [], jsonOps = false) {
     browser: fakeBrowser() as never,
     fetch: fakeFetch(seen) as never,
     jsonOps,
+    sections,
   })
   const [a, b] = InMemoryTransport.createLinkedPair()
   const client = new Client({ name: 'test', version: '0' })
@@ -571,4 +576,120 @@ test('jsonOps supports page ops, chrome edits, hide/slot/state/null-reset, dotte
   assert.deepEqual(cdoc!.pages[0]!.root.children![0]!.props?.runs, [
     { text: 'Trimmed' },
   ])
+})
+
+const PARTS = ['intro', 'main', 'contact'].map(
+  id => `<Column id="${id}"><Text>${id}</Text></Column>`,
+)
+
+test('sections: five tools, a short receipt, and whole, single-section and batched appends converge and replay once', async () => {
+  const reference = await connect([], false, true)
+  assert.deepEqual(
+    (await reference.client.listTools()).tools.map(t => t.name),
+    ['describe', 'write', 'find', 'measure', 'build'],
+  )
+  const whole = await reference.call('write', {
+    baseRevision: 0,
+    jsx: `<Page path="/">${PARTS.join('')}</Page>`,
+  })
+  assert.equal(whole.error, false, JSON.stringify(whole.json))
+  assert.equal(whole.json.measurement, 'complete')
+  assert.ok(!('index' in whole.json) && !('findings' in whole.json))
+  const expected = await reference.store.get('s', 1)
+  for (const groups of [
+    [1, 1, 1],
+    [2, 1],
+  ]) {
+    const { call, rev, store } = await connect([], false, true)
+    let i = 0
+    for (const count of groups) {
+      const args = {
+        baseRevision: await rev(),
+        page: 'home',
+        append: true,
+        jsx: PARTS.slice(i, i + count).join(''),
+      }
+      const r = await call('write', args)
+      assert.equal(r.error, false, JSON.stringify(r.json))
+      assert.equal((await call('write', args)).json.revision, r.json.revision)
+      i += count
+    }
+    const baseRevision = await rev()
+    for (const jsx of [
+      '<Text id="other">OK</Text><Unknown/>',
+      '<Page path="/"><Text>Wrong mode</Text></Page>',
+    ]) {
+      assert.equal(
+        (await call('write', { baseRevision, page: 'home', append: true, jsx }))
+          .error,
+        true,
+      )
+      assert.equal(await rev(), baseRevision)
+    }
+    assert.deepEqual(await store.get('s', baseRevision), expected)
+  }
+})
+
+test('sections: a receipt names at most 3 issues, one per check, and moreIssues says there are more', async () => {
+  const { call } = await connect([], false, true)
+  const r = await call('write', {
+    baseRevision: 0,
+    jsx:
+      '<Page path="/"><Column id="a"><Shape id="s1" geometry={{type:"rect"}} fill="#ff0000"/><Shape id="s2" geometry={{type:"rect"}} fill="#00ff00"/>' +
+      '<Text id="e" >🚀</Text><Text id="g" style={{shadow:{x:0,y:0,blur:60,spread:0,color:"#0ff"}}}>Glow</Text></Column><Column id="b"><Text>Below</Text></Column></Page>',
+  })
+  assert.equal(r.error, false, JSON.stringify(r.json))
+  assert.equal(r.json.issues.length, 3, JSON.stringify(r.json))
+  assert.equal(
+    new Set(r.json.issues.map((i: { check: string }) => i.check)).size,
+    3,
+  )
+  assert.equal(r.json.moreIssues, true)
+  assert.equal(r.json.measurement, 'complete')
+  assert.ok(!('findings' in r.json))
+})
+
+test('sections: a clean write has no issues, no moreIssues, and no measuredRevision when measured at its own revision', async () => {
+  const { call } = await connect([], false, true)
+  const r = await call('write', {
+    baseRevision: 0,
+    jsx: '<Page path="/"><Column id="a"><Text>Hi</Text></Column></Page>',
+  })
+  assert.deepEqual(r.json.issues.length ? [] : r.json.issues, [])
+  assert.ok(!('moreIssues' in r.json) && !('measuredRevision' in r.json))
+})
+
+test('sections: measurement is incomplete when the browser cannot measure, and ops is refused', async () => {
+  const registry = createRegistry()
+  registry.use(starter)
+  const server = createMcpServer({
+    store: memoryStore({ s: { ...emptySite('Ada', LOOK), styles: STYLES } }),
+    registry,
+    site: 's',
+    data,
+    sections: true,
+    browser: {
+      version: 'Fake/1',
+      newPage: async () => {
+        throw new Error('no page')
+      },
+      close: async () => {},
+    } as never,
+  })
+  const [a, b] = InMemoryTransport.createLinkedPair()
+  const client = new Client({ name: 'test', version: '0' })
+  await Promise.all([server.connect(b), client.connect(a)])
+  closers.push(() => client.close())
+  const call = async (args: Record<string, unknown>) => {
+    const r = await client.callTool({ name: 'write', arguments: args })
+    return JSON.parse((r.content as { text: string }[])[0]!.text)
+  }
+  const ok = await call({
+    baseRevision: 0,
+    jsx: '<Page path="/"><Column id="a"><Text>Hi</Text></Column></Page>',
+  })
+  assert.equal(ok.measurement, 'incomplete', JSON.stringify(ok))
+  assert.ok(ok.revision >= 1)
+  const refused = await call({ baseRevision: ok.revision, ops: [] })
+  assert.equal(refused.problems[0].code, 'INVALID_OPERATION')
 })

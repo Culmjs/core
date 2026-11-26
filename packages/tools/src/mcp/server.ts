@@ -102,6 +102,8 @@ export type McpOptions = {
   imageProvider?: ImageProvider
   /** Compact JSON-only operation writer with explicit rather than per-write browser measurement. */
   jsonOps?: boolean
+  /** Five tools (describe, write, find, measure, build); each write replies with a short receipt: at most 3 issues and a measurement status. */
+  sections?: boolean
 }
 
 type Obj = Record<string, unknown>
@@ -491,39 +493,71 @@ export function createMcpServer(o: McpOptions): Server {
     'build',
     'render',
   ]
-  const compact = o.jsonOps
-  const exposed = compact
-    ? TOOLS.filter(t => sectionTools.includes(String(t.name))).map(t =>
+  const sectionsTools = ['describe', 'write', 'find', 'measure', 'build']
+  const profile = o.sections
+    ? sectionsTools
+    : o.jsonOps
+      ? sectionTools
+      : undefined
+  const compact = o.jsonOps && !o.sections
+  const exposed = o.sections
+    ? TOOLS.filter(t => sectionsTools.includes(String(t.name))).map(t =>
         t.name === 'write'
           ? {
               ...t,
-              description:
-                'Commit 1–32 ordered insert/update/move/remove/theme/addPage/removePage/setPage/addCustomEffect operations atomically. Pass page:"header"|"footer" to edit chrome. Each insert.node is one JSON section; update merges fields (props, set, slot, placement, hide, state, on, style, phone, tablet, hover, dark, motion) on an id. Give motion as {trigger,effect,settings?}, {trigger,steps}, or {trigger:"enter-view",gpu:"mist"} after addCustomEffect {effect:{name,source,settings}}; update.motion:null clears it. Move defaults to the page root. Returns revision and section ids.',
-              inputSchema: schema(
-                { baseRevision: num, page: str, key: str, ops: jsonEditSchema },
-                ['baseRevision', 'ops'],
-              ),
+              description: `${t.description} Replies with a short receipt: revision, roots, at most 3 issues (moreIssues when there are more), and measurement: complete, partial or incomplete. Use find and measure for the rest.`,
+              inputSchema: {
+                ...(t.inputSchema as { properties: Obj }),
+                properties: Object.fromEntries(
+                  Object.entries(
+                    (t.inputSchema as { properties: Obj }).properties,
+                  ).filter(([k]) => k !== 'ops'),
+                ),
+              },
             }
-          : t.name === 'describe'
+          : t,
+      )
+    : compact
+      ? TOOLS.filter(t => sectionTools.includes(String(t.name))).map(t =>
+          t.name === 'write'
             ? {
                 ...t,
                 description:
-                  'Revision, pages, display range. Optional example: figure, group, phone-row, display, motion, chart, diagram or poster.',
+                  'Commit 1–32 ordered insert/update/move/remove/theme/addPage/removePage/setPage/addCustomEffect operations atomically. Pass page:"header"|"footer" to edit chrome. Each insert.node is one JSON section; update merges fields (props, set, slot, placement, hide, state, on, style, phone, tablet, hover, dark, motion) on an id. Give motion as {trigger,effect,settings?}, {trigger,steps}, or {trigger:"enter-view",gpu:"mist"} after addCustomEffect {effect:{name,source,settings}}; update.motion:null clears it. Move defaults to the page root. Returns revision and section ids.',
+                inputSchema: schema(
+                  {
+                    baseRevision: num,
+                    page: str,
+                    key: str,
+                    ops: jsonEditSchema,
+                  },
+                  ['baseRevision', 'ops'],
+                ),
               }
-            : t.name === 'find'
+            : t.name === 'describe'
               ? {
                   ...t,
                   description:
-                    'Without filters, outline the actual section ids. Use tree, text, kind, id, selector, limit or full:true to inspect individual nodes.',
+                    'Revision, pages, display range. Optional example: figure, group, phone-row, display, motion, chart, diagram or poster.',
                 }
-              : t,
-      )
-    : TOOLS
+              : t.name === 'find'
+                ? {
+                    ...t,
+                    description:
+                      'Without filters, outline the actual section ids. Use tree, text, kind, id, selector, limit or full:true to inspect individual nodes.',
+                  }
+                : t,
+        )
+      : TOOLS
   const server = new Server(
     { name: 'culm', version: FRAMEWORK_VERSION },
     {
       capabilities: { tools: {} },
-      instructions: compact ? JSON_GUIDE : INSTRUCTIONS,
+      instructions: o.sections
+        ? JSX_INSTRUCTIONS
+        : compact
+          ? JSON_GUIDE
+          : INSTRUCTIONS,
     },
   )
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -867,7 +901,7 @@ export function createMcpServer(o: McpOptions): Server {
       const badRev = badBase(a)
       if (badRev) return badRev
       if (
-        o.jsonOps &&
+        compact &&
         (!Array.isArray(a.ops) ||
           Object.keys(a).some(
             k => !['baseRevision', 'page', 'key', 'ops'].includes(k),
@@ -879,6 +913,8 @@ export function createMcpServer(o: McpOptions): Server {
             'ops',
           ),
         ])
+      if (o.sections && a.ops !== undefined)
+        return fail([bad('ops is not part of the sections profile.', 'ops')])
       if (a.draft !== undefined || a.edits !== undefined) {
         const amended = drafts.amend(a)
         if ('error' in amended) return fail([bad(amended.error, 'draft')])
@@ -964,7 +1000,7 @@ export function createMcpServer(o: McpOptions): Server {
       const rejected = (problems: Problem[]) =>
         refuseMany(problems, {
           ...at,
-          ...(!o.jsonOps ? drafts.remember(a) : {}),
+          ...(!compact ? drafts.remember(a) : {}),
         })
       if (!b.ok) return rejected(b.problems)
       const ordered: OrderedWrite | undefined = identity
@@ -1028,6 +1064,60 @@ export function createMcpServer(o: McpOptions): Server {
       const committed =
         (await store.get(site, sum.revision as number)) ??
         ((await store.head(site)) as { doc?: SiteDocument }).doc
+      if (o.sections) {
+        const first = committed?.pages[0]?.id
+        const written = b.trees.flatMap(t =>
+          typeof t === 'object' ? [t.page] : [],
+        )
+        const pages = written.length ? written : first ? [first] : []
+        const mr = await tools.measure({
+          ...(pages.length ? { pages } : {}),
+          classes: [1, 2],
+        })
+        const m = JSON.parse(mr.content[0]!.text) as Obj
+        const findings = (m.findings ?? []) as Obj[]
+        const issues: Obj[] = []
+        for (const f of findings) {
+          if (issues.some(i => i.check === f.check)) continue
+          issues.push({
+            check: f.check,
+            page: f.page,
+            node: (f.nodes as string[])?.[0],
+            at: (f.at as string[])?.[0],
+            fix: String(f.fix ?? f.message).slice(0, 220),
+          })
+          if (issues.length === 3) break
+        }
+        return reply({
+          revision: sum.revision,
+          ...(seen ? { replayed: true } : {}),
+          ...(m.revision !== undefined && m.revision !== sum.revision
+            ? { measuredRevision: m.revision }
+            : {}),
+          roots: sum.roots ?? [],
+          issues,
+          ...(findings.length > issues.length || m.cut
+            ? { moreIssues: true }
+            : {}),
+          measurement:
+            mr.isError ||
+            (m.incomplete as unknown[])?.length ||
+            (m.blocked as unknown[])?.length
+              ? 'incomplete'
+              : m.cut
+                ? 'partial'
+                : 'complete',
+          ...(mr.isError
+            ? { problem: (m.problems as Problem[])[0]?.message.slice(0, 220) }
+            : {}),
+          ...(b.warnings.length
+            ? {
+                warningCount: b.warnings.length,
+                warning: b.warnings[0]!.message.slice(0, 220),
+              }
+            : {}),
+        })
+      }
       if (a.ops !== undefined) {
         const addedPage = b.ops.find(op => op.op === 'addPage') as
           { page?: string; slug?: string } | undefined
@@ -1149,7 +1239,7 @@ export function createMcpServer(o: McpOptions): Server {
           {
             revision: h.revision,
             total: r.total,
-            matches: o.jsonOps
+            matches: compact
               ? r.hits.map(({ tree, id, kind, path, text, children }) => {
                   const hit = {
                     tree,
@@ -1170,7 +1260,7 @@ export function createMcpServer(o: McpOptions): Server {
                 })
               : r.hits,
             hint: r.total
-              ? o.jsonOps
+              ? compact
                 ? 'Use the returned id in an update, move or remove operation.'
                 : 'write {target: <id>, jsx: <the one element that replaces it>, baseRevision: revision}. A match is a node of the tree named; its path is Name[index] > ... below the tree root.'
               : `Nothing matches. Trees: ${trees.join(', ')}.`,
@@ -1457,7 +1547,7 @@ export function createMcpServer(o: McpOptions): Server {
     async (req): Promise<Result> => {
       const { name, arguments: args } = req.params
       const run = Object.hasOwn(tools, name) ? tools[name] : undefined
-      if (!run || (compact && !sectionTools.includes(name)))
+      if (!run || (profile && !profile.includes(name)))
         return fail([bad(`There is no tool "${name}".`)])
       try {
         return await run(isObj(args) ? args : {})

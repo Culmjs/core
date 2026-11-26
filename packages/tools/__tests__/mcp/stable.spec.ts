@@ -67,7 +67,7 @@ test('the five list replies guide, kinds, operations, recipes and blocks on the 
 })
 
 test('the tools README states the real tool counts', async () => {
-  const count = async (jsonOps: boolean) => {
+  const count = async (jsonOps: boolean, sections = false) => {
     const registry = createRegistry()
     registry.use(starter)
     const server = createMcpServer({
@@ -76,6 +76,7 @@ test('the tools README states the real tool counts', async () => {
       site: 's',
       data,
       jsonOps,
+      sections,
     })
     const [a, b] = InMemoryTransport.createLinkedPair()
     const client = new Client({ name: 'test', version: '0' })
@@ -88,4 +89,8 @@ test('the tools README states the real tool counts', async () => {
   )
   assert.match(readme, new RegExp(`serve ${await count(true)} JSON tools`))
   assert.match(readme, new RegExp(`all ${await count(false)} tools`))
+  assert.match(
+    readme,
+    new RegExp(`--sections serves ${await count(true, true)} tools`),
+  )
 })

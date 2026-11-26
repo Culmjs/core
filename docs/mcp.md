@@ -13,6 +13,7 @@ culm mcp                    # standard input and output
 culm mcp --port 3333        # also a local port, with a token
 culm mcp --chrome /path/to/chrome
 culm mcp --full             # general editing API, including read, apply, diff and restore
+culm mcp --sections         # five tools; each write replies with a short receipt
 ```
 
 `culm mcp` speaks the protocol on standard input and output, and writes nothing else to standard output. Run it from the project folder. A host that starts it as a child process, such as an editor or an agent runner, needs no port.
@@ -32,6 +33,7 @@ const server = createMcpServer({
   site: 'main', // the store's name for the site
   data, // rows for data sources
   jsonOps: true, // same six tools as the CLI; omit for the full SDK interface
+  // sections: true, // the five-tool receipt profile (culm mcp --sections)
   allow: protect, // the default guard; your own `Allow` also works
   // browser, executable, out, locate, pageFile, build, folder: all optional
 })
@@ -195,6 +197,34 @@ In `--full` mode, send `{"op":"setMotion","tree":{"page":"home"},"id":"title","m
 - A refusal is a tool result with `isError: true` and `{ "problems": [...] }`, at most 20 problems. It is never a protocol error. A store that throws, a browser that dies and an input of the wrong type each come back as a refusal, not as a crashed server.
 - Each problem has a stable `code`, a `message`, and where they apply `nodeId`, `path`, `allowed`, `rule` and `op` (the index of the operation in the batch). On a folder site it also has `file`, `line` and `column`.
 - Input schemas are loose on purpose. `plan` and `apply` accept a list of objects that each have an `op` name; core decides what is valid. An agent learns each operation's arguments from `catalogue`.
+
+## Section profile (`--sections`)
+
+`culm mcp --sections` (or `sections: true` in `createMcpServer`) exposes five tools: `describe`, `write`, `find`, `measure` and `build`. `write` is the checked JSX, HTML/CSS and JSON write of the general server, without `ops` (refused as `INVALID_OPERATION`). It measures the pages it wrote (classes 1 and 2) and replies with a short receipt instead of the full report:
+
+```json
+{
+  "revision": 3,
+  "roots": ["home:hero"],
+  "issues": [
+    {
+      "check": "raw-colour",
+      "page": "home",
+      "node": "s1",
+      "at": "1280",
+      "fix": "Use a site colour by name, so dark mode follows."
+    }
+  ],
+  "moreIssues": true,
+  "measurement": "complete"
+}
+```
+
+- `issues`: at most 3, one per check, each with the first node and a fix of at most 220 characters. `moreIssues` is `true` when more findings exist than the issues shown (or the measurement was cut); call `measure` for them.
+- `measurement`: `complete`, `partial` (cut) or `incomplete` (a cell was not measured, or measuring failed; `problem` says why).
+- `measuredRevision` appears only when the measurement ran at a different revision from the write. `replayed`, `warningCount` and `warning` appear when they apply.
+
+`--sections` and `--full` exclude each other.
 
 ## Full editing API (`--full`)
 

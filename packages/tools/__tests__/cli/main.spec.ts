@@ -299,6 +299,8 @@ test('an unknown command and a missing argument: exit 2 and the usage text', asy
     ['expand', 'pages/home.json'],
     ['dev', '--port', 'x'],
     ['build', '--nope'],
+    ['build', '--sections'],
+    ['mcp', '--sections', '--full'],
   ]) {
     const r = await run(args, dir)
     assert.equal(r.code, 2, args.join(' '))
@@ -308,6 +310,18 @@ test('an unknown command and a missing argument: exit 2 and the usage text', asy
   const help = await run(['--help'], dir)
   assert.equal(help.code, 0)
   assert.match(help.out, /Usage: culm/)
+})
+
+test('--sections is only for mcp and excludes --full', async () => {
+  const dir = await copyFixture('site-basic')
+  const a = await run(['build', '--sections'], dir)
+  assert.equal(a.code, 2)
+  assert.match(a.err, /--sections is for culm mcp\./)
+  assert.match(a.err, /Usage: culm/)
+  const b = await run(['mcp', '--sections', '--full'], dir)
+  assert.equal(b.code, 2)
+  assert.match(b.err, /--sections or --full, not both/)
+  assert.match((await run(['--help'], dir)).out, /--full \| --sections/)
 })
 
 test('run outside a project folder: one problem naming culm.json, exit 1', async () => {

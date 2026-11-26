@@ -15,8 +15,9 @@ culm expand <file> <id>             rewrite the short form <id> in <file> as its
 culm render [spec.json | page] --out <file>
                                     export a standalone node, page or shape as PNG, WebP or SVG
 culm schema                         write culm.schema.json in the project folder
-culm mcp [--port n] [--chrome path] [--full]
-                                    serve 6 JSON tools by default (--full exposes all 12 tools) over stdio;
+culm mcp [--port n] [--chrome path] [--full | --sections]
+                                    serve 6 JSON tools by default (--full exposes all 12 tools;
+                                    --sections serves 5 tools with short write receipts) over stdio;
                                     --port also opens a local port with a token
 ```
 

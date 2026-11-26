@@ -48,8 +48,9 @@ Commands:
   render [spec.json | page] --out <file>
                                export a standalone node/page/shape as PNG, WebP, or SVG
   schema                       write culm.schema.json in the project folder
-  mcp [--port n] [--chrome path] [--full]
-                               JSON authoring by default; --full exposes the low-level tools
+  mcp [--port n] [--chrome path] [--full | --sections]
+                               JSON authoring by default; --full exposes the low-level tools;
+                               --sections serves 5 tools with short write receipts
                                serve the site to an agent over standard input and
                                output; --port also opens a local port with a token
 
@@ -177,6 +178,7 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
         port: { type: 'string' },
         chrome: { type: 'string' },
         full: { type: 'boolean' },
+        sections: { type: 'boolean' },
         from: { type: 'string' },
         blank: { type: 'boolean' },
         classes: { type: 'string' },
@@ -221,6 +223,10 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
   }
   const want = command ? wants[command] : undefined
   if (values.full && command !== 'mcp') return usage('--full is for culm mcp.')
+  if (values.sections && command !== 'mcp')
+    return usage('--sections is for culm mcp.')
+  if (values.sections && values.full)
+    return usage('Use --sections or --full, not both.')
   if (!command || !want)
     return usage(command ? `Unknown command "${command}".` : undefined)
   const [minArgs, maxArgs] = Array.isArray(want.args)
@@ -526,6 +532,7 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
     const options = {
       ...(await folderMcpOptions(cwd, project, values.chrome)),
       jsonOps: !values.full,
+      sections: values.sections,
     }
     const local =
       port === undefined
