@@ -12,7 +12,7 @@ import {
   type SiteFont,
 } from '@culmjs/core'
 import { isObj } from '../shared.ts'
-import { fetchImagesFor } from '../image/generate.ts'
+import { resolveImagesFor } from '../image/generate.ts'
 import type { ImageConfig, ImageProvider } from '../image/providers.ts'
 import { readHeld } from './held.ts'
 
@@ -577,7 +577,11 @@ export async function fetchFor(
   o: FetchOptions = {},
   defer = false,
 ): Promise<
-  | { ok: true; ops: unknown[]; publish?: () => Promise<Problem[]> }
+  | {
+      ok: true
+      ops: unknown[]
+      publish?: (planOnly?: boolean) => Promise<Problem[]>
+    }
   | { ok: false; problems: Problem[] }
 > {
   const hosts = o.hosts ?? HOSTS
@@ -691,21 +695,27 @@ export async function fetchFor(
         }
       : op,
   )
-  const imgRes = await fetchImagesFor(dir, normalized, heldAll.generated, {
+  const imgRes = await resolveImagesFor(dir, normalized, heldAll.generated, {
     config: o.images,
     provider: o.imageProvider,
     offline: o.offline,
   })
   if (!imgRes.ok) return imgRes
-  const ready = { ok: true as const, ops: imgRes.ops }
-  if (!wantIcons.length && !families.size) return ready
-  if (defer) return { ...ready, publish }
+  const generate = imgRes.generate
+  if (!imgRes.pending && !wantIcons.length && !families.size)
+    return { ok: true, ops: imgRes.ops }
+  if (defer) return { ok: true, ops: imgRes.ops, publish }
   const failed = await publish()
-  return failed.length ? { ok: false, problems: failed } : ready
+  return failed.length
+    ? { ok: false, problems: failed }
+    : { ok: true, ops: imgRes.final() }
 
   // All I/O that can publish held assets (including icon licences) follows
   // normalization. MCP can check these exact ops before it runs this phase.
-  async function publish(): Promise<Problem[]> {
+  // `planOnly`: `plan` keeps its font and icon fetches but never pays for an image
+  async function publish(planOnly = false): Promise<Problem[]> {
+    const made = planOnly ? [] : await generate()
+    if (made.length) return made
     const got: Fetched[] = []
     for (const [slug, ws] of families) {
       const asked = new Map<string, Pair>()

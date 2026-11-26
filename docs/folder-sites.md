@@ -39,6 +39,7 @@ All files are JSONC: JSON with comments. Culm keeps your comments, key order and
   // optional Stage 4 GPU shader + WASM field support:
   // "features": { "gpu": true },
   // optional AI image generator for `image.generate` / `bgImage.generate` (cached in assets/gen/):
+  // image generation is off until this key exists (an empty object `{}` is enough); a stray API key in the environment alone never starts it:
   // "images": { "provider": "gemini" | "openai" | "higgsfield" | "http", "model"?: "...", "endpoint"?: "..." }
 }
 ```

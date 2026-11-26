@@ -762,7 +762,7 @@ export function createMcpServer(o: McpOptions): Server {
         allow,
       )
       if (!r.ok) return fail(r.problems)
-      const problems = await f.publish?.()
+      const problems = await f.publish?.(true)
       return problems?.length
         ? fail(problems)
         : reply(summary(r, r.doc, { revision: h.revision }))

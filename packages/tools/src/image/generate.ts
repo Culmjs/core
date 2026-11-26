@@ -456,12 +456,24 @@ async function writeAtomicBytes(
   }
 }
 
+export type ImageResolution =
+  | {
+      ok: true
+      ops: unknown[]
+      /** True when `generate()` will call the provider and write files. */
+      pending: boolean
+      generate: () => Promise<Problem[]>
+      /** The ops with the generated files' sizes filled in; call after `generate()`. */
+      final: () => unknown[]
+    }
+  | { ok: false; problems: Problem[] }
+
 /**
- * Resolve every `generate` image request in `ops`: reuse cached files in `assets/gen/`,
- * call the configured provider (bounded concurrency 2, max 8 new images per batch), verify magic bytes,
- * store atomically alongside `.json` provenance, and rewrite `ops` to plain `assetId`s.
+ * Check every `generate` image request in `ops` without calling the provider: reuse cached files in `assets/gen/`,
+ * rewrite each request to its deterministic `gen/<stem>.<ext>` path, and refuse what cannot run (offline, over the cap, no provider).
+ * `generate()` then calls the provider (bounded concurrency 2, max 8 new images), verifies magic bytes and stores each file atomically beside `.json` provenance.
  */
-export async function fetchImagesFor(
+export async function resolveImagesFor(
   dir: string,
   ops: unknown[],
   heldGenerated: ReadonlyMap<string, ResolvedAsset>,
@@ -470,10 +482,17 @@ export async function fetchImagesFor(
     provider?: ImageProvider
     offline?: boolean
   } = {},
-): Promise<{ ok: true; ops: unknown[] } | { ok: false; problems: Problem[] }> {
+): Promise<ImageResolution> {
   const { wants, problems } = collectImageRequests(ops, options.config)
   if (problems.length) return { ok: false, problems }
-  if (!wants.size) return { ok: true, ops }
+  const none = (o: unknown[]): ImageResolution => ({
+    ok: true,
+    ops: o,
+    pending: false,
+    generate: async () => [],
+    final: () => o,
+  })
+  if (!wants.size) return none(ops)
 
   const resolved = new Map<string, ResolvedAsset>()
   const missing: WantGen[] = []
@@ -483,7 +502,7 @@ export async function fetchImagesFor(
     else missing.push(w)
   }
   if (!missing.length)
-    return { ok: true, ops: rewriteImageOps(ops, resolved, options.config) }
+    return none(rewriteImageOps(ops, resolved, options.config))
 
   if (options.offline)
     return {
@@ -533,91 +552,113 @@ export async function fetchImagesFor(
     model: string
   }[] = []
 
-  // Run up to 2 generations concurrently; fail before writing anything on disk.
-  for (let i = 0; i < missing.length; i += 2) {
-    const chunk = missing.slice(i, i + 2)
-    try {
-      const results = await Promise.all(
-        chunk.map(async w => {
-          const reply = await provider(w.req)
-          const info = inspectImageBytes(reply.bytes)
-          if (!info)
-            throw new Error(
-              'provider returned bytes that are not a valid PNG, WebP, or JPEG image',
-            )
-          return {
-            want: w,
-            ext: info.ext,
-            width: reply.width ?? info.width,
-            height: reply.height ?? info.height,
-            bytes: reply.bytes,
-            provider: reply.provider,
-            model: reply.model,
-          }
-        }),
-      )
-      generated.push(...results)
-    } catch (e) {
-      return {
-        ok: false,
-        problems: [
+  const generate = async (): Promise<Problem[]> => {
+    // Run up to 2 generations concurrently; fail before writing anything on disk.
+    for (let i = 0; i < missing.length; i += 2) {
+      const chunk = missing.slice(i, i + 2)
+      try {
+        const results = await Promise.all(
+          chunk.map(async w => {
+            const reply = await provider(w.req)
+            const info = inspectImageBytes(reply.bytes)
+            if (!info)
+              throw new Error(
+                'provider returned bytes that are not a valid PNG, WebP, or JPEG image',
+              )
+            return {
+              want: w,
+              ext: info.ext,
+              width: reply.width ?? info.width,
+              height: reply.height ?? info.height,
+              bytes: reply.bytes,
+              provider: reply.provider,
+              model: reply.model,
+            }
+          }),
+        )
+        generated.push(...results)
+      } catch (e) {
+        return [
           {
             code: 'FETCH_FAILED',
             message: `Could not generate image "${chunk[0]!.req.prompt.slice(0, 60)}": ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`,
             op: chunk[0]!.op,
           },
-        ],
+        ]
       }
     }
-  }
 
-  try {
-    await ensureGenDir(dir)
-    for (const g of generated) {
-      const fileStem = g.want.stem.slice('gen/'.length)
-      const relAsset = `${g.want.stem}.${g.ext}`
-      const absAsset = join(dir, 'assets', 'gen', `${fileStem}.${g.ext}`)
-      const absMeta = join(dir, 'assets', 'gen', `${fileStem}.json`)
-      const sha256 = createHash('sha256').update(g.bytes).digest('hex')
-      await writeAtomicBytes(absAsset, g.bytes)
-      await writeAtomicBytes(
-        absMeta,
-        JSON.stringify(
-          {
-            prompt: g.want.req.prompt,
-            aspect: g.want.req.aspect,
-            ...(g.want.req.style ? { style: g.want.req.style } : {}),
-            ...(g.want.req.transparent ? { transparent: true } : {}),
-            ...(g.want.req.seed !== undefined ? { seed: g.want.req.seed } : {}),
-            provider: g.provider,
-            model: g.model,
-            width: g.width,
-            height: g.height,
-            sha256,
-            createdAt: new Date().toISOString(),
-          },
-          null,
-          2,
-        ) + '\n',
-      )
-      resolved.set(g.want.stem, {
-        assetId: relAsset,
-        ...(g.width > 0 ? { width: g.width } : {}),
-        ...(g.height > 0 ? { height: g.height } : {}),
-      })
-    }
-  } catch (e) {
-    return {
-      ok: false,
-      problems: [
+    try {
+      await ensureGenDir(dir)
+      for (const g of generated) {
+        const fileStem = g.want.stem.slice('gen/'.length)
+        // the name is the one the ops already carry, so it cannot depend on what the provider sends
+        const ext = g.want.req.transparent ? 'png' : 'webp'
+        const relAsset = `${g.want.stem}.${ext}`
+        const absAsset = join(dir, 'assets', 'gen', `${fileStem}.${ext}`)
+        const absMeta = join(dir, 'assets', 'gen', `${fileStem}.json`)
+        const sha256 = createHash('sha256').update(g.bytes).digest('hex')
+        await writeAtomicBytes(absAsset, g.bytes)
+        await writeAtomicBytes(
+          absMeta,
+          JSON.stringify(
+            {
+              prompt: g.want.req.prompt,
+              aspect: g.want.req.aspect,
+              ...(g.want.req.style ? { style: g.want.req.style } : {}),
+              ...(g.want.req.transparent ? { transparent: true } : {}),
+              ...(g.want.req.seed !== undefined
+                ? { seed: g.want.req.seed }
+                : {}),
+              provider: g.provider,
+              model: g.model,
+              width: g.width,
+              height: g.height,
+              sha256,
+              createdAt: new Date().toISOString(),
+            },
+            null,
+            2,
+          ) + '\n',
+        )
+        resolved.set(g.want.stem, {
+          assetId: relAsset,
+          ...(g.width > 0 ? { width: g.width } : {}),
+          ...(g.height > 0 ? { height: g.height } : {}),
+        })
+      }
+    } catch (e) {
+      return [
         {
           code: 'FETCH_FAILED',
           message: `Could not store generated image: ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`,
           op: generated[0]?.want.op ?? 0,
         },
-      ],
+      ]
     }
+    return []
   }
 
-  return { ok: true, ops: rewriteImageOps(ops, resolved, options.config) }
+  return {
+    ok: true,
+    ops: rewriteImageOps(ops, resolved, options.config),
+    pending: true,
+    generate,
+    final: () => rewriteImageOps(ops, resolved, options.config),
+  }
+}
+
+/** `resolveImagesFor` followed by `generate()`: the ops with every image fetched (the CLI `render` path). */
+export async function fetchImagesFor(
+  dir: string,
+  ops: unknown[],
+  heldGenerated: ReadonlyMap<string, ResolvedAsset>,
+  options: Parameters<typeof resolveImagesFor>[3] = {},
+): Promise<{ ok: true; ops: unknown[] } | { ok: false; problems: Problem[] }> {
+  const r = await resolveImagesFor(dir, ops, heldGenerated, options)
+  if (!r.ok) return r
+  const problems = await r.generate()
+  return problems.length
+    ? { ok: false, problems }
+    : { ok: true, ops: r.final() }
 }

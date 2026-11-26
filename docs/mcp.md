@@ -244,6 +244,8 @@ What can be built, composition first. `what` is read in this order:
 
 A batch is a list of up to 200 operations, at most 1,000,000 characters of JSON, made from a known `baseRevision`. `plan` runs it on a copy, validates once at the end, and returns what it would do. `apply` does the same and saves the result as the next revision, whole or not at all.
 
+`plan` never generates an image: a `generate` request is only rewritten to its `assets/gen/` path. `apply` generates it, once, after the batch has passed every check. Generation needs an `images` key in `culm.json`.
+
 `key` makes a retry safe. The same key with the same content applies once and returns the first result; the same key with other content is `KEY_CONFLICT`. `apply` requires a key; `plan` does not.
 
 A reply holds `counts`, `roots` (created nodes whose parent was not created in the batch, as `"<tree>:<id>"`, where tree is a page id, `header`, `footer` or `component:<id>`), `changed` the same way (each at most 20, with `more` counting the rest), `pages` and `notes`. `apply` adds `hint: "All ids: read, or diff(from, to)."`; there is no `created` list.

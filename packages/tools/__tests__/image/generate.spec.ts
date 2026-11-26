@@ -22,7 +22,10 @@ import {
   inspectImageBytes,
   MAX_GENERATED_IMAGES,
 } from '../../src/image/generate.ts'
-import { makeImageProvider } from '../../src/image/providers.ts'
+import {
+  makeImageProvider,
+  resolveProviderName,
+} from '../../src/image/providers.ts'
 import { createMcpServer } from '../../src/mcp/server.ts'
 import { protect } from '../../src/mcp/protect.ts'
 import { LOOK } from '../../../core/__tests__/kit.ts'
@@ -349,7 +352,10 @@ test('culm.json images config is validated and MCP write with image.generate + b
       join(
         dir,
         'assets',
-        String(hero.children?.[0]?.props?.assetId).replace(/\.png$/, '.json'),
+        String(hero.children?.[0]?.props?.assetId).replace(
+          /\.(png|webp)$/,
+          '.json',
+        ),
       ),
       'utf8',
     )
@@ -394,3 +400,146 @@ for (const [name, envKey, host, header] of [
         assert.ok(!dump.toLowerCase().includes(header), dump)
       }
     })
+
+async function genServer(dir: string, jsonOps = true) {
+  const { memoryStore } = await import('@culmjs/core/ops')
+  const store = memoryStore({ s: emptySite('GenSite', LOOK) })
+  let calls = 0
+  const server = createMcpServer({
+    store,
+    registry: createRegistry(),
+    site: 's',
+    data: { rows: {} },
+    allow: protect,
+    jsonOps,
+    cwd: dir,
+    fetch: (ops, d, offline, defer) =>
+      fetchFor(
+        dir,
+        d,
+        ops,
+        {
+          offline,
+          imageProvider: async () => {
+            calls++
+            return {
+              bytes: TINY_PNG,
+              ext: 'png',
+              width: 8,
+              height: 8,
+              provider: 'test',
+              model: 't1',
+            }
+          },
+        },
+        defer,
+      ),
+  })
+  const [a, b] = InMemoryTransport.createLinkedPair()
+  const client = new Client({ name: 't', version: '0' })
+  await Promise.all([server.connect(b), client.connect(a)])
+  const image = {
+    op: 'insert',
+    node: { id: 'pic', kind: 'image', generate: 'Glazed bowl', alt: 'Bowl' },
+  }
+  const full = {
+    op: 'add',
+    tree: { page: 'home' },
+    parent: 'homeroot',
+    index: 0,
+    node: {
+      id: 'pic',
+      kind: 'image',
+      name: 'Pic',
+      slot: {},
+      props: { generate: 'Glazed bowl', alt: 'Bowl' },
+    },
+  }
+  return { client, image, full, calls: () => calls }
+}
+
+test('plan with a generate request calls no provider and writes no file', async () => {
+  const dir = await makeDir()
+  const { client, full, calls } = await genServer(dir, false)
+  try {
+    const r = await client.callTool({
+      name: 'plan',
+      arguments: { baseRevision: 0, ops: [full] },
+    })
+    assert.equal(r.isError, undefined, JSON.stringify(r))
+    assert.equal(calls(), 0)
+    await assert.rejects(readdir(join(dir, 'assets', 'gen')))
+    const doc = emptySite('Img', LOOK)
+    const f = await fetchFor(
+      dir,
+      doc,
+      [full],
+      {
+        imageProvider: async () => {
+          throw new Error('must not be called')
+        },
+      },
+      true,
+    )
+    assert.ok(f.ok)
+    assert.match(
+      (f.ops[0] as { node: { props: { assetId: string } } }).node.props.assetId,
+      /^gen\/glazed-bowl-[0-9a-f]{10}\.webp$/,
+    )
+  } finally {
+    await client.close()
+  }
+})
+
+test('a refused write calls no provider', async () => {
+  const dir = await makeDir()
+  const { client, full, calls } = await genServer(dir, false)
+  try {
+    const r = await client.callTool({
+      name: 'apply',
+      arguments: {
+        baseRevision: 0,
+        key: 'k',
+        ops: [
+          full,
+          {
+            ...full,
+            parent: 'no-such-parent',
+            node: { ...full.node, id: 'other' },
+          },
+        ],
+      },
+    })
+    assert.equal(r.isError, true, JSON.stringify(r))
+    assert.equal(calls(), 0)
+    await assert.rejects(readdir(join(dir, 'assets', 'gen')))
+  } finally {
+    await client.close()
+  }
+})
+
+test('an accepted write calls the provider once', async () => {
+  const dir = await makeDir()
+  const { client, image, calls } = await genServer(dir)
+  try {
+    const r = await client.callTool({
+      name: 'write',
+      arguments: { baseRevision: 0, page: 'home', ops: [image] },
+    })
+    assert.equal(r.isError, undefined, JSON.stringify(r))
+    assert.equal(calls(), 1)
+    assert.equal((await readdir(join(dir, 'assets', 'gen'))).length, 2)
+  } finally {
+    await client.close()
+  }
+})
+
+test('no provider is chosen without an opt-in', () => {
+  const env = { GEMINI_API_KEY: 'k' }
+  assert.equal(resolveProviderName(undefined, { env }), undefined)
+  assert.equal(resolveProviderName({}, { env }), 'gemini')
+  assert.equal(
+    resolveProviderName(undefined, { env: { CULM_IMAGE_PROVIDER: 'openai' } }),
+    'openai',
+  )
+})
