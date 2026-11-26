@@ -475,6 +475,16 @@ test('build with a build function returns a summary of the manifest, or its prob
   assert.equal(bad.json.problems[0].message, 'no')
 })
 
+test('plan accepts what apply accepts: an older head is migrated first', async () => {
+  const old = { ...base(), schemaVersion: 1 } as unknown as SiteDocument
+  const op = { op: 'setText', tree: T, id: 't1', text: 'Two' }
+  for (const tool of ['plan', 'apply']) {
+    const { call } = await connect(old)
+    const r = await call(tool, { baseRevision: 0, key: 'k', ops: [op] })
+    assert.equal(r.error, false, `${tool}: ${JSON.stringify(r.json)}`)
+  }
+})
+
 test('with allow: protect, setRequired null is refused through the tool', async () => {
   const doc = siteWith([text('must', 'Keep', { required: true })])
   const { call } = await connect(doc, { allow: protect })

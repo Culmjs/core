@@ -17,6 +17,7 @@ import {
   MEASURE_PROFILE,
   SCHEMA_VERSION,
   find as findNode,
+  migrate,
   type Data,
   type Look,
   type Manifest,
@@ -750,10 +751,17 @@ export function createMcpServer(o: McpOptions): Server {
             path: 'baseRevision',
           },
         ])
-      const f = await fetched(a, h.doc)
+      // apply migrates an older head before it plans; plan must agree
+      let head = h.doc
+      if (head.schemaVersion < SCHEMA_VERSION) {
+        const m = migrate(head)
+        if (!m.ok) return fail([m.problem])
+        head = m.doc
+      }
+      const f = await fetched(a, head)
       if (f.refusal) return f.refusal
       const r = plan(
-        h.doc,
+        head,
         registry,
         {
           ...request(a, f.ops),
