@@ -31,6 +31,8 @@ export interface Io {
   cwd?: string
   out?: (text: string) => void
   err?: (text: string) => void
+  /** Replaces the measuring run (tests). */
+  measure?: typeof runMeasure
 }
 
 const USAGE = `Usage: culm <command> [options]
@@ -491,7 +493,7 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
         show([...refused].map(([rel, why]) => refusal(rel, why)))
         return 1
       }
-      const report = await runMeasure({
+      const report = await (io.measure ?? runMeasure)({
         doc: loaded.doc!,
         registry: project.registry,
         data: loaded.data,
@@ -518,7 +520,11 @@ export async function main(argv: string[], io: Io = {}): Promise<number> {
       out(
         `Measured ${report.measured.length} cells: ${report.findings.length} findings, ${report.incomplete.length} not measured.\n`,
       )
-      return report.incomplete.length ? 2 : report.findings.length ? 1 : 0
+      return report.incomplete.length
+        ? 2
+        : report.findings.some(f => f.class < 3)
+          ? 1
+          : 0
     }
 
     const options = {

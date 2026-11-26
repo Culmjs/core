@@ -362,6 +362,46 @@ test('check: an asset linked outside the project is refused, exit 1 before any b
   }
 })
 
+test('check exits 0 when the only findings are class 3, 1 for class 2, 2 for an incomplete cell', async () => {
+  const dir = await copyFixture('site-basic')
+  const exit = async (findings: number[], incomplete: unknown[] = []) =>
+    await (async () => {
+      let code = -1
+      code = await main(['check'], {
+        cwd: dir,
+        out: () => {},
+        err: () => {},
+        measure: (async () => ({
+          findings: findings.map(c => ({
+            class: c,
+            check: 'x',
+            page: 'home',
+            message: 'm',
+            nodes: [],
+          })),
+          measured: [],
+          incomplete,
+        })) as never,
+      })
+      return code
+    })()
+  assert.equal(await exit([3]), 0)
+  assert.equal(await exit([2]), 1)
+  assert.equal(await exit([3, 2]), 1)
+  assert.equal(
+    await exit(
+      [3],
+      [
+        {
+          page: 'home',
+          problem: { code: 'MEASUREMENT_INCOMPLETE', message: 'm' },
+        },
+      ],
+    ),
+    2,
+  )
+})
+
 test('formatLocated: file:line:column, the code or the check, the message, then the allowed values', () => {
   assert.equal(
     formatLocated({

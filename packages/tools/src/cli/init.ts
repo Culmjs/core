@@ -17,7 +17,7 @@ import { authoringSchema } from '../schema/authoring.ts'
 
 const PACKAGES = ['core', 'starter', 'tools'] as const
 
-function compareTarballs(a: string, b: string, prefix: string): number {
+export function compareTarballs(a: string, b: string, prefix: string): number {
   const ver = (f: string) => {
     const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?\.tgz$/.exec(
       f.slice(prefix.length),
@@ -37,7 +37,7 @@ function compareTarballs(a: string, b: string, prefix: string): number {
   if (va.pre !== vb.pre) {
     if (!va.pre) return -1
     if (!vb.pre) return 1
-    return vb.pre < vb.pre ? 1 : -1
+    return va.pre < vb.pre ? 1 : -1
   }
   return a < b ? -1 : a > b ? 1 : 0
 }

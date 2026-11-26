@@ -191,8 +191,6 @@ function findChrome(o: OpenOptions): { path: string } | { problem: Problem } {
       }
 }
 
-const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
-
 /** Starts Chrome (headless, its own temporary profile, no port: DevTools over a pipe). Never downloads a browser. */
 export async function openBrowser(
   o: OpenOptions = {},
@@ -260,7 +258,12 @@ export async function openBrowser(
       close: () =>
         (closing ??= (async () => {
           cdp.send('Browser.close', {}, undefined, 2000).catch(() => {})
-          await Promise.race([gone, sleep(3000)])
+          let kill: NodeJS.Timeout | undefined
+          await Promise.race([
+            gone,
+            new Promise<void>(r => (kill = setTimeout(r, 3000).unref())),
+          ])
+          clearTimeout(kill)
           await cleanup()
         })()),
     }

@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { init } from '../../src/cli/init.ts'
+import { compareTarballs, init } from '../../src/cli/init.ts'
 import { main } from '../../src/cli/main.ts'
 
 const version: string = JSON.parse(
@@ -130,6 +130,18 @@ test('--from writes file: paths to the three tarballs; a folder that lacks one o
   assert.ok(!r2.ok)
   assert.match(JSON.stringify(r2), /starter/)
   assert.ok(!existsSync(dir2))
+})
+
+test('--from picks the newest prerelease, whatever the input order', () => {
+  const t = (v: string) => `culmjs-core-1.0.0-${v}.tgz`
+  for (const names of [
+    [t('beta.1'), t('beta.2')],
+    [t('beta.2'), t('beta.1')],
+  ])
+    assert.equal(
+      names.sort((a, b) => compareTarballs(a, b, 'culmjs-core-'))[0],
+      t('beta.2'),
+    )
 })
 
 test('culm init <dir> through the command, and a usage error without a folder', async () => {
