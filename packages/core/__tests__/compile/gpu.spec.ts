@@ -611,3 +611,27 @@ test('every lowered shader string ends with a newline so a trailing line comment
   assert.ok(defs.length >= 2)
   for (const d of defs) assert.ok(d.source.endsWith('\n'), d.name)
 })
+
+test('a GPU owner outside main ships no GPU delivery', () => {
+  const doc = siteWith([], { customEffects: [def] })
+  doc.header = { ...doc.header, children: [owner('top')] }
+  const p = page(doc)
+  assert.deepEqual(
+    p.scripts.map(s => s.name),
+    ['base'],
+  )
+  assert.equal((p.assets ?? []).length, 0)
+  assert.equal(p.stats.scriptBytes.gpuHost, undefined)
+  assert.doesNotMatch(p.html, /data-culm-gpu/)
+  assert.match(p.html, /Real heading/)
+})
+
+test('a header owner beside a runnable owner in main emits only the runnable one', () => {
+  const doc = siteWith([owner('hero', 'contours')], { customEffects: [def] })
+  doc.header = { ...doc.header, children: [owner('top')] }
+  const p = page(doc)
+  const { regions } = payload(p.html)
+  assert.equal(regions.length, 1)
+  assert.equal(p.html.match(/data-culm-gpu=/g)!.length, 1)
+  assert.match(p.html, /Real heading/)
+})

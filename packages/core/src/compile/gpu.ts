@@ -127,9 +127,11 @@ export function lowerGpu(
   for (const strip of site.children ?? [])
     if (typeof strip !== 'string' && strip.tag === 'main') select(strip)
   const worker = runnable.size > 0
-  if (worker && !canvasSlot) return // keep the complete static page
+  // No runnable region: ship neither loader nor host, and mark nothing.
+  if (!worker || !canvasSlot) return // keep the complete static page
   const stats = { shaderBytes: 0, wasmBytes: 0, wasmTransportBytes: 0 }
   for (const [el, m] of owners) {
+    if (!runnable.has(el)) continue
     const def = effects.get(m.gpu)
     if (!def) throw new Error('Missing checked GPU definition.')
     let definition = indices.get(m.gpu)
@@ -159,10 +161,8 @@ export function lowerGpu(
         m.settings?.[k] ?? s.default,
       ]),
     )
-    if (runnable.has(el)) {
-      el.attrs['data-gpu-run'] = def.builtin ? settings.speed : 'custom'
-      markContent(el)
-    }
+    el.attrs['data-gpu-run'] = def.builtin ? settings.speed : 'custom'
+    markContent(el)
     regions.push({
       owner,
       definition,
