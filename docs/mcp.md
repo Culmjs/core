@@ -12,7 +12,6 @@ For the folder the server works on, see [folder-sites.md](folder-sites.md). For 
 culm mcp                    # standard input and output
 culm mcp --port 3333        # also a local port, with a token
 culm mcp --chrome /path/to/chrome
-culm mcp --json-ops         # explicit alias for the default JSON authoring interface
 culm mcp --full             # general editing API, including read, apply, diff and restore
 ```
 
@@ -82,7 +81,7 @@ A refused write can return a session-local `draft`. At the same revision, use JS
 
 ### Ordered JSON edits
 
-Start `culm mcp --json-ops` (or pass `jsonOps: true` to `createMcpServer`). `describe`, `find`, `write`, `measure`, `build` and `render` are the entire tool list. In this profile `write` takes 1–32 ordered `ops`; it validates and commits them together. A single op works the same way. Earlier inserts can be updated or moved later in the same request. Retry the identical write with its original revision to replay it without adding duplicates. This form of `write` is also available on the general server.
+Start `culm mcp` (the default profile; `--full` is the general server), or pass `jsonOps: true` to `createMcpServer`. `describe`, `find`, `write`, `measure`, `build` and `render` are the entire tool list. In this profile `write` takes 1–32 ordered `ops`; it validates and commits them together. A single op works the same way. Earlier inserts can be updated or moved later in the same request. Retry the identical write with its original revision to replay it without adding duplicates. This form of `write` is also available on the general server.
 
 ```json
 {
@@ -222,7 +221,7 @@ Returns `framework`, `schema` (document version), `pluginApi`, `measureProfile`,
 - `what: "node"`: one node by `id` in `page` or `tree`, without its children, and a block root's settings.
 - `what: "search"`: `text` (case-insensitive substring), `kind` and `block` (exact); all the given conditions must hold.
 
-No read returns the whole document. On a site at the 2,000-node limit every reply stays within the cap and paging reaches every node.
+No read returns the whole document. On a site at the 2,000-node limit every reply stays within the cap and paging reaches every node. `read {format:'jsx'}` is not paged: it returns the whole tree as JSX, and past the read cap it is refused with `RESOURCE_LIMIT_EXCEEDED`.
 
 ### `catalogue`
 
@@ -271,7 +270,7 @@ Renders the pages in Chrome and reports what is wrong with them in a form an age
 - `pages`: page ids (default: every page that is on). `widths`: any of 1280, 834, 390. `classes`: 1, 2 or 3 (default 1 and 2).
 - Class 1 is a compile problem (`invalid`). Class 2 includes layout/contrast defects (`off-screen`, `overflow`, `h-scroll`, `overlap`, `contrast`, `tap-target`, `shape-covers`, `shape-complex`, `raw-colour`, `crowded-phone-row`) and design findings (`stretched-button`, `header-edge`, `hero-bare`, `orphan-heading`, `bleed-gutter`, `all-stacked`, `no-accent`, `starter-chrome`, `side-stripe`, `gradient-text`, `glow`, `emoji-icon`). Class 3 is taste (`column`, `alignment`, `symmetry`, `rhythm`, `empty-band`, `line-length`, `heading-order`, `duplicate-heading`, `stacked-row`, `phone-order`). Together with `invalid`, `runChecks` produces 31 checks.
 - The profile is version 1: widths 1280, 834 and 390, themes light and dark, each direction the site's languages declare, the default state of each part. What it does not cover is listed in `skipped`.
-- The MCP reply merges findings by page, check and nodes: a row is `{ page, check, nodes, at, message, fix?, file?, line? }`, where `at` lists the cells as `"1280"`, with ` dark` and ` rtl` added when not light and left to right. `fix` is advice for a class 2 finding. `culm measure` and the core `Report` keep one finding per cell, with `theme`, `dir`, `observed`, `expected` and a `key`; on a folder site a finding names a file and line from its first node.
+- The MCP reply merges findings by page, check and nodes: a row is `{ page, check, nodes, at, message, fix?, file?, line? }`, where `at` lists the cells as `"1280"`, with ` dark` and ` rtl` added when not light and left to right. `fix` is advice for a class 2 finding. `culm check` and the core `Report` keep one finding per cell, with `theme`, `dir`, `observed`, `expected` and a `key`; on a folder site a finding names a file and line from its first node.
 - `since` is a revision. `findings` then holds the still-failing rows and the new ones (`new: true`), `fixed` the rows no longer present, and `unchecked` a count. A repair is confirmed when its row is in `fixed` and no row is new.
 - Chrome is found from `--chrome` or `CULM_CHROME`, then a Chromium already installed by `npx playwright install chromium`, then the system Chrome. Missing, the result is `MEASUREMENT_INCOMPLETE` naming those three ways. A page that could not be measured is listed in `incomplete`; a request the bundle could not answer is in `blocked`.
 - On a folder site, `measure` drops an asset or font link that points outside the project without saying so, while `culm check` refuses it as a `POLICY_VIOLATION` and exits 1. After an agent measures, run `culm check` to see those links.

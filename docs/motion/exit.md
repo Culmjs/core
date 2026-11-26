@@ -51,6 +51,8 @@ At 60 Hz the first-moving frames were **1, 3, 6, 8, 11, 13, 16, 18, 21, 23** in 
 
 ### Shipped cost and fallback
 
+The byte table below is the 2026-11-24 measurement; [docs/gpu/exit.md](../gpu/exit.md) holds the current figures (timeline 7,214, states 1,654), and the base script is 304 bytes ([docs/gpu/limits.md](../gpu/limits.md)).
+
 Raw UTF-8. Base includes the joins; the test also counts the complete inline script directly in the shipped HTML. Elements are compile counts, before any optional text split.
 
 | Live page                                     |  Base | States | Timeline |  Total JS |   CSS | Elements / depth |

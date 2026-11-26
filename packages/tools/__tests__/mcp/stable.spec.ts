@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { createRegistry, emptySite, type Data } from '@culmjs/core'
@@ -63,4 +64,28 @@ test('the five list replies guide, kinds, operations, recipes and blocks on the 
   for (const what of ['guide', 'kinds', 'operations', 'recipes', 'blocks'])
     total += (await call('catalogue', { what })).length
   assert.ok(total <= 10500, `${total}`)
+})
+
+test('the tools README states the real tool counts', async () => {
+  const count = async (jsonOps: boolean) => {
+    const registry = createRegistry()
+    registry.use(starter)
+    const server = createMcpServer({
+      store: memoryStore({ s: emptySite('Ada', LOOK) }),
+      registry,
+      site: 's',
+      data,
+      jsonOps,
+    })
+    const [a, b] = InMemoryTransport.createLinkedPair()
+    const client = new Client({ name: 'test', version: '0' })
+    await Promise.all([server.connect(b), client.connect(a)])
+    return (await client.listTools()).tools.length
+  }
+  const readme = readFileSync(
+    new URL('../../README.md', import.meta.url),
+    'utf8',
+  )
+  assert.match(readme, new RegExp(`serve ${await count(true)} JSON tools`))
+  assert.match(readme, new RegExp(`all ${await count(false)} tools`))
 })

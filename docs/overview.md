@@ -242,7 +242,7 @@ restore(store, registry, { site: 'main', to: 0, baseRevision: 3, key: 'undo-1' }
 | `compileSubtree(doc, pageId, nodeId, options)` | One node's `html` and `css` in editing mode, with class names prefixed by the node id so a replaced part never collides with the page, plus the page-wide `pageCss` |
 | `compileSite(doc, options)`                    | A file for every page that is switched on, and a manifest of scripts and styles with their sizes                                                                    |
 
-Options: `registry` (required), `data`, `mode` (`'live'` or `'edit'`), `links` (how page slugs and file ids become addresses), `lang` and `fontBase`.
+Options: `registry` (required), `data`, `mode` (`'live'`, `'edit'` or `'measure'`), `links` (how page slugs and file ids become addresses), `lang` and `fontBase`.
 
 Each of these validates first. If the document, the rows or an option has a problem, the result is `ok: false` with the problems, and nothing is compiled.
 
@@ -296,7 +296,7 @@ The `measure` layer of the core says what is wrong with a rendered page, in a fo
 
 ## Tools
 
-`@culmjs/tools` depends on `@culmjs/core` (a peer dependency), `@modelcontextprotocol/sdk` and `jsonc-parser`. It adds what needs files, a browser or a port.
+`@culmjs/tools` depends on `@culmjs/core` (a peer dependency), `@modelcontextprotocol/sdk`, `jsonc-parser`, `htmlparser2` and `postcss`. It adds what needs files, a browser or a port.
 
 | What           | Does                                                                                                                                                                                                      |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
