@@ -565,6 +565,11 @@ export async function resolveImagesFor(
               throw new Error(
                 'provider returned bytes that are not a valid PNG, WebP, or JPEG image',
               )
+            const want = w.req.transparent ? 'png' : 'webp'
+            if (info.ext !== want)
+              throw new Error(
+                `provider returned ${info.ext} but ${want} was expected (transparent images are png, others webp, fixed before generation); retry, or ${info.ext === 'png' ? 'set transparent: true' : 'use a provider that returns ' + want}`,
+              )
             return {
               want: w,
               ext: info.ext,

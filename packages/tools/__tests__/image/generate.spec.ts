@@ -295,8 +295,8 @@ test('culm.json images config is validated and MCP write with image.generate + b
       fetchFor(dir, d, ops, {
         offline,
         imageProvider: async () => ({
-          bytes: TINY_PNG,
-          ext: 'png',
+          bytes: TINY_WEBP,
+          ext: 'webp',
           width: 800,
           height: 450,
           provider: 'test',
@@ -423,8 +423,8 @@ async function genServer(dir: string, jsonOps = true) {
           imageProvider: async () => {
             calls++
             return {
-              bytes: TINY_PNG,
-              ext: 'png',
+              bytes: TINY_WEBP,
+              ext: 'webp',
               width: 8,
               height: 8,
               provider: 'test',
@@ -542,4 +542,49 @@ test('no provider is chosen without an opt-in', () => {
     resolveProviderName(undefined, { env: { CULM_IMAGE_PROVIDER: 'openai' } }),
     'openai',
   )
+})
+
+test('a provider reply in another format than the predicted one is refused and writes no file', async () => {
+  const dir = await makeDir()
+  const doc = emptySite('Img', LOOK)
+  const ops = [
+    {
+      op: 'add',
+      tree: { page: 'home' },
+      parent: 'homeroot',
+      index: 0,
+      node: {
+        id: 'pic',
+        kind: 'image',
+        name: 'Pic',
+        slot: {},
+        props: { generate: 'Glazed bowl', alt: 'Bowl' },
+      },
+    },
+  ]
+  const reply = (bytes: Uint8Array, ext: 'png' | 'webp') => async () => ({
+    bytes,
+    ext,
+    provider: 'fake',
+    model: 'm',
+  })
+  const bad = await fetchFor(dir, doc, ops, {
+    imageProvider: reply(TINY_PNG, 'png'),
+  })
+  assert.equal(bad.ok, false)
+  if (!bad.ok) {
+    assert.equal(bad.problems[0]!.code, 'FETCH_FAILED')
+    assert.match(bad.problems[0]!.message, /png but webp was expected/)
+  }
+  await assert.rejects(readdir(join(dir, 'assets', 'gen')))
+  const good = await fetchFor(dir, doc, ops, {
+    imageProvider: reply(TINY_WEBP, 'webp'),
+  })
+  assert.equal(good.ok, true, JSON.stringify(good))
+})
+
+test('CULM_IMAGE_ENDPOINT alone does not opt in; an images key does', () => {
+  const env = { CULM_IMAGE_ENDPOINT: 'https://x.example/g' }
+  assert.equal(resolveProviderName(undefined, { env }), undefined)
+  assert.equal(resolveProviderName({}, { env }), 'http')
 })
