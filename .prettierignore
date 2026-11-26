@@ -11,3 +11,4 @@ packages/core/src/measure/probeMin.ts
 .ruff_cache
 __pycache__
 .git
+packages/tools/__browser__/fixtures/
