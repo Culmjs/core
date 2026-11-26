@@ -100,6 +100,20 @@ test('a misspelt setting on a short form fails', async () => {
   assert.equal(ok(page({ block: 'nope' })).ok, false)
 })
 
+test('a page id must be 1-20 lowercase letters or digits', async () => {
+  const { project } = await sample()
+  const ok = check(project.registry)
+  const page = (id: string) => ({
+    id,
+    title: 'P',
+    slug: '/p',
+    root: { kind: 'column' },
+  })
+  assert.ok(ok(page('about2')).ok)
+  for (const id of ['About', 'a b', '', 'a'.repeat(21)])
+    assert.equal(ok(page(id)).ok, false, id)
+})
+
 test('a comment-only difference does not matter: the schema is applied to the parsed value', async () => {
   const { project } = await sample()
   const ok = check(project.registry)

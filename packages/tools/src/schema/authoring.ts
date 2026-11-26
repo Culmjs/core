@@ -297,7 +297,7 @@ export function authoringSchema(registry: Registry): Record<string, unknown> {
       type: 'object',
       properties: {
         $schema: str,
-        id: str,
+        id: { type: 'string', pattern: ID },
         title: str,
         slug: str,
         on: { type: 'boolean' },
