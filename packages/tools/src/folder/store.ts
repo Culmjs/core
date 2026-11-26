@@ -380,7 +380,7 @@ export async function fileStore(
 
   // ---------------------------------------------------------------- recovery
   /**
-   * On open: records numbered above `head` are deleted, and the files a journal names are put back from the head revision's blobs.
+   * On open, and when `head` or `commit` finds a journal: records numbered above `head` are deleted, and the files a journal names are put back from the head revision's blobs.
    * This is the one place besides `commit` that writes to `.culm/`. A corrupt `.culm/` is left as it is.
    */
   const clear = async () => {
@@ -412,39 +412,37 @@ export async function fileStore(
   }
   /** Rolls back a half-written commit. The caller holds the lock. */
   async function undo() {
-    {
-      const now2 = await state()
-      if (now2.kind !== 'ok') return
-      for (const n of await numbers())
-        if (n > now2.revision) await rm(recPath(n), { force: true })
-      if (await exists(journalPath)) {
-        let paths: unknown
-        try {
-          paths = (
-            JSON.parse(await readFile(journalPath, 'utf8')) as {
-              paths: unknown
-            }
-          ).paths
-        } catch {
-          return // a journal that does not parse is not guessed at
-        }
-        if (
-          Array.isArray(paths) &&
-          paths.some(p => typeof p === 'string' && shaderPath(p)) &&
-          !(await shaderParentOk(dir))
-        )
-          throw new Error(
-            'Cannot recover shader files through an unsafe effects/ folder.',
-          )
-        for (const p of Array.isArray(paths) ? paths : []) {
-          if (typeof p !== 'string' || !safe(p)) continue
-          const h = now2.rec.files[p]
-          await projectFile(p, h ? await blobText(h) : undefined)
-        }
-        await rm(journalPath, { force: true })
+    const now2 = await state()
+    if (now2.kind !== 'ok') return
+    for (const n of await numbers())
+      if (n > now2.revision) await rm(recPath(n), { force: true })
+    if (await exists(journalPath)) {
+      let paths: unknown
+      try {
+        paths = (
+          JSON.parse(await readFile(journalPath, 'utf8')) as {
+            paths: unknown
+          }
+        ).paths
+      } catch {
+        return // a journal that does not parse is not guessed at
       }
-      await rm(join(culm, 'tmp'), { recursive: true, force: true })
+      if (
+        Array.isArray(paths) &&
+        paths.some(p => typeof p === 'string' && shaderPath(p)) &&
+        !(await shaderParentOk(dir))
+      )
+        throw new Error(
+          'Cannot recover shader files through an unsafe effects/ folder.',
+        )
+      for (const p of Array.isArray(paths) ? paths : []) {
+        if (typeof p !== 'string' || !safe(p)) continue
+        const h = now2.rec.files[p]
+        await projectFile(p, h ? await blobText(h) : undefined)
+      }
+      await rm(journalPath, { force: true })
     }
+    await rm(join(culm, 'tmp'), { recursive: true, force: true })
   }
 
   /**

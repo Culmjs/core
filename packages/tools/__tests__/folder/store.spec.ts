@@ -563,6 +563,7 @@ test('a lock left by a dead process is taken over by recovery', async () => {
     join(dir, '.culm/journal.json'),
     JSON.stringify({ paths: ['site.json'] }),
   )
+  writeFileSync(join(dir, 'site.json'), 'half written')
   writeFileSync(
     join(dir, '.culm/lock'),
     JSON.stringify({ pid: 99_999_999, time: Date.now(), token: 'dead' }),
@@ -652,4 +653,21 @@ test('a commit that throws while writing files leaves the last good site in the 
   const again = await apply(store, registry, batch('k2'))
   assert.ok(again.ok)
   assert.equal((await headOf(store)).revision, r0 + 1)
+})
+
+test('head() on an open store rolls back a journal another process left', async () => {
+  const { dir, registry, store } = await open(two())
+  const r0 = (await headOf(store)).revision + 1
+  assert.ok(
+    (await apply(store, registry, req(r0 - 1, 'a', [set('t1', 'A')]))).ok,
+  )
+  const old = await readProject(dir)
+  writeFileSync(
+    join(dir, '.culm/journal.json'),
+    JSON.stringify({ paths: ['site.json'] }),
+  )
+  writeFileSync(join(dir, 'site.json'), 'half written')
+  assert.equal((await headOf(store)).revision, r0)
+  assert.deepEqual(await readProject(dir), old)
+  assert.ok(!existsSync(join(dir, '.culm/journal.json')))
 })
