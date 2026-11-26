@@ -2281,3 +2281,52 @@ test('tablet hidden true cascades display:none to phone even when dark hidden is
   })
   assert.match(phoneOf(css), /display:none/)
 })
+
+test('a dark layer that hides follows the tablet and phone rules that restore display', () => {
+  const dark = { dark: { hidden: true } }
+  const after = (w: Partial<Node>, kids?: Node[]) => {
+    const t: Node = {
+      ...page,
+      children: [
+        {
+          ...txt('x', { x: 0, y: 0, w: 4, h: 2, z: 0 }),
+          ...w,
+          ...(kids ? { children: kids } : {}),
+        },
+      ],
+    }
+    const { css, classOf } = compileStyles(t, ctx())
+    const k = classOf.get('x')!
+    const rule = `:where(.s-site--live) .${k}{`
+    const end = css.indexOf('}', css.lastIndexOf(rule))
+    const none = `:where(.s-site.s-scheme-dark) .${k}{display:none}`
+    assert.match(
+      css,
+      new RegExp(`:where\\(\\.s-site--live\\) \\.${k}\\{[^}]*display:`),
+      'restores',
+    )
+    assert.ok(css.indexOf(none) > end, 'dark none follows the media rules')
+    assert.ok(
+      css.indexOf(
+        `@media (prefers-color-scheme: dark){:where(.s-site.s-scheme-auto) .${k}{display:none}}`,
+      ) > end,
+    )
+  }
+  after({ kind: 'text', hide: { desktop: true }, style: dark })
+  after({
+    kind: 'list',
+    style: { ...dark, base: { align: 'center' }, tablet: { align: 'stretch' } },
+  } as Partial<Node>)
+  after(
+    {
+      kind: 'box',
+      style: dark,
+    } as Partial<Node>,
+    [
+      {
+        ...txt('w', { x: 0, y: 0, w: 4, h: 2, z: 0 }),
+        placement: { mode: 'wrap-start', phone: { mode: 'normal' } },
+      } as Node,
+    ],
+  )
+})

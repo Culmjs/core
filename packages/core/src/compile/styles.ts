@@ -396,6 +396,8 @@ export function prepareStyles(
       )
       // The three layouts write z-index themselves, below.
       if (v === 'base' || v === 'tablet' || v === 'phone') delete d.z
+      // Dark's hiding is written late (see `Extra.dark`), after the tablet and phone display restores that would otherwise show it again.
+      if (v === 'dark') delete d.hidden
       // A transform is one declaration, so a layer that sets any part restates the parts it inherits (state layers and dark take base; phone takes base then tablet).
       if (v !== 'base' && TF.some(k => d[k] !== undefined)) {
         const from = v === 'phone' ? [st.base, st.tablet] : [st.base]
@@ -817,9 +819,10 @@ export function prepareStyles(
       own,
     )
     const extra: Extra | undefined =
-      ownAll || whens.length
+      ownAll || whens.length || st.dark?.hidden
         ? {
-            key: `${ownAll?.key ?? ''}|${JSON.stringify(whens)}`,
+            key: `${ownAll?.key ?? ''}|${JSON.stringify(whens)}|${!!st.dark?.hidden}`,
+            dark: !!st.dark?.hidden,
             restoresInline: whens.some(
               x => x.late && x.css === 'display:inline',
             ),
@@ -1055,6 +1058,17 @@ export function prepareStyles(
       css +=
         rules('tablet', c => `:where(.s-site--tablet, .s-site--phone) .${c}`) +
         rules('phone', c => `:where(.s-site--phone) .${c}`)
+    // A dark layer that hides follows the tablet and phone blocks too: they restore display at the same weight.
+    const darkHid = all.filter(e => e.extra?.dark)
+    if (darkHid.length) {
+      const hide = (scheme: string) =>
+        darkHid
+          .map(
+            e => `:where(.s-site.s-scheme-${scheme}) .${e.cls}{display:none}`,
+          )
+          .join('')
+      css += `${hide('dark')}@media (prefers-color-scheme: dark){${hide('auto')}}`
+    }
     // A state that shows or hides a block wins on every layout, so it follows the phone blocks.
     css += all
       .map(e => e.extra?.show?.(e.cls, inline?.has(e.cls)) ?? '')

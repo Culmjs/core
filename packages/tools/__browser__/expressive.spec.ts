@@ -328,3 +328,45 @@ test('a fetched icon with no fill is drawn in the text colour in dark mode', asy
     await page.close()
   }
 })
+
+test('a block hidden in dark stays hidden on a phone in dark and shows in light', async () => {
+  const doc: SiteDocument = structuredClone(project.loaded.doc!)
+  doc.look.dark = 'auto'
+  const home = doc.pages.find(p => p.id === 'home')!.root
+  home.children = [
+    ...home.children!,
+    {
+      id: 'darkhid',
+      kind: 'text',
+      name: 'Dark hidden',
+      slot: {},
+      props: { level: 'p', runs: [{ text: 'only in light' }] },
+      hide: { desktop: true },
+      style: { dark: { hidden: true } },
+    } as Node,
+  ]
+  const out = compilePage(doc, 'home', {
+    registry: project.registry,
+    mode: 'measure',
+    links: { page: slug => slug, file: id => `/assets/${id}` },
+  })
+  assert.ok(out.ok, out.ok ? '' : JSON.stringify(out.problems))
+  const page = await browser.newPage()
+  try {
+    const html = out.html
+    await page.answer(async url =>
+      new URL(url).pathname === '/'
+        ? { type: 'text/html; charset=utf-8', body: html }
+        : undefined,
+    )
+    assert.ok((await page.goto('https://site.culm.invalid/', 15000)).ok)
+    await page.setViewport(390, 900)
+    const read = `(() => { const e = [...document.querySelectorAll('*')].find(x => x.children.length === 0 && x.textContent === 'only in light'); return getComputedStyle(e).display })()`
+    await page.setScheme('dark')
+    assert.equal(await page.evaluate<string>(read), 'none')
+    await page.setScheme('light')
+    assert.notEqual(await page.evaluate<string>(read), 'none')
+  } finally {
+    await page.close()
+  }
+})

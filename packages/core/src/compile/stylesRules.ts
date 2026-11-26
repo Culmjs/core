@@ -78,6 +78,8 @@ export const OWN = (spec: KindSpec, v: Variant) =>
 export type Extra = {
   key: string
   restoresInline?: boolean
+  /** The dark layer hides the block: its `display:none` is written after the tablet and phone blocks. */
+  dark?: boolean
   base?: (cls: string) => string
   when?: (cls: string) => string
   show?: (cls: string, motionInline?: boolean) => string
