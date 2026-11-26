@@ -145,7 +145,7 @@ export function resolveProviderName(
     return chosen as ImageProviderName
   // a project opts in with an `images` key (or CULM_IMAGE_PROVIDER); a stray API key alone never spends money
   if (!config) return undefined
-  if (config?.endpoint || env.CULM_IMAGE_ENDPOINT) return 'http'
+  if (config.endpoint || env.CULM_IMAGE_ENDPOINT) return 'http'
   if (env.GEMINI_API_KEY) return 'gemini'
   if (env.OPENAI_API_KEY) return 'openai'
   if ((pe.hasBinary ?? (n => binaryOnPath(n, env)))('higgsfield'))
