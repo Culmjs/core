@@ -405,6 +405,14 @@ export async function fileStore(
     if (!(await pending())) return
     const release = await takeLock()
     try {
+      await undo()
+    } finally {
+      await release()
+    }
+  }
+  /** Rolls back a half-written commit. The caller holds the lock. */
+  async function undo() {
+    {
       const now2 = await state()
       if (now2.kind !== 'ok') return
       for (const n of await numbers())
@@ -436,8 +444,6 @@ export async function fileStore(
         await rm(journalPath, { force: true })
       }
       await rm(join(culm, 'tmp'), { recursive: true, force: true })
-    } finally {
-      await release()
     }
   }
 
@@ -481,6 +487,7 @@ export async function fileStore(
   // ------------------------------------------------------------------- store
   const store: SiteStore = {
     async head() {
+      if (await exists(journalPath)) await recover() // another process's half-written commit
       const st = await state()
       if (st.kind === 'bad') return { problems: [st.problem] }
       const loaded = await loadFolder(dir, registry)
@@ -545,6 +552,7 @@ export async function fileStore(
       /** Step 9's hook for a commit that ends early, then the lock is released. */
       const end = <T>(r: T): T => (hook(9), r)
       try {
+        if (await exists(journalPath)) await undo()
         const st = await state()
         if (st.kind === 'bad')
           return end<Refusal>({
@@ -663,28 +671,6 @@ export async function fileStore(
             problems: verified.problems,
           })
         hook(4)
-        // 5. the journal
-        await put(journalPath, JSON.stringify({ paths }))
-        hook(5)
-        // 6. blobs, then each file through a temporary name and a rename
-        await blobs(next)
-        let hooked = false
-        for (const [p, t] of Object.entries(writes)) {
-          await projectFile(p, t)
-          if (!hooked) {
-            hooked = true
-            hook(6)
-          }
-        }
-        for (const p of edits.remove) {
-          await projectFile(p)
-          if (!hooked) {
-            hooked = true
-            hook(6)
-          }
-        }
-        if (!hooked) hook(6)
-        // 7. the revision record
         const revision = head + 1
         const result: ApplyResult = c.result.ok
           ? {
@@ -693,20 +679,48 @@ export async function fileStore(
               notes: [...c.result.notes, ...edits.notes],
             }
           : c.result
-        const rec: Rec = {
-          files: hashes(next),
-          by: 'culm',
-          key: c.key,
-          request: c.request,
-          ...(c.receipt ? { receipt: c.receipt } : {}),
-          result,
-          time: now(),
+        try {
+          // 5. the journal
+          await put(journalPath, JSON.stringify({ paths }))
+          hook(5)
+          // 6. blobs, then each file through a temporary name and a rename
+          await blobs(next)
+          let hooked = false
+          for (const [p, t] of Object.entries(writes)) {
+            await projectFile(p, t)
+            if (!hooked) {
+              hooked = true
+              hook(6)
+            }
+          }
+          for (const p of edits.remove) {
+            await projectFile(p)
+            if (!hooked) {
+              hooked = true
+              hook(6)
+            }
+          }
+          if (!hooked) hook(6)
+          // 7. the revision record
+          const rec: Rec = {
+            files: hashes(next),
+            by: 'culm',
+            key: c.key,
+            request: c.request,
+            ...(c.receipt ? { receipt: c.receipt } : {}),
+            result,
+            time: now(),
+          }
+          await put(recPath(revision), JSON.stringify(rec))
+          hook(7)
+          // 8. head: the commit
+          await put(join(culm, 'head'), `${revision}\n`)
+          hook(8)
+        } catch (e) {
+          // Roll back now, under the lock, so this store serves the last good site. The original error wins if undo also fails.
+          await undo().catch(() => {})
+          throw e
         }
-        await put(recPath(revision), JSON.stringify(rec))
-        hook(7)
-        // 8. head: the commit
-        await put(join(culm, 'head'), `${revision}\n`)
-        hook(8)
         // 9. journal, pruning, lock
         await rm(journalPath, { force: true })
         await prune(revision)

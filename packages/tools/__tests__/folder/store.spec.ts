@@ -558,6 +558,11 @@ test('a lock left by a dead process is taken over by recovery', async () => {
   const old = await readProject(dir)
   crash = true
   await assert.rejects(apply(store, registry, both(r0, 'k')), /crash/)
+  // the failed commit now rolls itself back, so plant what a killed process would leave
+  writeFileSync(
+    join(dir, '.culm/journal.json'),
+    JSON.stringify({ paths: ['site.json'] }),
+  )
   writeFileSync(
     join(dir, '.culm/lock'),
     JSON.stringify({ pid: 99_999_999, time: Date.now(), token: 'dead' }),
@@ -621,4 +626,30 @@ test('a revision record that names a path outside the project is damage; restore
   )
   assert.ok(!existsSync(join(dir, '..', 'evil.json')))
   rmSync(join(dir, '..', 'evil.json'), { force: true })
+})
+
+test('a commit that throws while writing files leaves the last good site in the same store', async () => {
+  let crash = true
+  const { dir, registry, store } = await open(two(), {
+    after: n => {
+      if (crash && n === 6) {
+        crash = false
+        throw new Error('disk full')
+      }
+    },
+  })
+  const r0 = (await headOf(store)).revision
+  const before = readFileSync(join(dir, 'site.json'), 'utf8')
+  const batch = (key: string) =>
+    req(r0, key, [{ op: 'addPage', title: 'About2', slug: '/about2' }])
+  await assert.rejects(apply(store, registry, batch('k')), /disk full/)
+  const h = await store.head(SITE)
+  assert.ok('revision' in h, JSON.stringify(h))
+  assert.equal(h.revision, r0)
+  assert.equal(readFileSync(join(dir, 'site.json'), 'utf8'), before)
+  assert.equal(existsSync(join(dir, 'pages/about2.json')), false)
+  assert.equal(existsSync(join(dir, '.culm/journal.json')), false)
+  const again = await apply(store, registry, batch('k2'))
+  assert.ok(again.ok)
+  assert.equal((await headOf(store)).revision, r0 + 1)
 })
