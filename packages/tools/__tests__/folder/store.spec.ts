@@ -278,25 +278,33 @@ const refused = async (m: Awaited<ReturnType<typeof mutated>>) => {
   const culm = readdirSync(join(m.o.dir, '.culm'))
   assert.ok(!culm.includes('journal.json') && !culm.includes('lock'))
 }
-// JSON cannot keep a key set to undefined, so the files load without it
-const hole = (doc: SiteDocument) =>
-  Object.assign(doc.pages[1]!.root.children![0]!, { name: undefined })
+// the files never carry schemaVersion, so they load to the current one: a defined value that differs and loads cleanly
+const rename = (doc: SiteDocument) => Object.assign(doc, { schemaVersion: 999 })
 
-test('a commit whose files do not load to the planned document is refused', async () => {
-  await refused(await mutated([set('t1', 'A')], hole))
+test('a commit whose files do not load to the planned document is refused, with a message', async () => {
+  const m = await mutated([set('t1', 'A')], rename)
+  await refused(m)
+  assert.match(JSON.stringify(m.r), /do not load to the planned document/)
 })
 
-test('with the look unchanged a mismatch confined to styles or fonts is refused', async () => {
-  await refused(
-    await mutated([set('t1', 'A')], d => {
-      Object.assign(d.styles ?? (d.styles = {} as never), { extra: undefined })
-    }),
+// ponytail: no fonts arm. `fonts` is written to site.json whenever the plan changes it and read back as written, so no defined fonts value both loads cleanly and differs from the plan.
+test('with the look unchanged a mismatch confined to styles is refused by the comparison', async () => {
+  // the loader fills a styles object from the look, so a bare `{}` plan loads to something else without any loader problem
+  const m = await mutated([set('t1', 'A')], d =>
+    Object.assign(d, { styles: {} as never }),
   )
-  await refused(
-    await mutated([set('t1', 'A')], d =>
-      Object.assign(d, { fonts: [...d.fonts, undefined] }),
-    ),
-  )
+  await refused(m)
+  assert.match(JSON.stringify(m.r), /do not load to the planned document/)
+})
+
+test('a -0 in the plan commits: the file holds 0 and the plan is compared as JSON', async () => {
+  const m = await mutated([set('t1', 'A')], d => {
+    const n = d.pages[1]!.root.children![0]! as unknown as {
+      style: { base: Record<string, unknown> }
+    }
+    n.style = { ...n.style, base: { ...n.style?.base, opacity: -0 } }
+  })
+  assert.ok(m.r.ok, JSON.stringify(m.r))
 })
 
 for (const key of ['headingFont', 'bodyFont'] as const)

@@ -668,19 +668,29 @@ export async function fileStore(
         for (const f of loaded.files)
           if (!covered(f.path)) verifyMap.set(f.path, f.text)
         const verified = await loadFiles(verifyMap, registry)
+        // the files are JSON, so compare the plan as JSON too (-0 and undefined-valued keys do not survive a write)
+        const planned = JSON.parse(JSON.stringify(c.doc)) as SiteDocument
         if (
           !verified.doc ||
           verified.problems.length ||
           !sameDoc(
             verified.doc,
-            c.doc,
-            !isDeepStrictEqual(loaded.doc.look, c.doc.look),
+            planned,
+            !isDeepStrictEqual(loaded.doc.look, planned.look),
           )
         )
           return end<Refusal>({
             ok: false,
             code: 'SOURCE_CONFLICT',
-            problems: verified.problems,
+            problems: verified.problems.length
+              ? verified.problems
+              : [
+                  {
+                    code: 'SOURCE_CONFLICT',
+                    message:
+                      'The files that were written do not load to the planned document.',
+                  },
+                ],
           })
         hook(4)
         const revision = head + 1
