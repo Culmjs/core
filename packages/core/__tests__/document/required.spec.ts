@@ -62,7 +62,7 @@ const withComps = (page: Node[], components: Component[]) => {
   return d
 }
 // textSizes
-test('yields size from a node layer, a run style, a named text style, and the min of a fluidSize, each with its path', () => {
+test('yields size from a node layer, a run style, a named text style, and both ends of a fluidSize, each with its path', () => {
   const doc = siteWith([
     text('a', 'x', { style: { phone: { size: 14 } } }),
     {
@@ -90,10 +90,11 @@ test('yields size from a node layer, a run style, a named text style, and the mi
       { size: 18, path: 'styles.text.0.decl.size' },
       { size: 20, nodeId: 'b', path: 'props.runs.0.style.size' },
       { size: 30, nodeId: 'c', path: 'style.when.0.decl.size' },
+      { size: 40, nodeId: 'c', path: 'style.base.fluidSize.max' },
     ],
   )
 })
-test('reads the min of a fluidSize in a named text style and in a run style, and only the runs prop', () => {
+test('reads both ends of a fluidSize in a named text style and in a run style, and only the runs prop', () => {
   const doc = siteWith([
     {
       ...text('b', 'x'),
@@ -124,6 +125,8 @@ test('reads the min of a fluidSize in a named text style and in a run style, and
     [
       { size: 11, nodeId: 'b', path: 'props.runs.1.style.fluidSize.min' },
       { size: 12, path: 'styles.text.0.decl.fluidSize.min' },
+      { size: 20, nodeId: 'b', path: 'props.runs.1.style.fluidSize.max' },
+      { size: 30, path: 'styles.text.0.decl.fluidSize.max' },
     ],
   )
 })
