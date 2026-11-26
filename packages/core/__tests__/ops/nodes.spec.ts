@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import { compilePage } from '../../src/compile/index.ts'
 import {
   find,
+  move as moveNode,
   type Component,
   type Node,
   type SiteDocument,
@@ -432,6 +433,31 @@ test('move within one parent counts the index after the node leaves', () => {
     ['d', 'c'],
   )
   invalid(mv({ parent: 'b', index: 2 }), { path: 'index' })
+})
+test('move to another index of the same parent keeps the slot', () => {
+  const row = siteWith([
+    node('r', 'row', [
+      node('a', 'box', undefined, { grow: 1, align: 'center' }),
+      node('b', 'box', undefined, { grow: 2, align: 'end' }),
+    ]),
+  ])
+  const r = ok(run('move', row, { id: 'b', parent: 'r', index: 0 }))
+  assert.deepEqual(
+    nodeOf(r.doc, 'r').children!.map(c => c.id),
+    ['b', 'a'],
+  )
+  assert.deepEqual(nodeOf(r.doc, 'b').slot, { grow: 2, align: 'end' })
+  const free = siteWith([
+    node('f', 'free', [
+      node('a', 'box'),
+      node('b', 'box', undefined, { x: 1, y: 9, w: 4, h: 2, z: 2 }),
+    ]),
+  ])
+  const q = ok(run('move', free, { id: 'b', parent: 'f', index: 0 }))
+  assert.deepEqual(nodeOf(q.doc, 'b').slot, { x: 1, y: 9, w: 4, h: 2, z: 2 })
+  // With `at` given, the slot is what `at` says.
+  const root = moveNode(rootOf(free, T)!, 'b', 'f', 0, { x: 3, y: 5 })
+  assert.deepEqual(find(root, 'b')!.slot, { x: 3, y: 5, w: 4, h: 4, z: 0 })
 })
 test('move writes a given slot', () => {
   const r = ok(mv({ slot: { grow: 3 } }))

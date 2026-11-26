@@ -123,7 +123,12 @@ export function move(
 ): Node {
   const w = find(root, id)!
   const parent = find(root, parentId)!
-  const moved = { ...structuredClone(w), slot: slotFor(parent.kind, w, at) }
+  // A reorder inside one parent (no `at`) keeps the slot; compared before the node leaves.
+  const same = at === undefined && parentOf(root, id)?.id === parentId
+  const moved = {
+    ...structuredClone(w),
+    slot: same ? structuredClone(w.slot) : slotFor(parent.kind, w, at),
+  }
   // Index counts positions after the node leaves its old place.
   return edit(root, copy => {
     const old = parentOf(copy, id)
