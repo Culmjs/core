@@ -8,11 +8,12 @@
 
 **Stage 4 production release (`host-c3f76b6df86ca585`):** The compatibility fixes, WASM `field-v1` (`ripple_field`) integration, and checked worker now fit within the authorized **9,513-byte** `gpuHostScript` ceiling and immovable **20,000-byte** `sharedScripts` page budget (**17,429 B** standard mixed, **19,962 B** interactive unreviewed mixed — 38 bytes under ceiling). All four 180-frame captures remain byte-identical to the EA IRIS-qualified clips (`clipSha256` verified under [evidence/iris/host-c3f76b6df86ca585](evidence/iris/host-c3f76b6df86ca585/summary.json)).
 
-| Approved ceiling                                    | Measured fixture | Basis                                                                                                                                  |
-| --------------------------------------------------- | ---------------: | -------------------------------------------------------------------------------------------------------------------------------------- |
-| 9,513 bytes for the lazy host, including its worker |            9,513 | Complete checked host (**6,125 B** host + **3,388 B** embedded worker) with border/stacking compatibility and WASM `field-v1` runtime. |
-| 512 raw WASM bytes per used module                  |              382 | 130 bytes above the assembled, bounded ripple field (`ripple_field`).                                                                  |
-| 684 UTF-8 bytes of base64 per used module           |              512 | `4 × ceil(512 / 3)` at the approved raw ceiling. Report both sizes; they describe the same module.                                     |
+| Approved ceiling                                    | Measured fixture | Basis                                                                                                                                                |
+| --------------------------------------------------- | ---------------: | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 9,513 bytes for the lazy host, including its worker |            9,513 | Complete checked host (**6,125 B** host + **3,388 B** embedded worker) with border/stacking compatibility and WASM `field-v1` runtime.               |
+| 512 raw WASM bytes per used module                  |              382 | 130 bytes above the assembled, bounded ripple field (`ripple_field`).                                                                                |
+| 684 UTF-8 bytes of base64 per used module           |              512 | `4 × ceil(512 / 3)` at the approved raw ceiling. Report both sizes; they describe the same module.                                                   |
+| 16,384 bytes of shader source per page              |              n/a | Total of the final inlined sources (each ends in a newline), checked by `checkBudgets` as `gpuShaderData`; WASM limits are enforced at registration. |
 
 ## Reproduce
 

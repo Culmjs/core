@@ -7,6 +7,7 @@ import { runInNewContext } from 'node:vm'
 import { shareScriptKeys } from '../share-script-keys.ts'
 import { render, renderProbe, renderGpuWorker } from '../gen-scripts.ts'
 import { renderWasmModule } from '../gen-gpu-wasm.ts'
+import { WASM_LIMITS } from '../../packages/core/src/registry/gpu.ts'
 import { BUDGETS, byteLength } from '../../packages/core/src/compile/budgets.ts'
 import { PROBE_SCRIPT } from '../../packages/core/src/measure/probeMin.ts'
 import {
@@ -49,8 +50,8 @@ test('rippleModule.ts is up to date and within fixed WASM ceilings', async () =>
   )
   assert.equal(actual, await renderWasmModule(), 'run `npm run gen:wasm`')
   const raw = Buffer.from(RIPPLE_WASM_BASE64, 'base64')
-  assert.ok(raw.length > 0 && raw.length <= BUDGETS.wasmBytes)
-  assert.ok(byteLength(RIPPLE_WASM_BASE64) <= BUDGETS.wasmTransportBytes)
+  assert.ok(raw.length > 0 && raw.length <= WASM_LIMITS.wasmBytes)
+  assert.ok(byteLength(RIPPLE_WASM_BASE64) <= WASM_LIMITS.wasmTransportBytes)
   assert.equal(
     createHash('sha256').update(raw).digest('hex'),
     RIPPLE_WASM_SHA256,

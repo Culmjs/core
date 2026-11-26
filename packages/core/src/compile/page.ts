@@ -268,14 +268,14 @@ const anyElement = (
   (f(e) || (e.children ?? []).some(c => anyElement(c, f)))
 // The GPU reservation counts inside SVG glyphs too. Their checked raw bodies
 // contain only SVG tags and local drawing attributes; never scan script/data.
-const countElements = (e: HtmlNode | string, glyphs: boolean): number =>
+const countElements = (e: HtmlNode | string): number =>
   typeof e === 'string'
     ? 0
     : 1 +
-      (glyphs && e.raw?.kind === 'icon'
+      (e.raw?.kind === 'icon'
         ? (e.raw.content.match(/<[a-z]/g)?.length ?? 0)
         : 0) +
-      (e.children ?? []).reduce((n, c) => n + countElements(c, glyphs), 0)
+      (e.children ?? []).reduce((n, c) => n + countElements(c), 0)
 
 /** A published header or footer with nothing in it, or hidden, draws no strip. The editor always keeps both, so there is somewhere to drop blocks. */
 const shows = (w: Node, mode: 'edit' | 'live') =>
@@ -391,7 +391,7 @@ export function build(
   if (motion?.problems.length) return { ok: false, problems: motion.problems }
   // Pin meters, their table/list wrappers and compound path geometry are now
   // in the emitted tree. GPU lowering only adds attributes to this subtree.
-  const siteCount = countElements(site, hasGpu)
+  const siteCount = countElements(site)
   const gpu =
     hasGpu && rendered && effects
       ? lowerGpu(

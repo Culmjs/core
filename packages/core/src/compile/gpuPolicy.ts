@@ -47,7 +47,7 @@ export function scriptPolicy(
 ) {
   const sources = [...new Set(hashes)].map(h => `'${h}'`)
   if (wasm) sources.push("'wasm-unsafe-eval'")
-  return `script-src ${sources.join(' ') || "'none'"}; worker-src ${worker ? 'blob:' : "'none'"}`
+  return `script-src ${sources.join(' ') || "'none'"}; worker-src ${worker ? 'blob:' : "'none'"}; base-uri 'none'; object-src 'none'`
 }
 
 export const policyMeta = (content: string) =>

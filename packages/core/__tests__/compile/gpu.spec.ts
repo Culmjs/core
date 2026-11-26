@@ -13,6 +13,7 @@ import {
   type Node,
   type SiteDocument,
 } from '../../src/index.ts'
+import { WASM_LIMITS } from '../../src/registry/gpu.ts'
 import { DEMO_PLUGIN, node, siteWith, text, twoPages } from '../kit.ts'
 import { DomUtils, parseDocument } from 'htmlparser2'
 
@@ -297,8 +298,13 @@ test('a rendered owner can lose its last visible descendant during data/sample a
 
 test('host and joined shared limits are inclusive; shader and module bytes are not JS', () => {
   assert.deepEqual(
-    [BUDGETS.gpuHostScript, BUDGETS.wasmBytes, BUDGETS.wasmTransportBytes],
-    [9513, 512, 684],
+    [
+      BUDGETS.gpuHostScript,
+      WASM_LIMITS.wasmBytes,
+      WASM_LIMITS.wasmTransportBytes,
+      BUDGETS.gpuShaderData,
+    ],
+    [9513, 512, 684, 16_384],
   )
   const p = page(siteWith())
   const findings = (gpuHost: number, gpuLoader: number) =>
@@ -634,4 +640,63 @@ test('a header owner beside a runnable owner in main emits only the runnable one
   assert.equal(regions.length, 1)
   assert.equal(p.html.match(/data-culm-gpu=/g)!.length, 1)
   assert.match(p.html, /Real heading/)
+})
+
+test('shader source on one page is held to a ceiling', () => {
+  // 4,095 bytes + the newline the host appends = 4,096 shipped bytes each.
+  const defs = Array.from({ length: 5 }, (_, i): CustomEffect => {
+    const head = 'vec4 shade(vec2 uv){return vec4(uv,0.0,1.0);}//'
+    return {
+      ...def,
+      name: `big${i}`,
+      source: head + 'x'.repeat(4095 - head.length),
+      settings: {},
+    }
+  })
+  const build = (n: number) =>
+    compilePage(
+      siteWith(
+        defs.slice(0, n).map(d => owner(`o${d.name}`, d.name)),
+        { customEffects: defs.slice(0, n) },
+      ),
+      'home',
+      { registry },
+    )
+  const four = build(4)
+  assert.ok(four.ok, JSON.stringify(four.problems))
+  assert.equal(four.stats.gpuData?.shaderBytes, 16_384)
+  assert.deepEqual(four.problems, [])
+  const five = build(5)
+  assert.ok(five.ok)
+  assert.equal(five.stats.gpuData?.shaderBytes, 20_480)
+  assert.deepEqual(
+    five.problems.map(x => [x.code, x.path]),
+    [['RESOURCE_LIMIT_EXCEEDED', 'gpuShaderData']],
+  )
+})
+
+test('the element count does not depend on a GPU attachment', () => {
+  // A GPU attachment adds the live canvas and the inert data script, nothing
+  // else, whether or not the page carries an icon.
+  const added = (withIcon: boolean) => {
+    const hero = owner('hero', 'contours')
+    const doc = siteWith([
+      ...(withIcon
+        ? [{ ...node('glyph', 'icon'), props: { name: 'home' } }]
+        : []),
+      hero,
+    ])
+    const on = page(doc).stats.elements
+    delete hero.motion
+    return on - page(doc).stats.elements
+  }
+  assert.equal(added(true), added(false))
+})
+
+test('the policy closes base-uri and object-src', () => {
+  const p = page(siteWith([node('box1', 'box')]))
+  assert.match(policy(p.html), /; base-uri 'none'; object-src 'none'$/)
+  const site = compileSite(siteWith([node('box1', 'box')]), { registry })
+  const headers = site.files.find(f => f.path === '_headers')!.content
+  assert.match(headers, /base-uri 'none'; object-src 'none'/)
 })

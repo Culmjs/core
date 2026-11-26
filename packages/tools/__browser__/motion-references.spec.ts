@@ -315,11 +315,11 @@ test('pre-stage control bytes, script-free editor and the shipped feature mixes'
   )
   assert.equal(
     sha(control.html),
-    'b39ca828d10fb1cf164dbff24e9681e9d5e3ad28349be717532385b92201979a',
+    '17844982c81b98e0af04cab352ce03732701e24c4ed2612a6949372dd76ee470',
   )
   assert.equal(
     sha(JSON.stringify(site)),
-    '29b2058b5a78dcbe5d1877f8c27d78a53f53b347784df9c3f92b3e738c90edeb',
+    'c692990442db90ac0dee80873088dd5c8b9d74cacc5ef3915f961b821ad1f153',
   )
   for (const scene of [
     'box',

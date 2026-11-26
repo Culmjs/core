@@ -457,7 +457,7 @@ test('an explicitly measured draft runs its own joined state script under its pa
   const hash = createHash('sha256')
     .update(standalone.scripts.map(s => s.code).join(';'))
     .digest('base64')
-  const expected = `script-src 'sha256-${hash}'; worker-src 'none'`
+  const expected = `script-src 'sha256-${hash}'; worker-src 'none'; base-uri 'none'; object-src 'none'`
   assert.ok(!deployed.includes(hash))
   const b = await openBrowser()
   assert.ok(b.ok)

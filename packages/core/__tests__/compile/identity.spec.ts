@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { FRAMEWORK_VERSION, buildIdentity } from '../../src/compile/index.ts'
+import { SCRIPTS_DIGEST } from '../../src/scripts/scriptsMin.ts'
 import { createRegistry } from '../../src/registry/index.ts'
 import { siteWith, text } from '../kit.ts'
 
@@ -137,4 +138,12 @@ test('what is hashed is the JSON form of the rows and values: a function value, 
     { rows: { a: [{ m: {} }] } },
   )
   await same({ ...data, values: null }, data)
+})
+
+test('a changed shipped script changes the identity', async () => {
+  const real = await buildIdentity(doc(), data, reg(), files)
+  const same = await buildIdentity(doc(), data, reg(), files, SCRIPTS_DIGEST)
+  const other = await buildIdentity(doc(), data, reg(), files, 'different')
+  assert.equal(real, same)
+  assert.notEqual(real, other)
 })

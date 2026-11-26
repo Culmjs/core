@@ -265,19 +265,19 @@ Each of these validates first. If the document, the rows or an option has a prob
 
 ### Budgets
 
-| What                             | Ceiling              |
-| -------------------------------- | -------------------- |
-| All shared scripts on a page     | 20,000 bytes         |
-| Base script                      | 10,000 bytes         |
-| States script                    | 6,193 bytes          |
-| Timeline script                  | 8,192 bytes          |
-| GPU host script (`_culm/gpu.js`) | 9,513 bytes          |
-| WASM module per used effect      | 512 raw / 684 base64 |
-| CSS per page                     | 16,000 bytes         |
-| Elements per page                | 2,000                |
-| Nesting depth                    | 12                   |
+| What                             | Ceiling      |
+| -------------------------------- | ------------ |
+| All shared scripts on a page     | 20,000 bytes |
+| Base script                      | 10,000 bytes |
+| States script                    | 6,193 bytes  |
+| Timeline script                  | 8,192 bytes  |
+| GPU host script (`_culm/gpu.js`) | 9,513 bytes  |
+| Shader source per page           | 16,384 bytes |
+| CSS per page                     | 16,000 bytes |
+| Elements per page                | 2,000        |
+| Nesting depth                    | 12           |
 
-Sizes are raw minified bytes. `compilePage` reports a page that passes a ceiling as a `RESOURCE_LIMIT_EXCEEDED` problem and returns its real figures in `stats`.
+Sizes are raw minified bytes. Shader source counts the final text shipped, one trailing newline per definition. The 512-byte raw / 684-byte base64 WASM module ceilings are enforced when an effect is registered, not per page. `compilePage` reports a page that passes a ceiling as a `RESOURCE_LIMIT_EXCEEDED` problem and returns its real figures in `stats`.
 
 CSS-only motion ships no timeline script. The shared 20,000-byte cap applies independently of the individual script ceilings. The [stage comparison](motion/exit.md) gives measured byte totals and the desktop and phone frames the owner accepted; the Stage 3c blind recreate rerun and the matched [Culm vs. Astro & GSAP comparison](comparison/README.md) are closed.
 

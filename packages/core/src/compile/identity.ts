@@ -2,6 +2,7 @@ import { canonicalJson, sha256 } from '../document/hash.ts'
 import type { Node, SiteDocument } from '../document/index.ts'
 import type { Data } from '../data/query.ts'
 import type { GpuEffectDef, Registry } from '../registry/index.ts'
+import { SCRIPTS_DIGEST } from '../scripts/scriptsMin.ts'
 import { decodeBase64, sha256BytesHex } from '../registry/sha256.ts'
 
 function collectUsedGpu(doc: SiteDocument): {
@@ -58,7 +59,7 @@ function gpuIdentity(doc: SiteDocument, registry: Registry) {
 export const FRAMEWORK_VERSION = '0.0.0'
 
 /**
- * One SHA-256 (lower-case hex) over the document, the rows and values, the framework version, every plug-in's name and version in name order, and the
+ * One SHA-256 (lower-case hex) over the document, the rows and values, the framework version, the digest of the shipped scripts, every plug-in's name and version in name order, and the
  * font and asset files passed (sorted by path, then by hash, so the same set of pairs in any order is the same build). Pass the same rows the compiler
  * gets: they are hashed as given, so the same rows in another order are another build.
  *
@@ -72,6 +73,7 @@ export async function buildIdentity(
   data: Data,
   registry: Registry,
   files?: readonly { path: string; sha256: string }[],
+  scriptsDigest: string = SCRIPTS_DIGEST,
 ): Promise<string> {
   const plugins = registry.plugins().map(p => [p.name, p.version])
   const sorted = files
@@ -87,6 +89,7 @@ export async function buildIdentity(
       data.rows,
       data.values ?? null,
       FRAMEWORK_VERSION,
+      scriptsDigest,
       plugins,
       sorted ?? null,
       ...(gpu ? [gpu] : []),

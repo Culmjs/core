@@ -1,5 +1,4 @@
 import type { Problem } from '../document/index.ts'
-import { WASM_LIMITS } from '../registry/gpu.ts'
 
 export const BUDGETS = {
   sharedScripts: 20_000,
@@ -7,7 +6,8 @@ export const BUDGETS = {
   statesScript: 6_193,
   timelineScript: 8_192,
   gpuHostScript: 9_513,
-  ...WASM_LIMITS,
+  /** Inline shader source per page. WASM sizes are enforced at registration. */
+  gpuShaderData: 16_384,
   css: 16_000,
   elements: 2_000,
   depth: 12,
@@ -53,6 +53,7 @@ export function checkBudgets(stats: PageStats): Problem[] {
     ['timelineScript', timeline],
     ['gpuHostScript', gpuHost],
     ['sharedScripts', base + states + timeline + gpuLoader + gpuHost],
+    ['gpuShaderData', stats.gpuData?.shaderBytes ?? 0],
     ['elements', stats.elements],
     ['depth', stats.depth],
   ]

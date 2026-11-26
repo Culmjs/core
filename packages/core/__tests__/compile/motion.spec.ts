@@ -87,7 +87,7 @@ test('the published plain page matches the captured c11f84f fixture byte for byt
     'utf8',
   )
   const meta =
-    '<meta http-equiv="Content-Security-Policy" content="script-src &#39;sha256-iUY5Wv1bdMwf9jcnQARgZ1CVyfibEcYvjp28w14MH8A=&#39;; worker-src &#39;none&#39;">'
+    '<meta http-equiv="Content-Security-Policy" content="script-src &#39;sha256-iUY5Wv1bdMwf9jcnQARgZ1CVyfibEcYvjp28w14MH8A=&#39;; worker-src &#39;none&#39;; base-uri &#39;none&#39;; object-src &#39;none&#39;">'
   assert.equal(
     page(docFor()).html,
     plainBaselineHtml.replace(
