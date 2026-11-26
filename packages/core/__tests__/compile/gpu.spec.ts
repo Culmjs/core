@@ -112,7 +112,7 @@ test('two rendered copies share one checked definition and fixed lazy asset; JSO
   const tokens = [...p.html.matchAll(/data-culm-gpu="([^"]+)"/g)].map(m => m[1])
   assert.equal(new Set(tokens).size, 2)
   const { definitions, regions } = payload(p.html)
-  assert.deepEqual(definitions, [def])
+  assert.deepEqual(definitions, [{ ...def, source: def.source + '\n' }])
   assert.deepEqual(
     regions,
     tokens.map(owner => ({
@@ -141,7 +141,7 @@ test('two rendered copies share one checked definition and fixed lazy asset; JSO
     Buffer.byteLength(p.scripts.map(s => s.code).join(';') + host.content),
   )
   assert.deepEqual(p.stats.gpuData, {
-    shaderBytes: Buffer.byteLength(def.source),
+    shaderBytes: Buffer.byteLength(def.source + '\n'),
     wasmBytes: 0,
     wasmTransportBytes: 0,
   })
@@ -215,7 +215,7 @@ test('one host manifest entry across using pages; site policy is the union of ac
     bytesBase64: 'AAE=',
   })
   assert.deepEqual(p.stats.gpuData, {
-    shaderBytes: Buffer.byteLength(def.source),
+    shaderBytes: Buffer.byteLength(def.source + '\n'),
     wasmBytes: 2,
     wasmTransportBytes: 4,
   })
@@ -244,7 +244,7 @@ test('one host manifest entry across using pages; site policy is the union of ac
     { page: 'home', ...p.stats.gpuData },
     {
       page: 'about',
-      shaderBytes: Buffer.byteLength(def.source),
+      shaderBytes: Buffer.byteLength(def.source + '\n'),
       wasmBytes: 0,
       wasmTransportBytes: 0,
     },
@@ -593,4 +593,21 @@ test('the checked module envelope is a snapshot: read its values just once per b
   assert.equal(reads, 1)
   assert.equal(payload(p.html).definitions[0].wasm.bytesBase64, first)
   assert.equal(p.stats.gpuData?.wasmBytes, 512)
+})
+
+test('every lowered shader string ends with a newline so a trailing line comment cannot swallow the host main()', () => {
+  const trailing: CustomEffect = {
+    ...def,
+    name: 'tail',
+    source: 'vec4 shade(vec2 uv){return vec4(uv,0.0,1.0);} // end',
+  }
+  const doc = siteWith(
+    [owner('trusted', 'contours'), owner('custom', 'tail')],
+    {
+      customEffects: [trailing],
+    },
+  )
+  const defs = payload(page(doc).html).definitions
+  assert.ok(defs.length >= 2)
+  for (const d of defs) assert.ok(d.source.endsWith('\n'), d.name)
 })

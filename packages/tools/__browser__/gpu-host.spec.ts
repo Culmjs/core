@@ -7,6 +7,7 @@ import {
   compilePage,
   compileSubtree,
   checkShader,
+  type CustomEffect,
   type ShaderSettings,
   createRegistry,
   insertBlock,
@@ -1033,4 +1034,56 @@ test('checker-approved GLSL links on a real WebGL2 driver with the typed inputs 
     })
   })()`)
   assert.deepEqual(results, Array(fixtures.length).fill('linked'))
+})
+
+test('a custom shader ending in a line comment cannot switch off the builtin on the same page', async t => {
+  const tail: CustomEffect = {
+    name: 'tail',
+    source: 'vec4 shade(vec2 uv){return vec4(uv,0.0,1.0);} // end',
+    settings: {},
+  }
+  const registry = createRegistry({ gpu: { enabled: true, reviewed: [tail] } })
+  registry.use(starter)
+  const doc = await scenes.control()
+  doc.customEffects = [tail]
+  doc.pages[0].root.children!.unshift(
+    ...['contours', 'tail'].map(gpu => ({
+      ...node(gpu, 'box', [text(gpu + 'caption', 'Field notes')]),
+      style: {
+        base: {
+          height: { n: 160, unit: 'px' as const },
+          bg: '#123456' as const,
+        },
+      },
+      motion: { trigger: 'enter-view' as const, gpu },
+    })),
+  )
+  const c = compilePage(doc, 'home', { registry })
+  assert.ok(c.ok, JSON.stringify(c.problems))
+  const server = createServer((req, res) => {
+    if (req.url === '/_culm/gpu.js')
+      res.setHeader('content-type', 'text/javascript').end(c.assets![0].content)
+    else if (req.url === '/favicon.ico') res.writeHead(204).end()
+    else res.setHeader('content-type', 'text/html').end(c.html)
+  })
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r))
+  t.after(() => new Promise<void>(r => server.close(() => r())))
+  const b = await openBrowser()
+  assert.ok(b.ok, JSON.stringify(b))
+  t.after(() => b.browser.close())
+  const p = await b.browser.newPage()
+  t.after(() => p.close())
+  await p.unblock()
+  await p.setViewport(1280, 900)
+  await p.setReducedMotion(false)
+  assert.ok(
+    (
+      await p.goto(
+        `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+        10000,
+      )
+    ).ok,
+  )
+  await wait(p, `${active}===2`)
+  assert.deepEqual(p.errors, [])
 })

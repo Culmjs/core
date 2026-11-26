@@ -136,12 +136,16 @@ export function lowerGpu(
     if (definition === undefined) {
       definition = definitions.length
       indices.set(m.gpu, definition)
-      definitions.push(
-        GPU_CHECKED && reviewedSnapshot(authority, def)
-          ? { ...def, reviewed: true }
-          : def,
-      )
-      stats.shaderBytes += byteLength(def.source)
+      // The host appends its own main() right after this text: a trailing
+      // line comment must not swallow it.
+      const source = def.source.endsWith('\n') ? def.source : def.source + '\n'
+      definitions.push({
+        ...def,
+        source,
+        ...(GPU_CHECKED &&
+          reviewedSnapshot(authority, def) && { reviewed: true as const }),
+      })
+      stats.shaderBytes += byteLength(source)
       if (def.wasm) {
         stats.wasmBytes += moduleBytes(def.wasm.bytesBase64)
         stats.wasmTransportBytes += byteLength(def.wasm.bytesBase64)
