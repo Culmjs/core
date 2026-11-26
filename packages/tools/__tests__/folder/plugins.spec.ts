@@ -448,6 +448,11 @@ for (const [endpoint, ok] of [
   ['http://127.0.0.1:8080/x', true],
   ['http://localhost:8080/x', true],
   ['http://[::1]:8080/x', true],
+  ['http://localhost', true],
+  ['http://localhost:@evil.com/x', false],
+  ['http://localhost:8080@evil.com/x', false],
+  ['http://127.0.0.1:x@evil.com/x', false],
+  ['http://[::1]:1@evil.com/', false],
 ] as const)
   test(`images.endpoint ${endpoint} is ${ok ? 'accepted' : 'refused'}`, async () => {
     const r = await loadPlugins(
@@ -459,6 +464,9 @@ for (const [endpoint, ok] of [
     else {
       assert.equal(mine.length, 1)
       assert.equal(mine[0]!.code, 'INVALID_DOCUMENT')
-      assert.match(mine[0]!.message, /images\.endpoint/)
+      assert.equal(
+        mine[0]!.message,
+        '"images.endpoint" must be an https:// URL (http:// only for this machine).',
+      )
     }
   })

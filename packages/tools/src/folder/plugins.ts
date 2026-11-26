@@ -308,9 +308,7 @@ export async function loadPlugins(
           if (images.endpoint !== undefined) {
             if (
               typeof images.endpoint !== 'string' ||
-              !/^(https:\/\/|http:\/\/(127\.0\.0\.1|localhost|\[::1\])([:/]|$))\S+$/i.test(
-                images.endpoint,
-              )
+              !endpointOk(images.endpoint)
             )
               bad(
                 'INVALID_DOCUMENT',
@@ -520,4 +518,19 @@ export async function loadPlugins(
     })
   }
   return { registry, config, problems }
+}
+
+const endpointOk = (raw: string): boolean => {
+  try {
+    const u = new URL(raw)
+    return (
+      !u.username &&
+      !u.password &&
+      (u.protocol === 'https:' ||
+        (u.protocol === 'http:' &&
+          ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname)))
+    )
+  } catch {
+    return false
+  }
 }
