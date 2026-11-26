@@ -250,32 +250,69 @@ test('a file that changed between plan and write is SOURCE_CONFLICT and nothing 
   assert.ok(!readdirSync(join(dir, '.culm')).includes('lock'))
 })
 
-test('a commit whose files do not load to the planned document is refused', async () => {
+/** Commits `ops` on a fresh folder; at hook(3) `mutate` changes the planned document. */
+async function mutated(ops: unknown[], mutate?: (doc: SiteDocument) => void) {
   let doc: SiteDocument | undefined
-  let on = false
-  const o2 = await open(two(), {
+  const o = await open(two(), {
     after: n => {
-      // the plan keeps a key set to undefined: JSON cannot, so the files load without it
-      if (on && n === 3)
-        Object.assign(doc!.pages[1]!.root.children![0]!, { name: undefined })
+      if (n === 3 && doc && mutate) mutate(doc)
     },
   })
   const wrapped: SiteStore = {
-    ...o2.store,
+    ...o.store,
     commit: (site, c) => {
       doc = c.doc
-      return o2.store.commit(site, c)
+      return o.store.commit(site, c)
     },
   }
-  const r0 = (await headOf(o2.store)).revision
+  const r0 = (await headOf(o.store)).revision
   const files = () =>
-    Object.entries(snap(o2.dir)).filter(([p]) => !p.startsWith('.culm'))
+    Object.entries(snap(o.dir)).filter(([p]) => !p.startsWith('.culm'))
   const before = files()
-  on = true
-  const r = await apply(wrapped, o2.registry, req(r0, 'k', [set('t1', 'A')]))
-  assert.equal(codeOf(r), 'SOURCE_CONFLICT')
-  assert.deepEqual(files(), before)
+  const r = await apply(wrapped, o.registry, req(r0, 'k', ops))
+  return { o, r, same: () => assert.deepEqual(files(), before) }
+}
+const refused = async (m: Awaited<ReturnType<typeof mutated>>) => {
+  assert.equal(codeOf(m.r), 'SOURCE_CONFLICT')
+  m.same()
+  const culm = readdirSync(join(m.o.dir, '.culm'))
+  assert.ok(!culm.includes('journal.json') && !culm.includes('lock'))
+}
+// JSON cannot keep a key set to undefined, so the files load without it
+const hole = (doc: SiteDocument) =>
+  Object.assign(doc.pages[1]!.root.children![0]!, { name: undefined })
+
+test('a commit whose files do not load to the planned document is refused', async () => {
+  await refused(await mutated([set('t1', 'A')], hole))
 })
+
+test('with the look unchanged a mismatch confined to styles or fonts is refused', async () => {
+  await refused(
+    await mutated([set('t1', 'A')], d => {
+      Object.assign(d.styles ?? (d.styles = {} as never), { extra: undefined })
+    }),
+  )
+  await refused(
+    await mutated([set('t1', 'A')], d =>
+      Object.assign(d, { fonts: [...d.fonts, undefined] }),
+    ),
+  )
+})
+
+for (const key of ['headingFont', 'bodyFont'] as const)
+  test(`a setLook that changes ${key} on a folder without fonts commits`, async () => {
+    const o = await open(two())
+    const r0 = (await headOf(o.store)).revision
+    const h = await headOf(o.store)
+    assert.ok('doc' in h)
+    const look = { ...h.doc.look, [key]: 'sys:mono' }
+    const r = await apply(
+      o.store,
+      o.registry,
+      req(r0, 'k', [{ op: 'setLook', look }]),
+    )
+    assert.ok(r.ok, JSON.stringify(r))
+  })
 
 test('a second process holding the lock makes commit wait and then succeed', async () => {
   const { dir, registry, store } = await open(two())

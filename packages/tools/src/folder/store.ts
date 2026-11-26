@@ -25,11 +25,10 @@ import { fileEdits } from './write.ts'
 import { shaderInput, shaderParentOk, shaderPath } from './shaders.ts'
 import { inside, resolveFile } from './files.ts'
 
-// `styles` is left out: the loader re-derives the look-derived site styles, the plan keeps the old ones after setLook (siteStyles.ts:50-55).
-const sameDoc = (a: SiteDocument, b: SiteDocument) => {
-  const x = { ...a, styles: undefined }
-  const y = { ...b, styles: undefined }
-  return isDeepStrictEqual(x, y)
+// After a look change the loader re-derives the look-derived `fonts` and site `styles` from the new look (load.ts:731-735, siteStyles.ts:50-55) and the plan keeps the old ones, so only then are those two left out; an unchanged look compares everything.
+const sameDoc = (a: SiteDocument, b: SiteDocument, lookChanged: boolean) => {
+  const skip = lookChanged ? { styles: undefined, fonts: undefined } : {}
+  return isDeepStrictEqual({ ...a, ...skip }, { ...b, ...skip })
 }
 
 export const KEPT_REVISIONS = 200
@@ -672,7 +671,11 @@ export async function fileStore(
         if (
           !verified.doc ||
           verified.problems.length ||
-          !sameDoc(verified.doc, c.doc)
+          !sameDoc(
+            verified.doc,
+            c.doc,
+            !isDeepStrictEqual(loaded.doc.look, c.doc.look),
+          )
         )
           return end<Refusal>({
             ok: false,
