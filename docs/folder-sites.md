@@ -25,7 +25,7 @@ A project is a folder with a `culm.json`. Every `culm` command run outside one s
 
 All files are JSONC: JSON with comments. Culm keeps your comments, key order and indentation when it writes (see "What is kept when Culm writes").
 
-`culm init <folder>` writes a bakery site, with one of each file below, into a new or empty folder (`npx @culmjs/tools init my-site`, then `npm install`; before a release, see "First run" in [overview.md](overview.md#first-run) for `--from .pack`). A folder that holds anything, hidden files included, is refused. It also writes a `package.json`, a `culm.schema.json` and a `.gitignore`.
+`culm init <folder> [--blank]` writes a bakery site (or a minimal single-page starter with `--blank`), with one of each file below, into a new or empty folder (`npx @culmjs/tools init my-site`, then `npm install`; before a release, see "First run" in [overview.md](overview.md#first-run) for `--from .pack`). A folder that holds anything, hidden files included, is refused. It also writes a `package.json`, a `culm.schema.json` and a `.gitignore`.
 
 ## The files
 
@@ -36,6 +36,8 @@ All files are JSONC: JSON with comments. Culm keeps your comments, key order and
   "$schema": "./culm.schema.json",
   "plugins": [], // package names, imported from this folder's node_modules
   "out": "dist", // where `culm build` writes
+  // optional AI image generator for `image.generate` / `bgImage.generate` (cached in assets/gen/):
+  // "images": { "provider": "gemini" | "openai" | "higgsfield" | "http", "model"?: "...", "endpoint"?: "..." }
 }
 ```
 
@@ -51,12 +53,12 @@ All files are JSONC: JSON with comments. Culm keeps your comments, key order and
   "look": {
     /* a Look: id, name, family, brand, ink, bg, fonts, corners, dark */
   },
-  "styles": { "textRange": { "min": 11, "max": 96 } },
+  "styles": { "textRange": { "min": 11, "max": 96, "displayMax": 240 } },
   "fonts": ["sys:sans"],
   "languages": [{ "code": "en" }],
   "pages": ["home.json", "menu.json"], // order of pages; file names in pages/
-  "header": { "block": "pageheader" }, // a node, a short form or a use
-  "footer": { "block": "pagefooter" },
+  "header": { "block": "page-header" }, // a node, a short form or a use
+  "footer": { "block": "page-footer" },
 }
 ```
 
@@ -101,7 +103,7 @@ A page's `root`, and every child, is one of three things.
 
 - **A node** is the document's node with `id`, `slot` and `name` optional. A missing `slot` is the default for the parent's kind; a missing `name` is the kind's label.
 - **A short form** is `{ "block": id, "look"?: id, "id"?: id, ...settings }`. Every other key is a setting of that block. The loader expands it with the registered block, so a short form can use only what the block declares. An unknown setting is a problem at the key.
-- **A use** is `{ "use": path, "id"?: id, "name"?: text, ...values }`. The path is relative to the file. Every other key is a value for one of the piece's settings. `name` is the name of the node; a piece that declares a setting called `name` keeps that key for the setting, and a differing node name on such a use is a problem.
+- **A use** is `{ "use": path, "id"?: id, "name"?: text, ...values }`. The path is relative to the file. Beside the piece's own settings, a use may also carry node-level fields (`slot`, `placement`, `hide`, `showIf`, `showIfAny`, `locked`, `overrides`, `bind`, `children`) when not declared as piece settings. `name` is the name of the node; a piece that declares a setting called `name` keeps that key for the setting, and a differing node name on such a use is a problem.
 
 `culm expand <file> <id>` rewrites one short form in a file as its nodes, so you can then edit the parts inside it.
 
@@ -120,7 +122,7 @@ Place this plain node in the `children` of a page column, then run `culm build`.
 
 `motion` is a node field, alongside `props` and `style`. Its value contains a trigger and either a registered `effect` (with optional numeric `settings`) or a sequence of `steps`. Delete the field to clear it in a file; `null` is the edit operation's instruction to delete. See [Motion on a heading](mcp.md#motion-on-a-heading) for a checked sequence and the equivalent `write` calls. `culm schema` includes the field for editors; `culm build` checks the program against the actual registry and tree and reports malformed motion at its source.
 
-Setting motion on a `block` shorthand or one of its children via MCP expands that block in the page file. A `use` shorthand can store only piece settings and its name and id: a motion edit there is refused. To animate every use, explicitly edit the node in the piece file; for just one use, `detach` it first and edit the resulting nodes.
+Setting motion on a `block` shorthand or one of its children via MCP expands that block in the page file. A `use` shorthand cannot hold `motion`: a motion edit there is refused. To animate every use, explicitly edit the node in the piece file; for just one use, `detach` it first and edit the resulting nodes.
 
 ### `pieces/**/*.json`
 
@@ -201,14 +203,16 @@ A syntax error in a JSON file is one problem for that file, and no document load
 
 ## Commands
 
-| Command                               | Does                                                                                                                                                                                                                          |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `culm dev [--port n]`                 | Serves the compiled pages on `127.0.0.1` (default port 4321), watches the folder, recompiles on save and reloads the page through server-sent events. On a problem it keeps serving the last good pages and draws an overlay. |
-| `culm build`                          | Writes the compiled pages, `assets/`, `_fonts/` and `culm-manifest.json` to `out`. It writes nothing when anything is a problem.                                                                                              |
-| `culm check [--chrome path]`          | Validates, then measures every page in Chrome, and prints problems and findings with file and line.                                                                                                                           |
-| `culm expand <file> <id>`             | Rewrites one short form as its nodes.                                                                                                                                                                                         |
-| `culm schema`                         | Writes `culm.schema.json`.                                                                                                                                                                                                    |
-| `culm mcp [--port n] [--chrome path]` | Starts the MCP server (see [mcp.md](mcp.md)).                                                                                                                                                                                 |
+| Command                                        | Does                                                                                                                                                                                                                          |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `culm init <folder> [--blank] [--from folder]` | Writes a bakery starter (or minimal single-page site with `--blank`) into a new or empty folder.                                                                                                                              |
+| `culm dev [--port n]`                          | Serves the compiled pages on `127.0.0.1` (default port 4321), watches the folder, recompiles on save and reloads the page through server-sent events. On a problem it keeps serving the last good pages and draws an overlay. |
+| `culm build`                                   | Writes the compiled pages, `assets/`, `_fonts/` and `culm-manifest.json` to `out`. It writes nothing when anything is a problem.                                                                                              |
+| `culm check [--chrome path] [--classes 1,2,3]` | Validates, then measures every page in Chrome, and prints problems and findings with file and line.                                                                                                                           |
+| `culm expand <file> <id>`                      | Rewrites one short form as its nodes.                                                                                                                                                                                         |
+| `culm render [spec \| page] --out <file>`      | Exports a standalone JSON/shape visual, site node, or page as PNG, WebP, or SVG with integrated measure checks.                                                                                                               |
+| `culm schema`                                  | Writes `culm.schema.json`.                                                                                                                                                                                                    |
+| `culm mcp [--port n] [--chrome path] [--full]` | Starts the MCP server (see [mcp.md](mcp.md)).                                                                                                                                                                                 |
 
 Exit codes: 0 done; 1 problems or findings; 2 wrong usage, or `check` could not measure. `culm check` exits 1 on any problem, or on a finding of class 1 or 2, and 2 when measure could not run or was incomplete, so a missing browser is told apart from a finding.
 

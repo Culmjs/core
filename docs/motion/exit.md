@@ -1,6 +1,6 @@
 # Stage 3 motion: owner comparison
 
-**Owner accepted the Stage 3 motion comparison on 2026-11-24.** After receiving the desktop and phone file paths, the owner approved all three reproductions: the 500 px entrance, the pinned scroll panel, and the masked-letter entry. All frozen trajectory samples passed at both widths. This closes the motion comparison; Stage 3c’s separate blind benchmark remains open.
+**Owner accepted the Stage 3 motion comparison on 2026-11-24.** After receiving the desktop and phone file paths, the owner approved all three reproductions: the 500 px entrance, the pinned scroll panel, and the masked-letter entry. All frozen trajectory samples passed at both widths. This closes the motion comparison; the Stage 3c blind recreate rerun and the matched [Astro & GSAP benchmark](../comparison/README.md) are recorded and closed.
 
 | Field plate        | 1280 × 900                                                 | 390 × 900                                                 |
 | ------------------ | ---------------------------------------------------------- | --------------------------------------------------------- |
@@ -55,15 +55,15 @@ Raw UTF-8. Base includes the joins; the test also counts the complete inline scr
 
 | Live page                                     |  Base | States | Timeline |  Total JS |   CSS | Elements / depth |
 | --------------------------------------------- | ----: | -----: | -------: | --------: | ----: | ---------------: |
-| Traverse                                      |   305 |      0 |     8177 |      8482 |  5826 |           17 / 4 |
-| Waterline                                     |   305 |      0 |     8177 |      8482 |  5961 |           22 / 5 |
-| Reed Ledger                                   |   305 |      0 |     8177 |      8482 |  5946 |           15 / 4 |
+| Traverse                                      |   305 |      0 |     8186 |      8491 |  5826 |           17 / 4 |
+| Waterline                                     |   305 |      0 |     8186 |      8491 |  5961 |           22 / 5 |
+| Reed Ledger                                   |   305 |      0 |     8186 |      8491 |  5946 |           15 / 4 |
 | Plain control                                 |   304 |      0 |        0 |       304 |  5656 |           15 / 4 |
 | CSS-only scroll                               |   304 |      0 |        0 |       304 |  5888 |           15 / 4 |
-| Mixed (open + mail + states + CSS + timeline) |   688 |   1963 |     8177 |     10828 |  6152 |           18 / 4 |
+| Mixed (open + mail + states + CSS + timeline) |   688 |   2031 |     8186 |     10905 |  6152 |           18 / 4 |
 | Independent ceilings                          | 10000 |   6193 | **8192** | **20000** | 16000 |        2000 / 12 |
 
-**15 bytes remain on the timeline; 9,172 on the mixed-page aggregate.** The reviewed host and mixed page are each 8 bytes smaller than the accepted comparison build (8,185 / 10,836). All six live fixtures match that build byte for byte outside the host. The original 3,800 timeline proposal was superseded; the aggregate was not. Exact limits and one-byte overages are exercised by [the budget tests](../../packages/core/__tests__/compile/budgets.spec.ts). The full MCP `describe` reports the approved limits. On a valid timeline document with 350 distinct swatch styles, compilation reported `RESOURCE_LIMIT_EXCEEDED` at `css`; the actual `measure` tool returned the class 1 `invalid` finding **“css is 29851, the ceiling is 16000”**.
+**6 bytes remain on the timeline; 9,095 on the mixed-page aggregate** (updated after the three integration-review fixes: `host: true` on detached tier-2 load presets, ancestor `scale: 0` release via `getClientRects` on standard tracks, and `ops/plan.ts` target-move blame). Exact limits and one-byte overages are exercised by [the budget tests](../../packages/core/__tests__/compile/budgets.spec.ts). The full MCP `describe` reports the approved limits. On a valid timeline document with 350 distinct swatch styles, compilation reported `RESOURCE_LIMIT_EXCEEDED` at `css`; the actual `measure` tool returned the class 1 `invalid` finding **“css is 29851, the ceiling is 16000”**.
 
 - Control live HTML (6,645 bytes) and whole site result matched SHA-256 baselines from the pre-motion compiler `a1ca779`. Separately, **48/48** earlier live/edit/measure/site outputs matched that revision.
 - At both widths, with scripts disabled and separately with reduced motion enabled, all plates kept their headings, jump link and native disclosure in keyboard order. The link navigated and the note opened. No timeline ran, the gauge stayed full and the heading remained unsplit.
@@ -71,14 +71,14 @@ Raw UTF-8. Base includes the joins; the test also counts the complete inline scr
 
 Final review run (2026-11-24, `4195730`): **1,972 unit tests passed**, three optional/environment skips; **174 browser tests passed**, zero skipped, including the genuine 114 fallback lane. Clean install, generator drift check, types, lint, format, layers, terminology and all three package tarballs passed. All 30 trajectory diagnostic lines at the two widths matched the comparison run exactly.
 
-Stage base: `a1ca779`. The original comparison used implementation `5d82e04` (1,966 unit and 171 browser tests passed). Comparison sheets and evidence accepted: `14e745b`; decision recorded at `1743b34`. The owner’s decision on these sheets was “yes approved move forward.” The independent 3c benchmark and branch integration are separate from that visual decision.
+Stage base: `a1ca779`. The original comparison used implementation `5d82e04` (1,966 unit and 171 browser tests passed). Comparison sheets and evidence accepted: `14e745b`; decision recorded at `1743b34`. The owner’s decision on these sheets was “yes approved move forward.” The independent 3c benchmark and matched Astro/GSAP comparison are recorded separately.
 
-### Integration review
+### Integration review (resolved)
 
-The final review at `bb49ba0` verified all eight original reproductions. It recommends holding the merge for three additional cases. None changes the results for the three accepted scenes.
+All three follow-up integration cases identified during the `bb49ba0` review are now resolved and covered by regression tests:
 
-| Case                                                                          | What still happens                                                                                                                      | Acceptance check for a fix                                                                                                                                           |
-| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Detach a tier-2 component with a timed `load` preset while it is offscreen    | The target stays correct, but the detached animation can finish offscreen as CSS. The visitor misses the fade when scrolling to it.     | Detach the component 1,600 px below the fold. Its 800 ms entrance must retain the original offscreen pause and resume when visible.                                  |
-| Reveal an already-active state animation by releasing an ancestor’s `scale:0` | The child regains its painted size without a layout resize, so the timeline can miss activation.                                        | With the child's opacity state already active, release the ancestor scale. Opacity must become `.35` without toggling the child's state, and only one track may run. |
-| Move a motion target outside its owner's subtree in a compact batch           | The batch correctly refuses and preserves the revision, but the diagnostic can blame an earlier style edit or omit the operation index. | Style the owner in `ops[0]`, then move its target out in `ops[1]`. The refusal must identify edit `1`; the revision and source files must remain unchanged.          |
+| Case                                                                          | Resolution                                                                                                                                 |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Detach a tier-2 component with a timed `load` preset while it is offscreen    | `detach` (`ops/components.ts`) emits `host: true` for tier-2 `load` presets on sequence motions; `compile/motion.ts` keeps them on tier 2. |
+| Reveal an already-active state animation by releasing an ancestor’s `scale:0` | `motionHost.ts` checks `getClientRects().length` instead of non-zero rect area for non-pin/non-parts tracks so `scale: 0 → 1` activates.   |
+| Move a motion target outside its owner's subtree in a compact batch           | `ops/plan.ts` tracks moved/removed targets per tree and blames `ops[1]` (`move`) with `nodeId`, `path`, and `op` when vetoed.              |

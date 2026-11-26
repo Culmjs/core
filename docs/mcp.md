@@ -1,6 +1,6 @@
 # The MCP server
 
-`culm mcp` gives an agent five local tools to build a site: `describe`, `write`, `find`, `measure`, and `build`. Start with [ordered JSON edits](#ordered-json-edits). Use `culm mcp --full` for low-level operations or importing existing source.
+`culm mcp` gives an agent six local tools to build a site and export images: `describe`, `write`, `find`, `measure`, `build`, and `render`. Start with [ordered JSON edits](#ordered-json-edits). Use `culm mcp --full` for low-level operations or importing existing source.
 
 The server has no accounts and no identity. It does not sign anyone in and does not know who is calling. The one secret it uses is a random token on the local port, which keeps other programs on the same machine out (see "The local port").
 
@@ -32,7 +32,7 @@ const server = createMcpServer({
   registry,
   site: 'main', // the store's name for the site
   data, // rows for data sources
-  jsonOps: true, // same five tools as the CLI; omit for the full SDK interface
+  jsonOps: true, // same six tools as the CLI; omit for the full SDK interface
   allow: protect, // the default guard; your own `Allow` also works
   // browser, executable, out, locate, pageFile, build, folder: all optional
 })
@@ -82,7 +82,7 @@ A refused write can return a session-local `draft`. At the same revision, use JS
 
 ### Ordered JSON edits
 
-Start `culm mcp --json-ops` (or pass `jsonOps: true` to `createMcpServer`). `describe`, `find`, `write`, `measure` and `build` are the entire tool list. In this profile `write` takes 1–32 ordered `ops`; it validates and commits them together. A single op works the same way. Earlier inserts can be updated or moved later in the same request. Retry the identical write with its original revision to replay it without adding duplicates. This form of `write` is also available on the general server.
+Start `culm mcp --json-ops` (or pass `jsonOps: true` to `createMcpServer`). `describe`, `find`, `write`, `measure`, `build` and `render` are the entire tool list. In this profile `write` takes 1–32 ordered `ops`; it validates and commits them together. A single op works the same way. Earlier inserts can be updated or moved later in the same request. Retry the identical write with its original revision to replay it without adding duplicates. This form of `write` is also available on the general server.
 
 ```json
 {
@@ -126,7 +126,7 @@ Start `culm mcp --json-ops` (or pass `jsonOps: true` to `createMcpServer`). `des
 }
 ```
 
-`insert.node` appends one ordinary subtree. `update` merges `text`, `props` or style layers on an `id`; `move` takes `id`, destination `index` and optional `parent` (page root by default); `remove` takes an `id`; `theme.value` changes the look. The receipt names the revision and section ids. `find {}` returns the section outline. For a targeted read, use e.g. `{"id":"title","full":true}`. Call `measure` explicitly: a `crowded-phone-row` finding reports the constrained heading/button, its parent, its measured width and line count, and a copyable phone-only update. Horizontal schedule rows can stay horizontal.
+`insert.node` appends one ordinary subtree; `page: "header" | "footer"` edits site chrome; `addPage`, `removePage` and `setPage` manage pages. `update` merges `text`, `props`, `set`, `slot`, `placement`, `hide`, `state`, `on`, `motion` or style layers on an `id` (`null` clears a style key or `motion`/`placement`/`hide`/`state`/`on`); `move` takes `id`, destination `index` and optional `parent` (page root by default); `remove` takes an `id`; `theme.value` changes the look. The receipt names the revision and section ids. `find {}` returns the section outline. For a targeted read, use e.g. `{"id":"title","full":true}`. Call `measure` explicitly: a `crowded-phone-row` finding reports the constrained heading/button, its parent, its measured width and line count, and a fix suggesting `setProps` or `setStyle`. Horizontal schedule rows can stay horizontal.
 
 New starters opt in to a display ceiling: `styles.textRange: {"min":11,"max":96,"displayMax":240}`. H1/H2 may use the larger range, including CSS `clamp()` or viewport sizes. They get tighter default leading and tracking; explicit styles, site heading tracking and phone overrides still win. Sites without `displayMax` keep their previous typography.
 
@@ -266,7 +266,7 @@ Refusals an agent should expect:
 Renders the pages in Chrome and reports what is wrong with them in a form an agent can act on.
 
 - `pages`: page ids (default: every page that is on). `widths`: any of 1280, 834, 390. `classes`: 1, 2 or 3 (default 1 and 2).
-- Class 1 is a compile problem (`invalid`). Class 2 is a defect: `off-screen`, `overflow`, `h-scroll`, `overlap`, `contrast`, `tap-target`, and for shapes `shape-covers` (a front shape over required text), `shape-complex` and `raw-colour` (a `#` colour in a shape). Class 3 is taste: `column`, `alignment`, `symmetry`, `rhythm`, `empty-band`, `line-length`, `heading-order`, `duplicate-heading`, `stacked-row`, `phone-order`.
+- Class 1 is a compile problem (`invalid`). Class 2 includes layout/contrast defects (`off-screen`, `overflow`, `h-scroll`, `overlap`, `contrast`, `tap-target`, `shape-covers`, `shape-complex`, `raw-colour`, `crowded-phone-row`) and design findings (`stretched-button`, `header-edge`, `hero-bare`, `orphan-heading`, `bleed-gutter`, `all-stacked`, `no-accent`, `starter-chrome`, `side-stripe`, `gradient-text`, `glow`, `emoji-icon`). Class 3 is taste (`column`, `alignment`, `symmetry`, `rhythm`, `empty-band`, `line-length`, `heading-order`, `duplicate-heading`, `stacked-row`, `phone-order`). Together with `invalid`, `runChecks` produces 31 checks.
 - The profile is version 1: widths 1280, 834 and 390, themes light and dark, each direction the site's languages declare, the default state of each part. What it does not cover is listed in `skipped`.
 - The MCP reply merges findings by page, check and nodes: a row is `{ page, check, nodes, at, message, fix?, file?, line? }`, where `at` lists the cells as `"1280"`, with ` dark` and ` rtl` added when not light and left to right. `fix` is advice for a class 2 finding. `culm measure` and the core `Report` keep one finding per cell, with `theme`, `dir`, `observed`, `expected` and a `key`; on a folder site a finding names a file and line from its first node.
 - `since` is a revision. `findings` then holds the still-failing rows and the new ones (`new: true`), `fixed` the rows no longer present, and `unchecked` a count. A repair is confirmed when its row is in `fixed` and no row is new.

@@ -257,8 +257,8 @@ Each of these validates first. If the document, the rows or an option has a prob
 | base         | 304 bytes   | always                                     |
 | open snippet | 105 bytes   | a layer is marked open at load             |
 | mail snippet | 277 bytes   | a hidden mail address was written          |
-| states       | 1,963 bytes | a node on the page uses states or triggers |
-| timeline     | 8,177 bytes | the rendered page needs the motion host    |
+| states       | 2,031 bytes | a node on the page uses states or triggers |
+| timeline     | 8,186 bytes | the rendered page needs the motion host    |
 
 - In editing mode there is no script, and every node's element carries `data-id` so an editor can map the page back to the document.
 - A text node still marked as an untouched sample is left out of a live page and kept in editing mode.
@@ -277,7 +277,7 @@ Each of these validates first. If the document, the rows or an option has a prob
 
 Sizes are raw minified bytes. `compilePage` reports a page that passes a ceiling as a `RESOURCE_LIMIT_EXCEEDED` problem and returns its real figures in `stats`.
 
-CSS-only motion ships no timeline script. The shared 20,000-byte cap applies independently of the individual script ceilings. The [stage comparison](motion/exit.md) gives measured byte totals and the desktop and phone frames the owner accepted. The separate Stage 3c benchmark remains open.
+CSS-only motion ships no timeline script. The shared 20,000-byte cap applies independently of the individual script ceilings. The [stage comparison](motion/exit.md) gives measured byte totals and the desktop and phone frames the owner accepted; the Stage 3c blind recreate rerun and the matched [Culm vs. Astro & GSAP comparison](comparison/README.md) are closed.
 
 ## Measure
 
@@ -296,16 +296,16 @@ The `measure` layer of the core says what is wrong with a rendered page, in a fo
 
 `@culmjs/tools` depends on `@culmjs/core` (a peer dependency), `@modelcontextprotocol/sdk` and `jsonc-parser`. It adds what needs files, a browser or a port.
 
-| What           | Does                                                                                                                                                                                   |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Folder sites   | `loadFolder` reads a folder of JSON files into the document with a source map; `fileStore` is a `SiteStore` that writes changes back into the same files and keeps history in `.culm/` |
-| `culm` command | `dev`, `build`, `check`, `expand`, `schema`, `mcp`                                                                                                                                     |
-| Dev server     | Serves the pages on `127.0.0.1`, reloads on save, and shows an overlay with file, line and message when a save has a problem                                                           |
-| Measure runner | Opens Chrome over the DevTools protocol on a pipe, with no dependency and no port, and runs the probe and the checks on every page                                                     |
-| MCP server     | `createMcpServer`: nine tools over standard input and output, and optionally a local port with a token                                                                                 |
-| JSON Schema    | `authoringSchema(registry)` and `culm schema`: completion and checks for the folder's files in an editor                                                                               |
+| What           | Does                                                                                                                                                                                                      |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Folder sites   | `loadFolder` reads a folder of JSON files into the document with a source map; `fileStore` is a `SiteStore` that writes changes back into the same files and keeps history in `.culm/`                    |
+| `culm` command | `init`, `dev`, `build`, `check`, `expand`, `render`, `schema`, `mcp`                                                                                                                                      |
+| Dev server     | Serves the pages on `127.0.0.1`, reloads on save, and shows an overlay with file, line and message when a save has a problem                                                                              |
+| Measure runner | Opens Chrome over the DevTools protocol on a pipe, with no dependency and no port, and runs the probe and the checks on every page                                                                        |
+| MCP server     | `createMcpServer`: 6 authoring tools by default (`culm mcp` / `jsonOps: true`, including `render`), or 12 full tools (`culm mcp --full`), over stdio and optionally a local HTTP port with a bearer token |
+| JSON Schema    | `authoringSchema(registry)` and `culm schema`: completion and checks for the folder's files in an editor                                                                                                  |
 
-Read [docs/folder-sites.md](folder-sites.md) for the folder format, `.culm/` and the commands, and [docs/mcp.md](mcp.md) for the nine tools, what `protect` refuses and the local port.
+Read [docs/folder-sites.md](folder-sites.md) for the folder format, `.culm/` and the commands, and [docs/mcp.md](mcp.md) for the MCP tools, what `protect` refuses and the local port.
 
 ## The starter
 
@@ -336,7 +336,7 @@ npx culm build   # write the site to dist/
 
 Nothing is on npm yet, so until a release the steps above do not work. From a checkout of this repository, run `npm run pack:all` (it writes three tarballs to `.pack/`), then `node packages/tools/bin/culm.js init my-site --from .pack`, then `npm install` in `my-site`. `--from <folder>` is a folder that holds `culmjs-core-*.tgz`, `culmjs-starter-*.tgz` and `culmjs-tools-*.tgz`; `init` then writes `file:` dependencies on them in place of version numbers. A relative `--from` is resolved against the folder you run the command in.
 
-`culm init <folder>` writes a bakery site (four pages, a menu, a piece used on three pages and one block written as data) into a new or empty folder. A folder that holds anything, hidden files included, is refused, and the message lists up to five of the names found. It also writes a `package.json`, a `culm.schema.json` and a `.gitignore` (which excludes `node_modules`, `dist` and `.culm/`).
+`culm init <folder> [--blank]` writes a 4-page bakery site (or a minimal single-page site with `--blank`) into a new or empty folder. A folder that holds anything, hidden files included, is refused, and the message lists up to five of the names found. It also writes a `package.json`, a `culm.schema.json` and a `.gitignore` (which excludes `node_modules`, `dist` and `.culm/`).
 
 ## Guarantees and their limits
 
