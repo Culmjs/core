@@ -143,9 +143,9 @@ export function resolveProviderName(
   const chosen = config?.provider ?? env.CULM_IMAGE_PROVIDER
   if (chosen && IMAGE_PROVIDERS.includes(chosen as ImageProviderName))
     return chosen as ImageProviderName
+  if (config?.endpoint || env.CULM_IMAGE_ENDPOINT) return 'http'
   if (env.GEMINI_API_KEY) return 'gemini'
   if (env.OPENAI_API_KEY) return 'openai'
-  if (config?.endpoint || env.CULM_IMAGE_ENDPOINT) return 'http'
   if ((pe.hasBinary ?? (n => binaryOnPath(n, env)))('higgsfield'))
     return 'higgsfield'
   return undefined
@@ -199,11 +199,7 @@ export function makeImageProvider(
       return async req => {
         const model = req.model ?? config?.model ?? 'imagen-3.0-generate-002'
         const isPredict = model.startsWith('imagen-')
-        const endpoint =
-          config?.endpoint ??
-          (isPredict
-            ? `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:predict`
-            : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`)
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:${isPredict ? 'predict' : 'generateContent'}`
         const body = isPredict
           ? {
               instances: [{ prompt: stylePrompt(req) }],

@@ -441,3 +441,24 @@ for (const [name, action] of [
     assert.equal(r.registry.block('bad'), undefined)
     assert.ok(r.registry.block('note'))
   })
+
+for (const [endpoint, ok] of [
+  ['http://example.com/x', false],
+  ['https://example.com/x', true],
+  ['http://127.0.0.1:8080/x', true],
+  ['http://localhost:8080/x', true],
+  ['http://[::1]:8080/x', true],
+] as const)
+  test(`images.endpoint ${endpoint} is ${ok ? 'accepted' : 'refused'}`, async () => {
+    const r = await loadPlugins(
+      '/nowhere',
+      files({ 'culm.json': JSON.stringify({ images: { endpoint } }) }),
+    )
+    const mine = r.problems.filter(p => p.file === 'culm.json')
+    if (ok) assert.equal(mine.length, 0, JSON.stringify(mine))
+    else {
+      assert.equal(mine.length, 1)
+      assert.equal(mine[0]!.code, 'INVALID_DOCUMENT')
+      assert.match(mine[0]!.message, /images\.endpoint/)
+    }
+  })

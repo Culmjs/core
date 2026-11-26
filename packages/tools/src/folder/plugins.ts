@@ -308,11 +308,13 @@ export async function loadPlugins(
           if (images.endpoint !== undefined) {
             if (
               typeof images.endpoint !== 'string' ||
-              !/^https?:\/\/\S+$/i.test(images.endpoint)
+              !/^(https:\/\/|http:\/\/(127\.0\.0\.1|localhost|\[::1\])([:/]|$))\S+$/i.test(
+                images.endpoint,
+              )
             )
               bad(
                 'INVALID_DOCUMENT',
-                '"images.endpoint" must be an http:// or https:// URL.',
+                '"images.endpoint" must be an https:// URL (http:// only for this machine).',
                 ['images', 'endpoint'],
               )
             else img.endpoint = images.endpoint

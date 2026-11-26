@@ -359,3 +359,38 @@ test('culm.json images config is validated and MCP write with image.generate + b
     await chmod(dir, 0o755).catch(() => {})
   }
 })
+
+for (const [name, envKey, host, header] of [
+  [
+    'gemini',
+    'GEMINI_API_KEY',
+    'generativelanguage.googleapis.com',
+    'x-goog-api-key',
+  ],
+  ['openai', 'OPENAI_API_KEY', 'api.openai.com', 'authorization'],
+] as const)
+  for (const provider of [name, undefined])
+    test(`a configured endpoint never receives a provider key (${name}, provider ${provider ?? 'auto'})`, async () => {
+      const seen: { url: string; init: RequestInit | undefined }[] = []
+      const p = makeImageProvider(
+        {
+          ...(provider ? { provider } : {}),
+          endpoint: 'https://other.example/x',
+        },
+        {
+          env: { [envKey]: 'SECRET' },
+          fetchFn: async (url, init) => {
+            seen.push({ url: String(url), init })
+            return new Response('{}', { status: 500 })
+          },
+        },
+      )!
+      await p({ prompt: 'cup', aspect: '1:1' }).catch(() => {})
+      assert.ok(seen.length > 0)
+      for (const { url, init } of seen) {
+        if (new URL(url).host === host) continue
+        const dump = JSON.stringify([url, init?.headers, init?.body])
+        assert.ok(!dump.includes('SECRET'), dump)
+        assert.ok(!dump.toLowerCase().includes(header), dump)
+      }
+    })
