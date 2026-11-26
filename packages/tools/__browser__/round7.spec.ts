@@ -167,39 +167,32 @@ test('round 7, the real pricing table at 390: the header word "Enterprise" is on
   assert.match(at.html, /overflow-wrap:normal;word-break:normal/)
 })
 
-test(
-  'round 7, the real editorial home with divide on its first grid: the lines sit between the cells and not before the first; an Image takes a shadow and a round corner; marks in a Text draw bold, underline, colour and a link',
-  {
-    // KNOWN REGRESSION on main: divideRules (compile/stylesRules.ts) emits `:not(:nth-child(2n+1) of ...)`, an invalid selector; it must be `:not(:nth-child(2n+1 of ...))`. Remove `todo` once fixed.
-    todo: 'divideRules writes a malformed :nth-child(.. of ..) selector, so the first cell gets a start border',
-  },
-  async () => {
-    const jsx = (await fixture('editorial6-home.jsx'))
-      .replace(/<Site [^>]*\/>/, '')
-      .replace(/font:"up:[a-z-]+",?/g, '')
-      .replace('<Grid cols={2}', '<Grid divide cols={2}')
-    assert.ok(jsx.includes('<Grid divide'))
-    const doc = written(
-      `${jsx}<Image id="av" src="https://img.invalid/a.png" alt="a" style={{width:{n:80,unit:"px"},height:{n:80,unit:"px"},radius:999,shadow:{x:0,y:4,blur:4,spread:0,color:"#adb5bd"}}} />` +
-        `<Text id="mk">Hi <b>bold</b> <u>under</u> <span style={{color:"#ff0000"}}>red</span> <a href="https://x.com/">link</a></Text>`,
-    )
-    const at = await laidOut<{
-      first: string[]
-      img: string[]
-      runs: string[]
-    }>(
-      doc,
-      1280,
-      `(()=>{const g=[...document.querySelectorAll('main *')].find(e=>getComputedStyle(e).display==='grid'&&e.children.length>=3),k=[...g.children].map(c=>getComputedStyle(c));const i=getComputedStyle(document.querySelector('main img[alt=a]'));const t=document.querySelector('main p:last-of-type, main div:last-child');const m=[...document.querySelectorAll('main *')].filter(e=>e.textContent==='bold'||e.textContent==='under'||e.textContent==='red'||e.textContent==='link').pop();const q=s=>[...document.querySelectorAll('main *')].find(e=>e.children.length===0&&e.textContent===s);return {first:[k[0].borderInlineStartWidth,k[1].borderInlineStartWidth,k[2].borderTopWidth,k[0].borderTopWidth],img:[i.boxShadow,i.borderTopLeftRadius],runs:[getComputedStyle(q('bold')).fontWeight,getComputedStyle(q('under')).textDecorationLine,getComputedStyle(q('red')).color,q('link').tagName+q('link').getAttribute('href')]}})()`,
-    )
-    assert.deepEqual(at.extra.first, ['0px', '1px', '1px', '0px'])
-    assert.match(at.extra.img[0]!, /4px/)
-    assert.equal(at.extra.img[1], '999px')
-    assert.deepEqual(at.extra.runs, [
-      '700',
-      'underline',
-      'rgb(255, 0, 0)',
-      'Ahttps://x.com/',
-    ])
-  },
-)
+test('round 7, the real editorial home with divide on its first grid: the lines sit between the cells and not before the first; an Image takes a shadow and a round corner; marks in a Text draw bold, underline, colour and a link', async () => {
+  const jsx = (await fixture('editorial6-home.jsx'))
+    .replace(/<Site [^>]*\/>/, '')
+    .replace(/font:"up:[a-z-]+",?/g, '')
+    .replace('<Grid cols={2}', '<Grid divide cols={2}')
+  assert.ok(jsx.includes('<Grid divide'))
+  const doc = written(
+    `${jsx}<Image id="av" src="https://img.invalid/a.png" alt="a" style={{width:{n:80,unit:"px"},height:{n:80,unit:"px"},radius:999,shadow:{x:0,y:4,blur:4,spread:0,color:"#adb5bd"}}} />` +
+      `<Text id="mk">Hi <b>bold</b> <u>under</u> <span style={{color:"#ff0000"}}>red</span> <a href="https://x.com/">link</a></Text>`,
+  )
+  const at = await laidOut<{
+    first: string[]
+    img: string[]
+    runs: string[]
+  }>(
+    doc,
+    1280,
+    `(()=>{const g=[...document.querySelectorAll('main *')].find(e=>getComputedStyle(e).display==='grid'&&e.children.length>=3),k=[...g.children].map(c=>getComputedStyle(c));const i=getComputedStyle(document.querySelector('main img[alt=a]'));const t=document.querySelector('main p:last-of-type, main div:last-child');const m=[...document.querySelectorAll('main *')].filter(e=>e.textContent==='bold'||e.textContent==='under'||e.textContent==='red'||e.textContent==='link').pop();const q=s=>[...document.querySelectorAll('main *')].find(e=>e.children.length===0&&e.textContent===s);return {first:[k[0].borderInlineStartWidth,k[1].borderInlineStartWidth,k[2].borderTopWidth,k[0].borderTopWidth],img:[i.boxShadow,i.borderTopLeftRadius],runs:[getComputedStyle(q('bold')).fontWeight,getComputedStyle(q('under')).textDecorationLine,getComputedStyle(q('red')).color,q('link').tagName+q('link').getAttribute('href')]}})()`,
+  )
+  assert.deepEqual(at.extra.first, ['0px', '1px', '1px', '0px'])
+  assert.match(at.extra.img[0]!, /4px/)
+  assert.equal(at.extra.img[1], '999px')
+  assert.deepEqual(at.extra.runs, [
+    '700',
+    'underline',
+    'rgb(255, 0, 0)',
+    'Ahttps://x.com/',
+  ])
+})

@@ -2330,3 +2330,20 @@ test('a dark layer that hides follows the tablet and phone rules that restore di
     ],
   )
 })
+
+test('divide selectors keep every `of` clause inside the :nth-child parentheses', async () => {
+  const { divideRules } = await import('../../src/compile/stylesRules.ts')
+  const css =
+    ['x', 'y', 'g1', 'g2', 'g3']
+      .map(g => divideRules([g, g, g])('c'))
+      .join('') + divideRules(['g2', 'g3', 'y'])('c')
+  const ofs = [...css.matchAll(/ of /g)]
+  assert.ok(ofs.length > 0)
+  for (const m of ofs) {
+    const open = css.slice(0, m.index).match(/:nth-(?:last-)?child\([^()]*$/)
+    assert.ok(
+      open,
+      `\`of\` outside nth-child parens near: ${css.slice(Math.max(0, m.index - 40), m.index + 30)}`,
+    )
+  }
+})

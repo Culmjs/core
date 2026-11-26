@@ -299,7 +299,7 @@ test('divide draws lines between grid, row and list items only when requested', 
   )
   assert.match(
     html,
-    /:not\(:nth-child\(3n\+1\) of :not\(\[data-cm-m\]\)\)\{border-inline-start-width:1px\}/,
+    /:not\(:nth-child\(3n\+1 of :not\(\[data-cm-m\]\)\)\)\{border-inline-start-width:1px\}/,
   )
   assert.match(
     html,

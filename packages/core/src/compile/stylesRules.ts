@@ -291,7 +291,7 @@ export const divideRules =
         ? `.${cls}>${item}+${item}{border-inline-start-width:1px}`
         : g === 'y'
           ? `.${cls}>${item}+${item}{border-top-width:1px}`
-          : `.${cls}>:nth-child(n+${+g.slice(1) + 1} of ${item}){border-top-width:1px}${g === 'g1' ? '' : `.${cls}>:not(:nth-child(${g.slice(1)}n+1) of ${item}){border-inline-start-width:1px}`}`
+          : `.${cls}>:nth-child(n+${+g.slice(1) + 1} of ${item}){border-top-width:1px}${g === 'g1' ? '' : `.${cls}>:not(:nth-child(${g.slice(1)}n+1 of ${item})){border-inline-start-width:1px}`}`
     let css = `.${cls}>${item}{border:0 solid var(--s-line)}${line(sigs[0])}`
     if (sigs[1] !== sigs[0])
       css += `@media (max-width:1024px){.${cls}>${item}{border-width:0}${line(sigs[1])}}`
